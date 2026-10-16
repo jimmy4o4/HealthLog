@@ -77,6 +77,9 @@ x-healthlog-env: &healthlog_env
   # 1 sends neither of the two settings above (they ride the libpq `options`
   # startup parameter, which PgBouncer refuses by default).
   DATABASE_SESSION_OPTIONS_DISABLED: "${DATABASE_SESSION_OPTIONS_DISABLED:-}"
+  # Seconds between polls of an idle pg-boss queue (default 2, minimum 0.5).
+  # A larger value lowers idle CPU; jobs start up to this much later.
+  PGBOSS_POLLING_INTERVAL_SECONDS: "${PGBOSS_POLLING_INTERVAL_SECONDS:-}"
   WITHINGS_WEBHOOK_SECRET: "${WITHINGS_WEBHOOK_SECRET:-}"
   # Overrides the derived `${NEXT_PUBLIC_APP_URL}/api/withings/callback`;
   # set it when the URL registered with Withings differs from the app's own

@@ -19,6 +19,7 @@
 import { PgBoss, type WorkOptions } from "pg-boss";
 
 import { prisma } from "@/lib/db";
+import { getPgBossPollingIntervalSeconds } from "@/lib/env";
 
 import { workerLog } from "./shared";
 import { withBackgroundEvent } from "@/lib/logging/background";
@@ -368,5 +369,9 @@ export async function createAndWork<T>(
   // `JobWithMetadata<T>` extends `Job<T>`, so the metadata handler accepts
   // everything the plain one does; the overloads above are what keeps the
   // call sites honest about which shape they asked pg-boss for.
-  await boss.work<T>(queue, options, runJob(queue, handler as JobHandler<T>));
+  await boss.work<T>(
+    queue,
+    { pollingIntervalSeconds: getPgBossPollingIntervalSeconds(), ...options },
+    runJob(queue, handler as JobHandler<T>),
+  );
 }

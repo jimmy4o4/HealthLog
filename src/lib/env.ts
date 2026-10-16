@@ -41,3 +41,24 @@ export function envFlag(name: string): boolean {
   const value = envValue(name);
   return value !== undefined && TRUE_WORDS.has(value.toLowerCase());
 }
+
+/** pg-boss refuses a worker polling interval below this many seconds. */
+const PGBOSS_POLLING_MIN_SECONDS = 0.5;
+const PGBOSS_POLLING_DEFAULT_SECONDS = 2;
+
+/**
+ * Seconds between two polls of an idle pg-boss worker queue
+ * (`PGBOSS_POLLING_INTERVAL_SECONDS`). Every registered queue polls on this
+ * interval, so a longer one lowers idle CPU at the price of job pickup delay.
+ * Unset, blank, non-numeric or below the pg-boss minimum of 0.5 falls back to
+ * the pg-boss default of 2.
+ */
+export function getPgBossPollingIntervalSeconds(): number {
+  const raw = envValue("PGBOSS_POLLING_INTERVAL_SECONDS");
+  if (raw === undefined) return PGBOSS_POLLING_DEFAULT_SECONDS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < PGBOSS_POLLING_MIN_SECONDS) {
+    return PGBOSS_POLLING_DEFAULT_SECONDS;
+  }
+  return parsed;
+}

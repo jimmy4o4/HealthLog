@@ -37,3 +37,29 @@ describe("env helper: compose passes an unset variable as the empty string", () 
     }
   });
 });
+
+describe("getPgBossPollingIntervalSeconds", () => {
+  it("defaults to 2 when unset or blank", async () => {
+    const { getPgBossPollingIntervalSeconds } = await import("../env");
+    delete process.env.PGBOSS_POLLING_INTERVAL_SECONDS;
+    expect(getPgBossPollingIntervalSeconds()).toBe(2);
+    vi.stubEnv("PGBOSS_POLLING_INTERVAL_SECONDS", "");
+    expect(getPgBossPollingIntervalSeconds()).toBe(2);
+  });
+
+  it("accepts a valid value, including fractions", async () => {
+    const { getPgBossPollingIntervalSeconds } = await import("../env");
+    vi.stubEnv("PGBOSS_POLLING_INTERVAL_SECONDS", "10");
+    expect(getPgBossPollingIntervalSeconds()).toBe(10);
+    vi.stubEnv("PGBOSS_POLLING_INTERVAL_SECONDS", "0.5");
+    expect(getPgBossPollingIntervalSeconds()).toBe(0.5);
+  });
+
+  it("falls back to 2 for junk or below the pg-boss minimum", async () => {
+    const { getPgBossPollingIntervalSeconds } = await import("../env");
+    for (const bad of ["abc", "0", "0.1", "-5", "NaN"]) {
+      vi.stubEnv("PGBOSS_POLLING_INTERVAL_SECONDS", bad);
+      expect(getPgBossPollingIntervalSeconds()).toBe(2);
+    }
+  });
+});
