@@ -89,7 +89,8 @@ vi.mock("@/lib/ai/consent-guard", () => ({
 vi.mock("@/lib/ai/prompts/insight-generator", () => ({
   PROMPT_VERSION: "golden",
 }));
-vi.mock("@/lib/ai/ai-budgets", () => ({
+vi.mock("@/lib/ai/ai-budgets", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/ai-budgets")>()),
   AI_BUDGETS: { coach: { maxTokens: 600, temperature: 0.4 } },
 }));
 vi.mock("@/lib/ai/coach/persistence", () => ({
@@ -122,7 +123,7 @@ vi.mock("@/lib/ai/coach/snapshot", () => ({
   buildCoachSnapshot: h.m.buildCoachSnapshot,
 }));
 vi.mock("@/lib/medications/scheduled-doses", () => ({
-  getScheduledDoseValues: h.m.getScheduledDoseValues,
+  getScheduledDosePlan: h.m.getScheduledDosePlan,
 }));
 vi.mock("@/lib/ai/coach/workout-evidence-builder", () => ({
   buildWorkoutEvidenceSection: h.m.buildWorkoutEvidenceSection,

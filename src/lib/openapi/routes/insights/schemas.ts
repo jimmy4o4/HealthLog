@@ -5,6 +5,7 @@
  * Schemas come from `src/lib/validations/*` where shared with the
  * runtime request parsing, so the wire contract stays single-source.
  */
+import { recoveryEmptySchema } from "../recovery-empty";
 import { trendSentiment, trendVerdict } from "../trend-verdict";
 import { z } from "zod/v4";
 import { measurementSourceEnum, measurementTypeEnum } from "../shared";
@@ -30,45 +31,6 @@ import { isoDateTime } from "@/lib/validations/datetime";
 
 /** The retrospective periods the narrative route accepts, read off the engine. */
 const NARRATIVE_PERIOD_VALUES = Object.keys(PERIOD_DAYS);
-
-export const insightsComprehensiveResponse = z
-  .object({
-    summary: z.string(),
-    recommendations: z.array(z.record(z.string(), z.unknown())),
-    citations: z.array(z.record(z.string(), z.unknown())),
-    warnings: z.array(z.record(z.string(), z.unknown())),
-    dailyBriefing: z.record(z.string(), z.unknown()).nullable().optional(),
-    trendAnnotations: z.record(z.string(), z.unknown()).nullable().optional(),
-    storyboardAnnotations: z
-      .array(z.record(z.string(), z.unknown()))
-      .optional(),
-    metricSource: z.record(z.string(), z.unknown()).optional(),
-    revalidating: z
-      .boolean()
-      .optional()
-      .describe(
-        "True when the body is served from last-good cache (stale-while-revalidate) while a fresh aggregation runs in the background. The client keeps polling on `revalidating` (bounded) so the open page converges on the fresh body.",
-      ),
-    hasProvider: z
-      .boolean()
-      .optional()
-      .describe(
-        "Whether a configured AI provider exists for the record: provider presence and nothing else. False never means the operator switched AI off or consent is missing; `ai` says that.",
-      ),
-    ai: z
-      .object({
-        briefing: aiCapabilityState,
-        statusText: aiCapabilityState,
-      })
-      .describe(
-        "Whether the AI parts that decorate the overview can be shown: the daily briefing and the per-metric status notes. Resolved per request, never cached with the body. The overview itself is computed data and loads whatever these say.",
-      ),
-  })
-  .meta({
-    id: "InsightsComprehensiveResponse",
-    description:
-      "The Insights overview's computed read. No provider is called on this path; every figure is computed from the record.",
-  });
 
 // v1.8.7.1 — generic per-HealthKit-metric assessment. The query enum is
 // derived from the same registry the route validates against, so the
@@ -199,7 +161,7 @@ export const derivedMetricQuery = z
  *
  * STILL OPAQUE, and known to be: the value shapes of `VITALS_BASELINE` (prose
  * only, in the `value` description), `FITNESS_AGE`, `VASCULAR_AGE_DELTA`,
- * `HRV_BALANCE`, `BMI`, `SLEEP_SCORE`, `READINESS`, `COINCIDENT_DEVIATION`,
+ * `HRV_BALANCE`, `BMI`, `READINESS`, `COINCIDENT_DEVIATION`,
  * `TRAJECTORY`, `SAME_TIME_BASELINE`, `SIX_MINUTE_WALK_BAND`, `HEALTH_SCORE`
  * and the three fixed-type baselines. Each is a TypeScript interface next to
  * its engine under `src/lib/insights/derived/`; modelling them is a schema per
@@ -273,6 +235,82 @@ export const wellnessScoreValue = z
       ),
   })
   .meta({ id: "WellnessScoreValue" });
+
+/**
+ * The `SLEEP_SCORE` value, published beside `WellnessScoreValue` for the same
+ * reason (the derived envelope's `value` is an open record). Held to the
+ * engine's emitted object by `derived-sleep-value-contract.test.ts`.
+ */
+export const sleepScoreValue = z
+  .object({
+    score: z.number().int().describe("The composite 0–100 sleep score."),
+    band: z
+      .enum(["green", "yellow", "red"])
+      .describe("Server's verdict on the score; never re-band it client-side."),
+    night: z
+      .string()
+      .describe("Wake day (YYYY-MM-DD, user's zone) of the night scored."),
+    asleepMinutes: z
+      .number()
+      .int()
+      .describe("Whole minutes asleep that night."),
+    inBedMinutes: z
+      .number()
+      .int()
+      .nullable()
+      .describe("Whole minutes in bed, null when no in-bed signal exists."),
+    subScores: z
+      .array(
+        z.object({
+          key: z
+            .enum([
+              "sufficiency",
+              "efficiency",
+              "consistency",
+              "timing",
+              "composition",
+            ])
+            .describe("Sub-score id."),
+          value: z
+            .number()
+            .nullable()
+            .describe(
+              "0–100 sub-score; null when the data cannot support it (dropped from the blend, never 0).",
+            ),
+          weight: z
+            .number()
+            .describe(
+              "Effective weight after redistributing missing sub-scores.",
+            ),
+          gap: z
+            .enum(["few_nights", "no_main_sleep"])
+            .optional()
+            .describe(
+              "Only on a null `consistency` / `timing`: why it is withheld. `few_nights` — fewer than `rhythmMinNights` nights in the window have a main sleep on the clock (count in `rhythmNights`); `no_main_sleep` — the latest day had only a daytime nap. Absent otherwise.",
+            ),
+        }),
+      )
+      .describe("All five sub-scores, present and dropped."),
+    windowNights: z.number().int().describe("Scorable nights in the window."),
+    rhythmNights: z
+      .number()
+      .int()
+      .describe(
+        "Nights in the window with a main sleep placed on the clock — what consistency and timing are computed from. A daytime nap is not one; a short night is.",
+      ),
+    rhythmMinNights: z
+      .number()
+      .int()
+      .describe(
+        'How many `rhythmNights` consistency and timing need before they are scored; below it they carry `gap: "few_nights"`.',
+      ),
+    series: z
+      .array(z.number())
+      .describe(
+        `Score of every scorable night in the window, oldest → newest, capped at ${SPARKLINE_MAX_POINTS} points; the last point is \`score\`.`,
+      ),
+  })
+  .meta({ id: "SleepScoreValue" });
 
 export const derivedCoverage = z
   .object({
@@ -410,7 +448,7 @@ export const derivedMetricResponse = z
       .record(z.string(), z.unknown())
       .nullable()
       .describe(
-        "Metric-specific value object when status is 'ok'; null when 'insufficient'. The shape is chosen by `metric`, and the record stays open because one route serves eighteen of them. `RECOVERY_SCORE` / `STRESS_SCORE` / `STRAIN_SCORE` return the `WellnessScoreValue` schema — field-by-field in `components.schemas`, including the `series`, `daysInWindow` and `asOf` a client would otherwise have to discover by inspecting a live payload. `VITALS_BASELINE` returns { type, center, low, high, spread, sampleDays, k, series, direction }, where `series` is the trailing per-day means for the inline sparkline and `direction` (v1.43, a `TrendVerdict`) says which way a change of the vital counts for this person, with `center` placed against their own target or a profile default. The remaining metrics' value objects are not modelled here yet; their shapes are TypeScript interfaces beside their engines under `src/lib/insights/derived/`.",
+        "Metric-specific value object when status is 'ok'; null when 'insufficient'. The shape is chosen by `metric`, and the record stays open because one route serves eighteen of them. `RECOVERY_SCORE` / `STRESS_SCORE` / `STRAIN_SCORE` return the `WellnessScoreValue` schema — field-by-field in `components.schemas`, including the `series`, `daysInWindow` and `asOf` a client would otherwise have to discover by inspecting a live payload. `SLEEP_SCORE` returns the `SleepScoreValue` schema, including `rhythmNights` and the per-sub-score `gap`. `VITALS_BASELINE` returns { type, center, low, high, spread, sampleDays, k, series, direction }, where `series` is the trailing per-day means for the inline sparkline and `direction` (v1.43, a `TrendVerdict`) says which way a change of the vital counts for this person, with `center` placed against their own target or a profile default. The remaining metrics' value objects are not modelled here yet; their shapes are TypeScript interfaces beside their engines under `src/lib/insights/derived/`.",
       ),
     coverage: derivedCoverage,
     confidence: derivedConfidence
@@ -1148,8 +1186,8 @@ export const dashboardSnapshotResponse = z
         "Latest reading per chartable metric, keyed by the iOS `MetricKind` raw value (the non-obvious raws: `oxygenSaturation`, `totalBodyWater`, `heartRateVariability`, `bodyMassIndex`, `walkingAsymmetryPercentage`, `walkingDoubleSupportPercentage`, `environmentalAudioExposure`, `headphoneAudioExposure`, `activeEnergyBurned`). Each entry carries `value`, `measuredAt` (ISO8601), and the canonical `unit`. Types the user has never logged are omitted.",
       ),
     // v1.18.6 — server-computed band / target math (audit finding #3),
-    // resolved from the user's own profile facts (DOB / gender / height /
-    // weight-target override). The dashboard reads these instead of
+    // resolved from the user's own profile facts (DOB / gender / height) and
+    // their own targets. The dashboard reads these instead of
     // recomputing client-side; always present (every sub-field falls back
     // to a neutral default rather than being omitted).
     targetBands: z
@@ -1163,7 +1201,7 @@ export const dashboardSnapshotResponse = z
           })
           .nullable()
           .describe(
-            "Personalised blood-pressure target numbers. Null when the profile has no date of birth.",
+            "Blood-pressure target numbers: the user's own target (`/api/user/thresholds`) where set, else the age-banded default. Null when there is neither a target nor a date of birth.",
           ),
         bpSysRange: z
           .object({
@@ -1174,7 +1212,7 @@ export const dashboardSnapshotResponse = z
           })
           .nullable()
           .describe(
-            "Systolic traffic-light range. Null when the profile has no date of birth.",
+            "Systolic traffic-light range, the user's own target winning over the age default. Null when there is neither a target nor a date of birth.",
           ),
         bpDiaRange: z
           .object({
@@ -1185,7 +1223,7 @@ export const dashboardSnapshotResponse = z
           })
           .nullable()
           .describe(
-            "Diastolic traffic-light range. Null when the profile has no date of birth.",
+            "Diastolic traffic-light range, the user's own target winning over the age default. Null when there is neither a target nor a date of birth.",
           ),
         pulseDisplayRange: z
           .object({
@@ -1195,7 +1233,7 @@ export const dashboardSnapshotResponse = z
             orangeMax: z.number(),
           })
           .describe(
-            "Resting-pulse display range. Always present — falls back to the AHA reference range with no date of birth.",
+            "Resting-pulse display range: the user's own target where set, else the age / sex percentile band (the AHA reference range with no date of birth). Always present.",
           ),
         pulseBands: z
           .array(
@@ -1208,11 +1246,13 @@ export const dashboardSnapshotResponse = z
             }),
           )
           .describe(
-            "Resting-pulse chart bands. Always present — AHA fallback with no date of birth.",
+            "Resting-pulse chart bands, drawn from the same range as `pulseDisplayRange`. Always present.",
           ),
         bodyFatRange: z
           .object({ min: z.number(), max: z.number() })
-          .describe("Gender-aware body-fat target range. Always present."),
+          .describe(
+            "Body-fat target range: the user's own target where set, else the gender-aware default. Always present.",
+          ),
         bodyFatBands: z
           .array(
             z.object({
@@ -1223,7 +1263,9 @@ export const dashboardSnapshotResponse = z
               strokeOpacity: z.number().optional(),
             }),
           )
-          .describe("Body-fat chart bands. Always present."),
+          .describe(
+            "Body-fat chart bands, drawn from the same range as `bodyFatRange`. Always present.",
+          ),
         weightRange: z
           .object({
             greenMin: z.number(),
@@ -1417,7 +1459,7 @@ export const dashboardSnapshotResponse = z
           })
           .nullable()
           .optional(),
-        // v1.21.2 (A5) — the Tension Verdict, locale-agnostic. Fires only
+        // v1.21.2 — the Tension Verdict, locale-agnostic. Fires only
         // when the readiness composite's contributors disagree (>=1
         // strongly favourable AND >=1 strongly unfavourable); suppressed
         // (null) under a clinical red-flag so that path dominates.
@@ -1436,7 +1478,7 @@ export const dashboardSnapshotResponse = z
           .describe(
             "Locale-agnostic tension verdict: present only when the readiness composite's contributors disagree. `positive`/`negative` carry readiness contributor keys the client maps to localised labels. Null on a coherent day or when a clinical red-flag suppresses it. Optional so older cached snapshots without the field stay valid.",
           ),
-        // v1.21.2 (A6) — return-to-baseline, locale-agnostic. Present only
+        // v1.21.2 — return-to-baseline, locale-agnostic. Present only
         // when a salient metric has come back inside the user's own
         // personal range after a prior out-of-band run; at most one.
         returnToBand: z
@@ -1484,7 +1526,7 @@ export const dashboardSnapshotResponse = z
         "User-selected hero score rings (max 3, `selectedScoreRings` on the dashboard layout), resolved server-side: READINESS / RECOVERY_SCORE / SLEEP_SCORE via the derived engines (module-gated like `/api/insights/derived`); MED_COMPLIANCE is TODAY's dose progress off the snapshot's medsToday tally — `score` is the rounded 0..100 progress, `doses` carries the taken/scheduled pair, the band is progress semantics (green once every scheduled dose is taken, yellow while doses remain, never red), and the ring is absent when no dose is scheduled today. Only rings with data appear, in selection order — a missing entry means no data or a disabled module, never zero. Clients render what arrives and never recompute.",
       ),
     briefing: z.record(z.string(), z.unknown()).nullable(),
-    // v1.21.2 (A4) — server-resolved recall + forward-look for the
+    // v1.21.2 — server-resolved recall + forward-look for the
     // briefing card, rides the snapshot DTO so iOS reads the same
     // already-localised block the web card renders verbatim.
     briefingMemory: z
@@ -1899,7 +1941,7 @@ export const dataSummary = z
     slope30: trendSlope
       .nullable()
       .describe(
-        "Regression over the trailing window, anchored on NOW rather than on the newest reading — a series that stopped weeks ago reports null rather than a stale slope.",
+        "Regression over the trailing window, anchored on NOW rather than on the newest reading — a series that stopped weeks ago reports null rather than a stale slope. Null as well (for `slope7` too) when the window's readings fall on fewer than 3 calendar days (UTC) or span less than half the window.",
       ),
     avg30LastMonth: z
       .number()
@@ -1920,6 +1962,166 @@ export const dataSummary = z
     id: "DataSummary",
     description:
       "Per-measurement-type summary. Every statistic is null on an empty series rather than 0, so a client never charts a zero it was never given. `anomalyCount` and `slope90` were computed here historically and left this wire in v1.37.19 — they are not fields of this shape.",
+  });
+
+/**
+ * A summary the overview computes in-process. The same statistics as the
+ * analytics summary, plus the count of readings the outlier rule flags, which
+ * only the in-process path can produce. Declared here rather than derived from
+ * either `DataSummary` copy so its trend component cannot collide with theirs.
+ */
+const comprehensiveTrend = z.object({
+  slope: z.number().describe("Least-squares slope in units per day."),
+  direction: z.enum(["up", "down", "stable"]),
+  confidence: z.number().describe("R² of the fit, 0..1."),
+});
+
+const comprehensiveSummary = z
+  .object({
+    count: z.number().int(),
+    latest: z.number().nullable(),
+    min: z.number().nullable(),
+    max: z.number().nullable(),
+    mean: z.number().nullable(),
+    median: z.number().nullable(),
+    avg7: z.number().nullable(),
+    avg30: z.number().nullable(),
+    slope7: comprehensiveTrend.nullable(),
+    slope30: comprehensiveTrend.nullable(),
+    anomalyCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe("Readings in the series the outlier rule flags."),
+    avg30LastMonth: z.number().nullable().optional(),
+    avg30LastYear: z.number().nullable().optional(),
+  })
+  .meta({ id: "ComprehensiveMetricSummary" });
+
+const correlationStat = z
+  .object({
+    r: z.number(),
+    strength: z
+      .enum(["stark", "moderat", "schwach", "keine"])
+      .describe(
+        "Strength bucket. The tokens are GERMAN on the wire; treat them as opaque identifiers and localise client-side.",
+      ),
+    n: z.number().int(),
+  })
+  .meta({
+    id: "CorrelationStat",
+    description:
+      "A significant Pearson correlation (n >= 20, p < 0.05). The field holding it is null when the pairing is not significant.",
+  });
+
+const classification = z.object({
+  category: z.string(),
+  color: z.string().describe("A CSS colour token for the web client."),
+  severity: z.enum(["normal", "elevated", "warning", "danger"]),
+});
+
+export const insightsComprehensiveResponse = z
+  .object({
+    summaries: z
+      .record(z.string(), comprehensiveSummary)
+      .describe(
+        "Keyed by `MeasurementType`. Only types with readings in the last 90 days are present.",
+      ),
+    bmi: z.number().nullable(),
+    bmiClassification: classification.nullable(),
+    bpClassification: classification.nullable(),
+    bpPctInTarget: z
+      .number()
+      .nullable()
+      .describe(
+        "Share of blood-pressure readings inside the target band, 0-100.",
+      ),
+    bpTargets: z
+      .object({
+        sysLow: z.number(),
+        sysHigh: z.number(),
+        diaLow: z.number(),
+        diaHigh: z.number(),
+      })
+      .nullable()
+      .describe("Age-banded targets; null without a date of birth."),
+    weightBpCorrelation: correlationStat.nullable(),
+    scatterData: z
+      .array(z.object({ weight: z.number(), sysBP: z.number() }))
+      .describe("Weight against systolic pressure, paired by day."),
+    bpMedicationCorrelation: correlationStat
+      .extend({ medicationCount: z.number().int() })
+      .nullable(),
+    bpMedicationScatterData: z.array(
+      z.object({ continuityPct: z.number(), sysBP: z.number() }),
+    ),
+    moodSummary: comprehensiveSummary.nullable(),
+    moodBpCorrelation: correlationStat.nullable(),
+    moodBpScatterData: z.array(
+      z.object({ mood: z.number(), sysBP: z.number() }),
+    ),
+    moodWeightCorrelation: correlationStat.nullable(),
+    moodWeightScatterData: z.array(
+      z.object({ mood: z.number(), weight: z.number() }),
+    ),
+    moodPulseCorrelation: correlationStat.nullable(),
+    moodPulseScatterData: z.array(
+      z.object({ mood: z.number(), pulse: z.number() }),
+    ),
+    medications: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          dose: z.string(),
+          category: z.string(),
+          categoryLabel: z
+            .string()
+            .nullable()
+            .describe(
+              "The label of a custom category; null for a built-in one.",
+            ),
+          compliance7: z.number().describe("Percent, 0-100."),
+          compliance30: z.number().describe("Percent, 0-100."),
+          streak: z.number().int(),
+          taken7: z.number().int(),
+          skipped7: z.number().int(),
+          missed7: z.number().int(),
+        }),
+      )
+      .describe("Cadence-aware compliance per active medication."),
+    alerts: z.array(
+      z.object({
+        level: z.enum(["success", "info", "warning", "danger"]),
+        title: z.string(),
+        message: z.string(),
+      }),
+    ),
+    hasProvider: z
+      .boolean()
+      .describe(
+        "Whether a configured AI provider exists for the record: provider presence and nothing else. False never means the operator switched AI off or consent is missing; `ai` says that.",
+      ),
+    dataSpanDays: z.number().int().nonnegative(),
+    totalMeasurements: z.number().int().nonnegative(),
+    revalidating: z
+      .boolean()
+      .describe(
+        "True when the body is served from last-good cache (stale-while-revalidate) while a fresh aggregation runs in the background. The client keeps polling on `revalidating` (bounded) so the open page converges on the fresh body.",
+      ),
+    ai: z
+      .object({
+        briefing: aiCapabilityState,
+        statusText: aiCapabilityState,
+      })
+      .describe(
+        "Whether the AI parts that decorate the overview can be shown: the daily briefing and the per-metric status notes. Resolved per request, never cached with the body. The overview itself is computed data and loads whatever these say.",
+      ),
+  })
+  .meta({
+    id: "InsightsComprehensiveResponse",
+    description:
+      "The Insights overview's computed read. No provider is called on this path; every figure is computed from the record. The model-written briefing is not part of it; it is read from `GET /api/insights/generate`.",
   });
 
 const lastSeenSlot = z
@@ -1962,6 +2164,7 @@ export const analyticsSummariesSliceResponse = z
       ),
     lastSeenByType: z.record(z.string(), lastSeenSlot),
     sleepSourceDiscrepancy,
+    recoveryEmpty: recoveryEmptySchema,
   })
   .meta({
     id: "AnalyticsSummariesSlice",

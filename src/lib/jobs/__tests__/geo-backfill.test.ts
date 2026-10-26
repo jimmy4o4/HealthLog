@@ -9,6 +9,7 @@ import {
   GEO_BACKFILL_BATCH_CAP,
   GEO_BACKFILL_CRON,
   GEO_BACKFILL_QUEUE,
+  GEO_BACKFILL_RETRY_DAYS,
   GEO_BACKFILL_WINDOW_DAYS,
   runGeoBackfill,
 } from "../geo-backfill";
@@ -65,6 +66,21 @@ describe("runGeoBackfill", () => {
       createdAt: {
         gt: new Date(now.getTime() - GEO_BACKFILL_WINDOW_DAYS * 86_400_000),
       },
+      // A row tried less than the retry wait ago is not picked again.
+      AND: [
+        {
+          OR: [
+            { geoAttemptedAt: null },
+            {
+              geoAttemptedAt: {
+                lt: new Date(
+                  now.getTime() - GEO_BACKFILL_RETRY_DAYS * 86_400_000,
+                ),
+              },
+            },
+          ],
+        },
+      ],
     });
     expect(args?.take).toBe(GEO_BACKFILL_BATCH_CAP);
   });
@@ -91,7 +107,7 @@ describe("runGeoBackfill", () => {
     });
     expect(prisma.auditLog.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { location: "Berlin, DE" },
+      data: { location: "Berlin, DE", geoAttemptedAt: expect.any(Date) },
     });
   });
 
@@ -117,6 +133,7 @@ describe("runGeoBackfill", () => {
         location: "München, DE",
         asn: 3320,
         carrier: "Deutsche Telekom AG",
+        geoAttemptedAt: expect.any(Date),
       },
     });
   });
@@ -136,7 +153,11 @@ describe("runGeoBackfill", () => {
     expect(summary.carrierResolved).toBe(1);
     expect(prisma.auditLog.update).toHaveBeenCalledWith({
       where: { id: "a2b" },
-      data: { location: "Bochum, DE", carrier: "Deutsche Telekom AG" },
+      data: {
+        location: "Bochum, DE",
+        carrier: "Deutsche Telekom AG",
+        geoAttemptedAt: expect.any(Date),
+      },
     });
   });
 
@@ -158,15 +179,20 @@ describe("runGeoBackfill", () => {
     });
     expect(prisma.auditLog.update).toHaveBeenCalledWith({
       where: { id: "a3" },
-      data: { carrier: "Vodafone GmbH", asn: 3209 },
+      data: {
+        carrier: "Vodafone GmbH",
+        asn: 3209,
+        geoAttemptedAt: expect.any(Date),
+      },
     });
   });
 
-  it("skips the update when the resolver misses entirely, counts as still-unresolved", async () => {
+  it("stamps only the attempt when the resolver misses entirely, counts as still-unresolved", async () => {
     const prisma = makePrismaMock([{ id: "a4", ipAddress: "192.0.2.1" }]);
     vi.mocked(lookupIpGeo).mockResolvedValueOnce(EMPTY_GEO);
+    const now = new Date("2026-05-15T12:00:00Z");
 
-    const summary = await runGeoBackfill(prisma);
+    const summary = await runGeoBackfill(prisma, now);
 
     expect(summary).toEqual({
       scanned: 1,
@@ -174,7 +200,12 @@ describe("runGeoBackfill", () => {
       carrierResolved: 0,
       stillUnresolved: 1,
     });
-    expect(prisma.auditLog.update).not.toHaveBeenCalled();
+    // The try is recorded, so the next passes leave the row alone until
+    // the retry wait has passed.
+    expect(prisma.auditLog.update).toHaveBeenCalledWith({
+      where: { id: "a4" },
+      data: { geoAttemptedAt: now },
+    });
   });
 
   it("handles a mixed batch of hits and misses", async () => {
@@ -204,7 +235,7 @@ describe("runGeoBackfill", () => {
       carrierResolved: 2,
       stillUnresolved: 1,
     });
-    expect(prisma.auditLog.update).toHaveBeenCalledTimes(2);
+    expect(prisma.auditLog.update).toHaveBeenCalledTimes(3);
   });
 
   it("treats a Prisma update throw as still-unresolved without aborting the pass", async () => {
@@ -252,13 +283,13 @@ describe("runGeoBackfill", () => {
 });
 
 /**
- * v1.4.37 — the helper is now scheduled via pg-boss at the hourly
- * :40 slot. The schedule constants live in the helper module so the
- * reminder-worker boot pulls them by import; this test pins both
- * shapes so a regression that drops the cadence or drifts the queue
- * name lands here, not in production.
+ * The helper is scheduled via pg-boss at the hourly :40 slot. The
+ * schedule constants live in the helper module so the worker registry
+ * pulls them by import; this test pins both shapes so a regression that
+ * drops the cadence or drifts the queue name lands here, not in
+ * production.
  */
-describe("geo-backfill scheduling contract (v1.4.37)", () => {
+describe("geo-backfill scheduling contract", () => {
   it("exports the pg-boss queue name", () => {
     expect(GEO_BACKFILL_QUEUE).toBe("geo-backfill");
   });
@@ -267,20 +298,11 @@ describe("geo-backfill scheduling contract (v1.4.37)", () => {
     expect(GEO_BACKFILL_CRON).toBe("40 * * * *");
   });
 
-  it("reminder-worker imports both the runner and the schedule constants", async () => {
-    // Source-text probe avoids importing the worker module (which
-    // would drag pg-boss + a live Postgres connection). The contract
-    // is binary: the worker either registers the queue + cron or it
-    // does not; both presence checks pin the v1.4.37 scheduling
-    // shape end-to-end.
+  it("the worker registry schedules the queue and binds the ops handler", async () => {
+    // The handler module's import is read as text; the queue facts come from
+    // the registry, so neither pg-boss nor a live Postgres connection boots.
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
-    // v1.18.1 — the geo-backfill wiring moved out of the 2143-LOC
-    // reminder-worker boot file into the maintenance registrar.
-    const workerSrc = await fs.readFile(
-      path.resolve(__dirname, "..", "reminder", "register-maintenance.ts"),
-      "utf-8",
-    );
     const handlerSrc = await fs.readFile(
       path.resolve(__dirname, "..", "reminder", "ops-handlers.ts"),
       "utf-8",
@@ -288,7 +310,11 @@ describe("geo-backfill scheduling contract (v1.4.37)", () => {
     expect(handlerSrc).toMatch(
       /import \{[^}]*runGeoBackfill[^}]*\} from "@\/lib\/jobs\/geo-backfill";/,
     );
-    expect(workerSrc).toContain("GEO_BACKFILL_QUEUE, GEO_BACKFILL_CRON");
-    expect(workerSrc).toContain("handleGeoBackfill");
+    const { groupOf, jobOf, loadedHandler } =
+      await import("../registry/__tests__/registry-helpers");
+    const { handleGeoBackfill } = await import("../reminder/ops-handlers");
+    expect(groupOf(GEO_BACKFILL_QUEUE).name).toBe("maintenance");
+    expect(jobOf(GEO_BACKFILL_QUEUE).cron).toBe(GEO_BACKFILL_CRON);
+    expect(await loadedHandler(GEO_BACKFILL_QUEUE)).toBe(handleGeoBackfill);
   });
 });

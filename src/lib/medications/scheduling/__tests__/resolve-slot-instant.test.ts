@@ -46,6 +46,7 @@ function makeMedication(
     id: "med-1",
     startsOn: null,
     endsOn: null,
+    endedAt: null,
     oneShot: false,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     schedules,
@@ -405,7 +406,7 @@ describe("resolveCanonicalSlotInstant — DST spring-forward", () => {
 });
 
 describe("resolveCanonicalSlotInstant — DST robustness vs projector mint", () => {
-  // v1.8.2 reconcile — the snapped instant MUST be byte-identical to the
+  // v1.8.2 — the snapped instant MUST be byte-identical to the
   // projector/reminder-worker mint, which both use
   // `localHmAsUtc(<the day>, tz, h, m)`. The resolver re-mints via
   // `localHmAsUtc` from the occurrence's local day + time-of-day rather

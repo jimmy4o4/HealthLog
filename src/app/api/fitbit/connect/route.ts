@@ -2,7 +2,8 @@ import { apiHandler, requireAuth } from "@/lib/api-handler";
 import { prisma } from "@/lib/db";
 import { annotate, getEvent } from "@/lib/logging/context";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { getAuthorizationUrl, generatePkcePair } from "@/lib/fitbit/client";
+import { fitbitOAuth } from "@/lib/fitbit/oauth";
+import { generatePkcePair } from "@/lib/integrations/oauth-kit/pkce";
 import { getUserFitbitCredentials } from "@/lib/fitbit/credentials";
 import {
   FITBIT_OAUTH_STATE_COOKIE,
@@ -12,6 +13,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { relativeRedirect } from "@/lib/http/relative-redirect";
 import { shouldEmitSecureCookie } from "@/lib/auth/secure-cookie";
+import { isFitbitRetired } from "@/lib/fitbit/retirement";
 
 /**
  * Redirect the user to the Fitbit OAuth consent page (classic
@@ -57,6 +59,15 @@ export const GET = apiHandler(async (req: NextRequest) => {
     );
   }
 
+  // A grant issued now would never sync anything: Google has turned the Web
+  // API off. The card explains the move to Google Health.
+  if (isFitbitRetired()) {
+    annotate({ action: { name: "fitbit.connect.retired" } });
+    return relativeRedirect(
+      "/settings/integrations?fitbit=error&reason=retired",
+    );
+  }
+
   const creds = await getUserFitbitCredentials(user.id);
   if (!creds) {
     annotate({ action: { name: "fitbit.connect.no_credentials" } });
@@ -84,7 +95,7 @@ export const GET = apiHandler(async (req: NextRequest) => {
     );
   }
 
-  const url = getAuthorizationUrl(nonce, creds, pkce.challenge);
+  const url = fitbitOAuth.authorizationUrl(nonce, creds, pkce.challenge);
 
   const response = NextResponse.redirect(url);
   response.cookies.set(FITBIT_OAUTH_STATE_COOKIE, nonce, {

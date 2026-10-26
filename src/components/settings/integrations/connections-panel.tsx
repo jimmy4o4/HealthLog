@@ -4,7 +4,7 @@
  * `<ConnectionsPanel>` — the connected-services half of Settings →
  * Integrations: Withings / WHOOP / Fitbit / Polar / Oura / Nightscout.
  *
- * v1.18.0 (S3) — extracted out of `integrations-section.tsx` so the section
+ * v1.18.0 — extracted out of `integrations-section.tsx` so the section
  * file can host the Connections / Channels / Sources sub-tabs without growing
  * unbounded. This panel owns the OAuth-callback toast handlers (the four
  * providers + Withings redirect back here with `?<provider>=…` params) and the
@@ -19,6 +19,7 @@ import { showErrorToast } from "@/lib/errors/error-toast";
 
 import { AppleHealthCard } from "@/components/settings/integrations/apple-health-card";
 import { DawarichCard } from "@/components/settings/integrations/dawarich-card";
+import { FitbitRetirementNotice } from "@/components/settings/integrations/fitbit-retirement-notice";
 import { GarminInfoNote } from "@/components/settings/integrations/garmin-info-note";
 import { GoogleHealthCard } from "@/components/settings/integrations/google-health-card";
 import { IntegrationFallbackRow } from "@/components/settings/integrations/integration-fallback-row";
@@ -38,6 +39,7 @@ import { useAuth } from "@/hooks/use-auth";
 import type { IntegrationCallbackUrls } from "@/lib/integrations/callback-urls";
 import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
+import { dropParams, writeUrlState } from "@/lib/url-state";
 
 /**
  * The Withings OAuth callback (`/api/withings/callback`) redirects back
@@ -56,6 +58,7 @@ const WITHINGS_OAUTH_ERROR_KEYS: Record<string, string> = {
   nocode: "settings.withingsOauthError.nocode",
   nocreds: "settings.withingsOauthError.nocreds",
   token: "settings.withingsOauthError.token",
+  already_linked: "settings.withingsOauthError.already_linked",
 };
 
 type WithingsOauthOutcome =
@@ -125,6 +128,8 @@ const OAUTH_OUTCOME_REASONS = new Set([
   "token",
   "rate_limited",
   "expired",
+  // The provider account is already connected to another record.
+  "already_linked",
 ]);
 
 /**
@@ -136,6 +141,9 @@ const PROVIDER_ONLY_REASONS: Partial<
   Record<OAuthOutcomeProvider, ReadonlySet<string>>
 > = {
   oura: new Set(["issuer"]),
+  // Fitbit's `retired`: Google has turned the Web API off, so the connect
+  // route refuses a new grant.
+  fitbit: new Set(["retired"]),
 };
 
 type OAuthOutcome =
@@ -216,6 +224,8 @@ export function ConnectionsPanel({
   const queryClient = useQueryClient();
 
   const { data: integrationStatus } = useIntegrationStatuses(isAuthenticated);
+  const fitbitStatus = pickStatus(integrationStatus, "fitbit");
+  const fitbitRetired = fitbitStatus?.retirement?.ended === true;
 
   // OAuth callback handler — reads `?withings=connected|error&reason=…`
   // from the URL (lazy initialiser, same shape as the Codex handler in
@@ -237,10 +247,7 @@ export function ConnectionsPanel({
     if (!withingsOauthOutcome) return;
     // Scrub the one-shot params so a reload / bookmark doesn't replay
     // the toast.
-    const url = new URL(window.location.href);
-    url.searchParams.delete("withings");
-    url.searchParams.delete("reason");
-    router.replace(`${url.pathname}${url.search}`, { scroll: false });
+    writeUrlState(dropParams("withings", "reason"), { afterPaint: true });
     if (withingsOauthOutcome.kind === "connected") {
       toast.success(t("settings.withingsOauthConnected"));
       queryClient.invalidateQueries({ queryKey: queryKeys.withings() });
@@ -258,7 +265,7 @@ export function ConnectionsPanel({
     }
   }, [withingsOauthOutcome, router, queryClient, t]);
 
-  // v1.17.0 (F4) — generic OAuth-callback toast for the OAuth providers.
+  // v1.17.0 — generic OAuth-callback toast for the OAuth providers.
   // The Polar / Oura / WHOOP / Fitbit callbacks redirect back with
   // `?<provider>=connected` or `?<provider>=error&reason=<tag>`; surface the
   // outcome as a toast and scrub the one-shot params so a reload doesn't replay
@@ -273,10 +280,7 @@ export function ConnectionsPanel({
   useEffect(() => {
     if (!oauthOutcome) return;
     const { provider } = oauthOutcome;
-    const url = new URL(window.location.href);
-    url.searchParams.delete(provider);
-    url.searchParams.delete("reason");
-    router.replace(`${url.pathname}${url.search}`, { scroll: false });
+    writeUrlState(dropParams(provider, "reason"), { afterPaint: true });
     if (oauthOutcome.kind === "connected") {
       toast.success(t(`settings.${provider}OauthConnected`));
       // Polar/Oura own a per-card status query; WHOOP/Fitbit read off the
@@ -331,25 +335,44 @@ export function ConnectionsPanel({
           callbackUrl={callbackUrls.whoop}
         />
       </div>
-      <div id="fitbit" className="scroll-mt-28">
-        <OAuthIntegrationCard
-          config={OAUTH_INTEGRATIONS.fitbit}
-          viewModel={pickStatus(integrationStatus, "fitbit")}
-          callbackUrl={callbackUrls.fitbit}
-          titleAccessory={
-            <>
-              <TagChip>{t("settings.fitbitTag")}</TagChip>
-              <Badge
-                variant="outline"
-                data-testid="fitbit-experimental-badge"
-                className="border-warning/50 text-warning"
-              >
-                {t("settings.fitbitExperimentalBadge")}
-              </Badge>
-            </>
-          }
-        />
-      </div>
+      {/* After the turndown the card is offered only to an account that had
+          Fitbit; the server decides (`retirement.offered`). */}
+      {fitbitStatus?.retirement?.offered !== false && (
+        <div id="fitbit" className="scroll-mt-28">
+          <FitbitRetirementNotice retirement={fitbitStatus?.retirement} />
+          <OAuthIntegrationCard
+            config={OAUTH_INTEGRATIONS.fitbit}
+            viewModel={fitbitStatus}
+            callbackUrl={callbackUrls.fitbit}
+            syncDisabled={fitbitRetired}
+            connectDisabled={fitbitRetired}
+            titleAccessory={
+              <>
+                <TagChip>{t("settings.fitbitTag")}</TagChip>
+                {fitbitStatus?.retirement ? (
+                  <Badge
+                    variant="outline"
+                    data-testid="fitbit-retirement-badge"
+                    className="border-warning/50 text-warning"
+                  >
+                    {fitbitRetired
+                      ? t("settings.fitbitRetirement.badgeEnded")
+                      : t("settings.fitbitRetirement.badgeEnding")}
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    data-testid="fitbit-experimental-badge"
+                    className="border-warning/50 text-warning"
+                  >
+                    {t("settings.fitbitExperimentalBadge")}
+                  </Badge>
+                )}
+              </>
+            }
+          />
+        </div>
+      )}
       <div id="google-health" className="scroll-mt-28">
         <GoogleHealthCard
           viewModel={pickStatus(integrationStatus, "google-health")}

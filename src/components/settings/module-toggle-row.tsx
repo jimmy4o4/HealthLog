@@ -36,6 +36,7 @@ import type { LucideIcon } from "lucide-react";
 
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { InlineAction } from "@/components/ui/inline-action";
 
 export interface ModuleToggleRowProps {
   /** Stable key — used for the input id + the test query handle. */
@@ -91,7 +92,12 @@ export function ModuleToggleRow({
   // is in flight.
   const interactive = !locked && disabledReason == null;
   return (
-    <div className="flex items-start justify-between gap-4 py-3">
+    // `id="module-<key>"` is the anchor other pages link to when they show a
+    // module's state and send the person here to change it.
+    <div
+      id={`module-${moduleKey}`}
+      className="flex scroll-mt-28 items-start justify-between gap-4 py-3"
+    >
       <div className="flex min-w-0 items-start gap-3">
         <Icon
           className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
@@ -112,13 +118,12 @@ export function ModuleToggleRow({
             <p className="text-muted-foreground text-xs">{disabledReason}</p>
           ) : null}
           {manageLink ? (
-            <Link
-              href={manageLink.href}
-              className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-2 hover:underline"
-            >
-              {manageLink.label}
-              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
+            <InlineAction asChild tone="muted">
+              <Link href={manageLink.href}>
+                {manageLink.label}
+                <ChevronRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            </InlineAction>
           ) : null}
         </div>
       </div>

@@ -14,8 +14,9 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { HeartPulse, Upload } from "lucide-react";
 
-import { formatRelative } from "@/components/settings/integration-status-pill";
+import { formatRelative } from "./format-relative";
 import { Button } from "@/components/ui/button";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { apiGet } from "@/lib/api/api-fetch";
 import { useFormatters, useTranslations } from "@/lib/i18n/context";
 import type { ConnectionHealth } from "@/lib/integrations/connection-health";
@@ -136,7 +137,9 @@ function DeliveryDiagnostic({
  * arrives on "Sync all" from one the phone delivers by itself (#1173), plus
  * the last background arrival when a later one came another way. Nothing
  * renders when the server sent no arrival facts (the workouts row, or a failed
- * ledger read), so absence is never painted as "not received".
+ * ledger read), so absence is never painted as "not received". A type the app
+ * writes back to the phone also names when a reading was last entered here
+ * (#1247), since those never arrive back.
  */
 export function ArrivalDetail({
   entry,
@@ -147,10 +150,21 @@ export function ArrivalDetail({
   t: (key: string, params?: Record<string, string | number>) => string;
   now?: Date;
 }) {
-  if (entry.lastReceivedAt === undefined) return null;
   const reference = (now ?? new Date()).getTime();
   const relative = (iso: string) =>
     formatRelative(Math.max(0, reference - new Date(iso).getTime()), t);
+  const enteredHere = entry.lastEnteredHereAt
+    ? t("settings.appleHealth.freshness.lastEnteredHere", {
+        relative: relative(entry.lastEnteredHereAt),
+      })
+    : null;
+  if (entry.lastReceivedAt === undefined) {
+    return enteredHere ? (
+      <span data-testid="apple-health-arrival" data-state="entered-here">
+        {enteredHere}
+      </span>
+    ) : null;
+  }
   // v1.43 (ios #77) — a history catch-up is named apart from the live
   // arrivals, and never counts as one.
   const backfill = entry.lastBackfillAt
@@ -161,7 +175,7 @@ export function ArrivalDetail({
   if (entry.lastReceivedAt === null) {
     return (
       <span data-testid="apple-health-arrival" data-state="never">
-        {[t("settings.appleHealth.freshness.never"), backfill]
+        {[t("settings.appleHealth.freshness.never"), backfill, enteredHere]
           .filter((part): part is string => part !== null)
           .join(", ")}
       </span>
@@ -178,11 +192,24 @@ export function ArrivalDetail({
         : "settings.appleHealth.delivery.trigger.unknown",
     ),
   ];
-  // Only worth a mention when the last arrival brought duplicates alone.
+  // Only worth a mention on a row last written before duplicates stopped
+  // counting as an arrival (#1259); since then the two move together.
   if (entry.lastNewSampleAt && entry.lastNewSampleAt !== entry.lastReceivedAt) {
     parts.push(
       t("settings.appleHealth.freshness.lastNewValue", {
         relative: relative(entry.lastNewSampleAt),
+      }),
+    );
+  }
+  // The phone kept re-sending the type after its last new value: the
+  // arrival above stays put, and this says the type is still being sent.
+  if (
+    entry.lastSeenDuplicateAt &&
+    Date.parse(entry.lastSeenDuplicateAt) > Date.parse(entry.lastReceivedAt)
+  ) {
+    parts.push(
+      t("settings.appleHealth.freshness.lastDuplicate", {
+        relative: relative(entry.lastSeenDuplicateAt),
       }),
     );
   }
@@ -199,6 +226,7 @@ export function ArrivalDetail({
     );
   }
   if (backfill) parts.push(backfill);
+  if (enteredHere) parts.push(enteredHere);
   return (
     <span
       data-testid="apple-health-arrival"
@@ -289,6 +317,8 @@ export function AppleHealthCard({ enabled }: { enabled: boolean }) {
     data: status,
     isLoading,
     isError,
+    error,
+    refetch,
   } = useQuery({
     queryKey: queryKeys.healthKitStatus(),
     queryFn: () => apiGet<HealthKitStatus>("/api/integrations/healthkit"),
@@ -370,9 +400,12 @@ export function AppleHealthCard({ enabled }: { enabled: boolean }) {
       }
     >
       {isError ? (
-        <p role="alert" className="text-destructive text-sm">
-          {t("settings.appleHealth.status.unavailable")}
-        </p>
+        <QueryErrorRow
+          error={error}
+          slot="apple-health-status-error"
+          message={t("settings.appleHealth.status.unavailable")}
+          onRetry={() => void refetch()}
+        />
       ) : null}
     </IntegrationCard>
   );

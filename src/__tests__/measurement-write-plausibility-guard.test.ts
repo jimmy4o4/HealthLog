@@ -19,10 +19,9 @@
  * test substitutes for that review.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { readSourceText, walkSourceFiles } from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -62,17 +61,29 @@ const WRITERS: Record<string, Disposition> = {
   "lib/fitbit/sync-core.ts": { kind: "gate" },
   "lib/google-health/sync-core.ts": { kind: "gate" },
   "lib/nightscout/sync.ts": { kind: "gate" },
+  "lib/oura/sync-heart-rate.ts": { kind: "gate" },
   // The shared identity seam. Polar, Oura, WHOOP, the Withings sleep leg,
   // the Apple export importer and the batch endpoint all write through it,
   // so the gate here is what makes a new provider fail closed.
   "lib/measurements/reconcile-external-measurement.ts": { kind: "gate" },
 
   // ── Person-driven write paths, validated ──────────────────────────────
-  "app/api/measurements/route.ts": {
+  // The hand-entry writes behind `POST /api/measurements`.
+  "lib/measurements/create/create-readings.ts": {
     kind: "upstream",
     validatedIn: "lib/validations/measurement.ts",
   },
-  "app/api/import/route.ts": { kind: "validator" },
+  "lib/import/json/measurements.ts": {
+    kind: "upstream",
+    validatedIn: "lib/import/json/schema.ts",
+  },
+  // The batch ingest's set-based insert writes rows that already passed
+  // `validateMeasurementRange` per entry in its first pass; everything else
+  // goes through the reconciler, which gates itself.
+  "lib/measurements/batch-ingest/write-measurements.ts": {
+    kind: "upstream",
+    validatedIn: "lib/measurements/batch-ingest/prepare.ts",
+  },
   "lib/mcp/writes.ts": { kind: "validator" },
   "lib/measurements/create-from-telegram.ts": { kind: "validator" },
   "lib/measurements/import-apple-health-export.ts": { kind: "validator" },
@@ -80,7 +91,7 @@ const WRITERS: Record<string, Disposition> = {
   // insert after `validateMeasurementRange`; day totals through the gated
   // reconcile seam.
   "lib/import/health-connect/import.ts": { kind: "validator" },
-  "app/api/import/csv/route.ts": {
+  "lib/import/csv-write.ts": {
     kind: "upstream",
     validatedIn: "lib/import/csv-measurements.ts",
   },
@@ -118,7 +129,7 @@ const WRITERS: Record<string, Disposition> = {
   },
 
   // ── Restore ───────────────────────────────────────────────────────────
-  "lib/export/restore-backup.ts": {
+  "lib/export/measurements-restore.ts": {
     kind: "restore",
     why: "replays the record's own export; dropping rows would break the restore contract",
   },
@@ -159,14 +170,25 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
+let writers: string[] | null = null;
+
+/**
+ * Every file that writes a measurement, found once per run. A write names
+ * the `measurement` delegate or the bulk insert's `MeasurementRows`, so a
+ * file holding neither word is skipped before the expressions run.
+ */
 function discoveredWriters(): string[] {
-  return sourceFiles().filter((rel) => {
+  writers ??= sourceFiles().filter((rel) => {
     const text = read(rel);
+    if (!text.includes("measurement") && !text.includes("MeasurementRows")) {
+      return false;
+    }
     return MEASUREMENT_WRITE.test(text) || BULK_INSERT_CALL.test(text);
   });
+  return writers;
 }
 
 describe("every measurement writer declares how it meets the plausibility domain", () => {
@@ -190,9 +212,10 @@ describe("every measurement writer declares how it meets the plausibility domain
   });
 
   it("raw SQL inserts measurements in the bulk-insert module and nowhere else", () => {
-    const raw = sourceFiles().filter((rel) =>
-      RAW_MEASUREMENT_INSERT.test(read(rel)),
-    );
+    const raw = sourceFiles().filter((rel) => {
+      const text = read(rel);
+      return /insert/i.test(text) && RAW_MEASUREMENT_INSERT.test(text);
+    });
     expect(raw).toEqual([BULK_INSERT_MODULE]);
   });
 

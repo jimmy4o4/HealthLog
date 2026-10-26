@@ -31,6 +31,7 @@
  * (`src/lib/jobs/reminder/register-maintenance.ts`) so pg-boss provisions it at
  * boot; an unregistered queue silently never drains.
  */
+// account-deletion(file): encrypts existing rows at rest; it changes how a row is stored, not what the record holds.
 import { prisma } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
@@ -202,7 +203,7 @@ export async function enqueueBootTimeNoteEncryptionBackfill(
   }
 
   try {
-    // v1.28.46 perf (H4) — DB-level SELECT DISTINCT, not Prisma `distinct`.
+    // v1.28.46 — DB-level SELECT DISTINCT, not Prisma `distinct`.
     // Prisma `distinct` fetches EVERY matching row then de-dupes in JS; on the
     // densest table (`measurements`) that is a full un-migrated-partition scan
     // materialised into the worker at boot. `SELECT DISTINCT user_id` de-dupes

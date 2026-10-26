@@ -18,10 +18,9 @@
  * settles is that there is only one of it.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { readSourceText, walkSourceFiles } from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -37,7 +36,7 @@ const HOME_IMPORT = 'from "@/lib/measurement-reminders/due-day"';
  * shared body, that is the regression, not a reason to relax the test.
  */
 const RENDERING_SURFACES = [
-  "components/measurement-reminders/vorsorge-section.tsx",
+  "components/measurement-reminders/checkups/checkup-card.tsx",
   "components/measurement-reminders/vorsorge-dashboard-card.tsx",
 ];
 
@@ -81,7 +80,7 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 /** A line that declares `relativeDueKey`, ignoring comment prose. */

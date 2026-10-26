@@ -17,6 +17,7 @@
  * (`PUT /api/auth/me/ai-usage`); a managed profile has no choice of its own
  * and follows the instance default.
  */
+import { readOperatorRow } from "@/lib/settings/operator-row";
 import { prisma } from "@/lib/db";
 import { getEvent } from "@/lib/logging/context";
 import { memoizePerRequest } from "@/lib/request-cache";
@@ -83,14 +84,7 @@ export function aiUsageSettingsFromRow(
 export function loadAiUsageSettings(): Promise<AiUsageSettings> {
   const read = async (): Promise<AiUsageSettings> => {
     try {
-      const row = await prisma.appSettings.findUnique({
-        where: { id: "singleton" },
-        select: {
-          aiUsageMaxLevel: true,
-          aiUsageDefaultLevel: true,
-          aiSyncRegenGapHours: true,
-        },
-      });
+      const row = await readOperatorRow();
       return aiUsageSettingsFromRow(row);
     } catch {
       getEvent()?.addWarning(
@@ -112,6 +106,11 @@ export function loadAiUsageSettings(): Promise<AiUsageSettings> {
 export interface RecordAiUsage extends AiUsageResolution {
   preference: AiUsageLevel | null;
   settings: AiUsageSettings;
+  /**
+   * The record is pending deletion. Read in the same point read as the level,
+   * so the capability gate's deletion check costs no statement of its own.
+   */
+  deletionPending: boolean;
 }
 
 /**
@@ -124,11 +123,12 @@ export function loadRecordAiUsage(recordId: string): Promise<RecordAiUsage> {
       loadAiUsageSettings(),
       prisma.user.findUnique({
         where: { id: recordId },
-        select: { aiUsageLevel: true },
+        select: { aiUsageLevel: true, deletionRequestedAt: true },
       }),
     ]);
     const preference = usageLevelFromDb(row?.aiUsageLevel);
     return {
+      deletionPending: row?.deletionRequestedAt != null,
       ...resolveAiUsageLevel({
         preference,
         defaultLevel: settings.defaultLevel,

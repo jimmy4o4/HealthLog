@@ -18,6 +18,8 @@ import { useTranslations } from "@/lib/i18n/context";
 import { aiInputDependentKeys, invalidateKeys } from "@/lib/query-keys";
 
 import type { InsightsSettings } from "./shared";
+import { InlineAction } from "@/components/ui/inline-action";
+import { dropParams, writeUrlState } from "@/lib/url-state";
 
 export function CodexProviderForm({
   settings,
@@ -51,10 +53,9 @@ export function CodexProviderForm({
 
   useEffect(() => {
     if (!oauthOutcome) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("codex_connected");
-    url.searchParams.delete("codex_error");
-    window.history.replaceState({}, "", url.toString());
+    writeUrlState(dropParams("codex_connected", "codex_error"), {
+      afterPaint: true,
+    });
     if (oauthOutcome.kind === "connected") {
       void invalidateKeys(queryClient, aiInputDependentKeys);
     }
@@ -209,6 +210,7 @@ export function CodexProviderForm({
       ) : isConnected ? (
         <ConfirmButton
           slot="settings-codex-disconnect"
+          destructive
           variant="outline"
           size="sm"
           className="text-destructive min-h-11 shrink-0 sm:min-h-9"
@@ -241,15 +243,15 @@ export function CodexProviderForm({
               {t("settings.ai.deviceCodeStep2")}
               <div className="bg-card border-border mt-2 inline-flex items-center gap-2 rounded border px-3 py-2 font-mono text-lg tracking-widest">
                 {deviceCode.userCode}
-                <button
-                  type="button"
+                <InlineAction
                   onClick={() =>
                     navigator.clipboard?.writeText(deviceCode.userCode)
                   }
-                  className="text-muted-foreground hover:text-foreground text-xs underline"
+                  tone="muted"
+                  className="underline"
                 >
                   {t("settings.ai.deviceCodeCopy")}
-                </button>
+                </InlineAction>
               </div>
             </li>
             <li>{t("settings.ai.deviceCodeStep3")}</li>

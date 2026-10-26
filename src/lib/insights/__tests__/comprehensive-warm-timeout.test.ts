@@ -33,7 +33,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -112,6 +112,9 @@ import { generateComprehensiveInsight } from "../comprehensive-generate";
 import { AllProvidersFailedError } from "@/lib/ai/provider-runner";
 import { AI_BUDGETS } from "@/lib/ai/ai-budgets";
 
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
+
 const FEATURES = { weight: { count: 12, latest: 81.4, mean30: 82.1 } };
 const VALID = JSON.stringify({ dailyBriefing: { paragraph: "ok" } });
 
@@ -126,7 +129,7 @@ beforeEach(() => {
   findUnique.mockResolvedValue({
     insightsPrivacyMode: "aggregated",
     insightsCachedAt: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
     insightsExcludeMetrics: [],
     insightsSnapshotHash: null,
     insightsBriefingRerollDate: null,
@@ -142,6 +145,7 @@ describe("comprehensive warm-path timeout + failure observability", () => {
       result: { content: VALID, tokensUsed: 10, model: "m" },
       workingProvider: { providerType: "codex" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", { locale: "de" });
@@ -149,6 +153,34 @@ describe("comprehensive warm-path timeout + failure observability", () => {
     expect(outcome).toEqual({ status: "generated", providerType: "codex" });
     const params = runRawCompletionWithFallback.mock.calls[0][0].params;
     expect(params.timeoutMs).toBe(AI_BUDGETS.comprehensive.timeoutMs);
+  });
+
+  it("sends nothing more once the caller's bound has given up (#1279)", async () => {
+    // A slow model: its reply (not valid JSON, so the generator would ask
+    // again) lands only after the warm's bound fired and aborted the run.
+    const controller = new AbortController();
+    runRawCompletionWithFallback.mockImplementation(async () => {
+      controller.abort();
+      return {
+        result: { content: "not json", tokensUsed: 10, model: "m" },
+        workingProvider: { providerType: "codex" },
+        fallbackHops: [],
+        tokensSpent: 0,
+      };
+    });
+
+    await generateComprehensiveInsight("u1", {
+      locale: "de",
+      signal: controller.signal,
+    });
+
+    // The call in flight carried the bound's signal, so the client could tear
+    // its request down, and no retry left after the bound.
+    expect(runRawCompletionWithFallback).toHaveBeenCalledTimes(1);
+    expect(runRawCompletionWithFallback.mock.calls[0][0].params.signal).toBe(
+      controller.signal,
+    );
+    expect(userUpdate).not.toHaveBeenCalled();
   });
 
   it("does not silently persist an empty block when every provider fails", async () => {

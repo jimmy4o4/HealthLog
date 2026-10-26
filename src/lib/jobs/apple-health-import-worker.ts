@@ -26,7 +26,7 @@
  */
 import { unlinkSync } from "node:fs";
 import { getHeapStatistics } from "node:v8";
-import type { MeasurementType, PrismaClient } from "@/generated/prisma/client";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { prisma, toJson } from "@/lib/db";
 import type { Job } from "pg-boss";
 
@@ -34,19 +34,19 @@ import { streamAppleHealthEcgMembers } from "@/lib/apple-health/archive-stream";
 import { parseAppleHealthEcgCsv } from "@/lib/apple-health/ecg-csv";
 import { importAppleHealthEcg } from "@/lib/apple-health/ecg-import";
 import { extractExportXml } from "@/lib/import/unzip-export-xml";
+import { annotate } from "@/lib/logging/context";
+import {
+  importAppleHealthWorkoutRoutes,
+  type WorkoutRouteReference,
+} from "@/lib/apple-health/route-import";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/status-invalidation";
-import { trackBackgroundTask } from "@/lib/logging/background-tasks";
+import { afterBulkImport } from "@/lib/jobs/import-tail";
 import { jobDone, jobFailed, type JobOutcome } from "@/lib/jobs/job-outcome";
 import {
   streamParseExportXml,
   type ImportJobProgress,
   type ImportJobResult,
 } from "@/lib/measurements/import-apple-health-export";
-import {
-  recomputeUserRollups,
-  ROLLUP_FOLD_WINDOW_MS,
-} from "@/lib/rollups/measurement-rollups";
 import { withBackgroundEvent } from "@/lib/logging/background";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import {
@@ -55,10 +55,12 @@ import {
   type StagingInUse,
 } from "@/lib/import/apple-health-staging";
 import { caughtAs, logCaught } from "@/lib/logging/signal";
+import { HEALTH_CONNECT_IMPORT_KIND } from "@/lib/jobs/health-connect-import-worker";
+import { HEALTH_CONNECT_IMPORT_QUEUE } from "@/lib/jobs/health-connect-import-queue";
 import {
-  HEALTH_CONNECT_IMPORT_KIND,
-  HEALTH_CONNECT_IMPORT_QUEUE,
-} from "@/lib/jobs/health-connect-import-worker";
+  APPLE_HEALTH_IMPORT_V2_QUEUE,
+  APPLE_HEALTH_IMPORT_LEGACY_QUEUE,
+} from "./apple-health-import-queue";
 
 /** `ImportJob.kind` of the rows this worker owns. */
 export const APPLE_HEALTH_IMPORT_KIND = "apple_health";
@@ -75,28 +77,6 @@ function queuesForKind(kind: string): readonly string[] {
     ? [HEALTH_CONNECT_IMPORT_QUEUE]
     : [APPLE_HEALTH_IMPORT_V2_QUEUE, APPLE_HEALTH_IMPORT_LEGACY_QUEUE];
 }
-
-/**
- * Queue + cron for the periodic orphan-ImportJob sweep. v1.32.1
- * (issue #588) — `reconcileOrphanImportJobs()` used to run only once,
- * at worker boot. `restart: unless-stopped` in `docker-compose.yml`
- * DOES bring a crashed/OOM-killed worker back up, so the boot-time
- * pass usually catches a dead run — but only when that restart lands
- * AFTER the row's heartbeat has already gone stale (30 minutes) or
- * pg-boss no longer reports the backing job as live. A fast restart
- * lands neither condition true yet, and because the pass runs
- * exactly once per boot, a worker that then stays up and healthy
- * NEVER re-evaluates that row — it is stuck in `unpacking` /
- * `parsing` / `upserting` with "0 rows imported" forever and no
- * failure ever surfaced to the status poll. A 15-minute cron closes
- * that gap: within two ticks of the heartbeat going stale, the same
- * idempotent reconcile flips the row to `failed` with an honest
- * reason, so the UI's "Unpacking the archive…" spinner eventually
- * turns into a visible, actionable error instead of an indefinite
- * silent stall.
- */
-export const IMPORT_JOB_RECONCILE_QUEUE = "apple-health-import-reconcile";
-export const IMPORT_JOB_RECONCILE_CRON = "*/15 * * * *";
 
 /**
  * Cron handler for the periodic orphan-ImportJob sweep. Delegates to
@@ -145,12 +125,6 @@ export async function handleImportJobReconcileTick(
   );
 }
 
-/** Queue name isolated from revision-1 workers during rolling deployments. */
-export const APPLE_HEALTH_IMPORT_V2_QUEUE = "apple-health-import-v2";
-
-/** Queue used by pre-revision-2 binaries; new workers only bridge its backlog. */
-export const APPLE_HEALTH_IMPORT_LEGACY_QUEUE = "apple-health-import";
-
 /** Parser semantics carried by every newly-created ImportJob. */
 export const APPLE_HEALTH_IMPORT_PARSER_REVISION = 3;
 
@@ -162,9 +136,6 @@ const APPLE_HEALTH_ECG_ARCHIVE_LIMITS = {
   maxCompressionRatio: 200,
 } as const;
 const APPLE_HEALTH_ECG_MAX_SAMPLES = 2_000_000;
-
-/** Concurrency cap per worker host. */
-export const APPLE_HEALTH_IMPORT_CONCURRENCY = 1;
 
 /**
  * (issue #775) Memory preflight for the parse. The streaming pipeline
@@ -428,8 +399,11 @@ export async function handleAppleHealthImport(
     // user has no preference set.
     const userRow = await prisma.user.findUnique({
       where: { id: userId },
-      select: { timezone: true },
+      select: { timezone: true, storeWorkoutRoutes: true },
     });
+    // GPS tracks are read from the archive only when the person keeps them.
+    const keepRoutes = userRow?.storeWorkoutRoutes === true;
+    const routeReferences: WorkoutRouteReference[] = [];
     const userTimezone =
       userRow?.timezone && userRow.timezone.length > 0
         ? userRow.timezone
@@ -471,6 +445,9 @@ export async function handleAppleHealthImport(
         userId,
         userTimezone,
         prisma,
+        ...(keepRoutes
+          ? { onWorkoutRoute: (ref) => void routeReferences.push(ref) }
+          : {}),
         onProgress: async (snapshot) => {
           // The phase label here is what the polling endpoint surfaces;
           // map "parsing" / "upserting" through verbatim.
@@ -536,6 +513,31 @@ export async function handleAppleHealthImport(
       ecg.failed += Math.max(0, ecg.discovered - completed);
     }
 
+    // Workout GPS tracks, on opt-in only. Fail-soft like the ECGs: the
+    // workouts are committed, a track that cannot be read is only counted.
+    // Read one member at a time from the archive; nothing about a track
+    // reaches the result but the count.
+    if (routeReferences.length > 0) {
+      const routes = await importAppleHealthWorkoutRoutes({
+        archivePath: uploadPath,
+        userId,
+        references: routeReferences,
+        prisma,
+      });
+      result.workouts.routesAttached = routes.attached;
+      annotate({
+        action: { name: "apple_health.import.workout_routes" },
+        meta: {
+          referenced: routeReferences.length,
+          discovered: routes.discovered,
+          attached: routes.attached,
+          skipped: routes.skipped,
+          failed: routes.failed,
+        },
+      });
+      routeReferences.length = 0;
+    }
+
     // Done. Persist the terminal envelope.
     await prisma.importJob.update({
       where: { id: importJobId },
@@ -553,70 +555,13 @@ export async function handleAppleHealthImport(
       },
     });
 
-    // v1.5.0 — fold the persistent rollup table for the imported
-    // user. The per-row write hooks are intentionally skipped on the
-    // streaming-ingest path (a 100k-row import would otherwise pay
-    // 100k DAY-recompute round-trips); we run the rollup once at
-    // the end, scoped to the user's full measurement span, so
-    // post-import reads of the analytics + comprehensive surfaces
-    // hit the warm rollup table on first paint.
-    //
-    // The miss rides out as a fact rather than as a failed job: the
-    // import is committed and its mirror row already reads `done`, so
-    // failing here would report a completed import as failed and
-    // contradict the row the status poll surfaces to the operator.
-    let rollupFailed = false;
-    try {
-      // Folded over what this import wrote, not over the account's whole
-      // history, and never further back than the fold window every other
-      // path keeps to: buckets older than `ROLLUP_FOLD_WINDOW_MS` are by
-      // design never written, so reads there fall back to live SQL. The old
-      // span ran from the account's first measurement, whatever the import
-      // carried, and folded any history older than the window as well.
-      const span = result.measuredSpan;
-      if (span) {
-        const windowStart = new Date(Date.now() - ROLLUP_FOLD_WINDOW_MS);
-        const spanFrom = new Date(span.from);
-        const from = spanFrom > windowStart ? spanFrom : windowStart;
-        // `to` is exclusive in the aggregator, so one millisecond past the
-        // newest row.
-        const to = new Date(new Date(span.to).getTime() + 1);
-        if (to > from) {
-          await recomputeUserRollups(userId, { from, to });
-        }
-      }
-    } catch (rollupErr) {
-      // Rollup failure is non-fatal — the next read falls through to
-      // live aggregation. Log but don't poison the import.
-      rollupFailed = true;
-      console.warn(
-        `[apple-health-import] Rollup recompute failed for user ${userId}`,
-        rollupErr,
-      );
-    }
-
-    // The imported types' cached status assessments describe data that just
-    // changed; re-warm them, the second leg every other measurement write
-    // runs (`afterMeasurementMutation`). The rollups above are refolded over
-    // the import's span rather than per day, so the leg is called directly.
-    const importedTypes = Object.entries(result.perType)
-      .filter(([, stat]) => stat.inserted + stat.updated > 0)
-      .map(([type]) => type as MeasurementType);
-    if (importedTypes.length > 0) {
-      // Registered so the test suite can await the detached handle.
-      trackBackgroundTask(
-        invalidateStatusInsightsForTypes(userId, importedTypes, {
-          // An export file the person chose to import, narrated like any
-          // other import rather than held to the sync gap.
-          source: "manual",
-        }).catch((err) => {
-          console.warn(
-            `[apple-health-import] status-insight invalidate failed for user ${userId}`,
-            err,
-          );
-        }),
-      );
-    }
+    // Rollups, measurement caches and status assessments over what the
+    // import wrote (`afterBulkImport`).
+    const { rollupFailed } = await afterBulkImport(
+      userId,
+      result,
+      "apple-health-import",
+    );
 
     // Best-effort cleanup. A failed unlink is not fatal — `/tmp` is
     // periodically swept on the host.
@@ -706,6 +651,7 @@ const LIVE_PG_BOSS_STATES = new Set(["active", "created", "retry"]);
  */
 export async function stagedImportFilesInUse(): Promise<StagingInUse | null> {
   const prisma = getWorkerPrisma();
+  // account-deletion: staged files of running imports, not accounts.
   const rows = await prisma.importJob.findMany({
     where: { status: { in: [...ACTIVE_IMPORT_STATUSES] } },
     select: { status: true, pgBossJobId: true, kind: true },
@@ -767,6 +713,7 @@ export async function stagedImportFilesInUse(): Promise<StagingInUse | null> {
  */
 export async function reconcileOrphanImportJobs(): Promise<void> {
   const prisma = getWorkerPrisma();
+  // account-deletion: import-job bookkeeping after a restart, not work for an account.
   const candidates = await prisma.importJob.findMany({
     where: {
       status: { in: ["unpacking", "parsing", "upserting"] },

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { GlassWater } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { QueryErrorCard } from "@/components/ui/query-error-card";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TileHeader } from "@/components/insights/tile-header";
 import { NutrientDailyBarChartDynamic } from "@/components/charts/nutrient-daily-bar-chart-dynamic";
@@ -22,7 +22,7 @@ const WINDOW_DAYS = 30;
  * reference-intake meta line (omitted when the profile has no sex on
  * file — the catalog's own contract), a 30-day bar chart with a dashed
  * reference line. No ring, no attainment colour — the bar chart with a
- * reference line IS the context (UI-STANDARDS: value stays foreground,
+ * reference line IS the context (ui-standards.md: value stays foreground,
  * never coloured by attainment). Display only: water arrives by sync
  * (Apple Health etc.), there is no in-app water entry here.
  */
@@ -30,7 +30,7 @@ export function HydrationCard() {
   const { t } = useTranslations();
   const fmt = useFormatters();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.nutrientDaily("water", WINDOW_DAYS),
     queryFn: () =>
       apiGet<NutrientDailySeries>(
@@ -38,8 +38,25 @@ export function HydrationCard() {
       ),
   });
 
-  if (isError) {
-    return <QueryErrorCard onRetry={refetch} />;
+  // The card keeps its frame and title on a failed read, like the caffeine
+  // card beside it, so the page does not change shape under the reader.
+  if (isError && !data) {
+    return (
+      <Card data-slot="nutrients-hydration-card">
+        <CardHeader>
+          <TileHeader icon={GlassWater} title={t("nutrients.names.water")} />
+        </CardHeader>
+        <CardContent>
+          <QueryErrorRow
+            inset
+            error={error}
+            slot="nutrients-hydration-error"
+            message={t("nutrients.hydration.loadError")}
+            onRetry={() => void refetch()}
+          />
+        </CardContent>
+      </Card>
+    );
   }
 
   const todayTotal = data?.days.at(-1)?.amount ?? 0;

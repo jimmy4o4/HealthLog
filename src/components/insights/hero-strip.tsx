@@ -135,9 +135,14 @@ export function HeroStrip({
   // "yesterday" / "on DD.MM."), matching the briefing + per-metric cards so the
   // hero no longer reads relative while the cards below it read absolute. The
   // day boundary follows the user's profile timezone.
-  const generatedLine = updatedAt
-    ? formatUpdatedLabel(updatedAt, t, fmt.dateShort, fmt.time, displayTz)
-    : null;
+  // The caption dates the SUBTITLE, so it shows only when the subtitle is a
+  // briefing. The cache stamp moves on every warm, including one that keeps
+  // yesterday's text, which the read then withholds: without a briefing it
+  // put "Updated today" under the generic fallback sentence.
+  const generatedLine =
+    briefing && updatedAt
+      ? formatUpdatedLabel(updatedAt, t, fmt.dateShort, fmt.time, displayTz)
+      : null;
 
   return (
     <div
@@ -164,7 +169,7 @@ export function HeroStrip({
       >
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="flex items-center gap-2">
-            {/* Header glyph stays in the foreground tier — UI-STANDARDS §1
+            {/* Header glyph stays in the foreground tier — ui-standards.md §1
                   reserves primary/accent for actions, not decorative header
                   icons. */}
             <Sparkles
@@ -178,7 +183,7 @@ export function HeroStrip({
               {greeting}
             </h1>
           </div>
-          {/* v1.22 (W6) — the briefing paragraph renders through ProseBlocks
+          {/* v1.22 — the briefing paragraph renders through ProseBlocks
                 so a multi-paragraph verdict-first briefing shows real paragraph
                 spacing (still plain text children, no markdown). */}
           <div
@@ -201,11 +206,9 @@ export function HeroStrip({
             )}
             {generatedLine && (
               <>
-                {briefing && (
-                  <span aria-hidden="true" className="opacity-50">
-                    ·
-                  </span>
-                )}
+                <span aria-hidden="true" className="opacity-50">
+                  ·
+                </span>
                 <span data-slot="insights-hero-strip-generated">
                   {generatedLine}
                 </span>

@@ -23,9 +23,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "./helpers/source-files";
 
 const READS = join(process.cwd(), "src/lib/dashboard/summary-reads.ts");
-const ROUTE = join(process.cwd(), "src/app/api/dashboard/summary/route.ts");
+/** The summary's builder, moved out of its route; it makes the reads. */
+const ROUTE = join(process.cwd(), "src/lib/dashboard/summary/build.ts");
 
 /**
  * Source with every comment removed, so a guard matches the SQL the
@@ -34,9 +36,7 @@ const ROUTE = join(process.cwd(), "src/app/api/dashboard/summary/route.ts");
  * shape being warned about.
  */
 function code(path: string): string {
-  return readFileSync(path, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  return stripComments(readFileSync(path, "utf8"), path);
 }
 
 describe("dashboard summary reads — latest reading per type", () => {
@@ -85,7 +85,7 @@ describe("dashboard summary reads — sparkline rollup buckets", () => {
     // defeat statement reuse.
     const sql = code(READS);
     const casts = sql.match(/\}::"measurement_type"\[\]/g) ?? [];
-    expect(casts.length).toBe(2);
+    expect(casts.length).toBe(3);
     expect(sql).not.toMatch(/\$queryRawUnsafe/);
   });
 });
@@ -97,10 +97,9 @@ describe("dashboard summary reads — the route keeps using them", () => {
     expect(route).toMatch(
       /readSparkBuckets\(\s*prisma,\s*userId,\s*measurementTypes,/,
     );
-    // No second copy of the rollup read can drift out of the guarded
-    // module. (`FROM measurements` still appears in the route's own
-    // streak-day aggregate, which is a bounded 365-row read and not part
-    // of this finding.)
+    expect(route).toMatch(/readActivityDayKeys\(\s*prisma,\s*userId,/);
+    // No second copy of a read can drift out of the guarded module.
     expect(route.includes("FROM measurement_rollups")).toBe(false);
+    expect(route.includes("FROM measurements")).toBe(false);
   });
 });

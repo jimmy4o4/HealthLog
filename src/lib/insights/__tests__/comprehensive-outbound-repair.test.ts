@@ -30,7 +30,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -95,6 +95,10 @@ vi.mock("@/lib/cache/invalidate", () => ({
 }));
 
 import { generateComprehensiveInsight } from "../comprehensive-generate";
+import { openInsightsCachedText } from "@/lib/insights/cached-text-cipher";
+
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
 
 const FEATURES = { weight: { count: 12, latest: 81.4, mean30: 82.1 } };
 
@@ -112,7 +116,7 @@ beforeEach(() => {
   findUnique.mockResolvedValue({
     insightsPrivacyMode: "aggregated",
     insightsCachedAt: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
     insightsExcludeMetrics: [],
     insightsSnapshotHash: null,
     insightsBriefingRerollDate: null,
@@ -133,6 +137,7 @@ function reply(content: string) {
     result: { content, tokensUsed: 10, model: "m" },
     workingProvider: { providerType: "openai" },
     fallbackHops: [],
+    tokensSpent: 0,
   };
 }
 
@@ -151,7 +156,11 @@ describe("comprehensive outbound-screen repair", () => {
     expect(repairPrompt).toContain("withheld by the safety screen");
     expect(repairPrompt).toContain("CAUSES");
     // The repaired text is what lands in the cache, never the screened one.
-    const written = JSON.stringify(userUpdate.mock.calls.at(-1));
+    // Sealed at rest: open the payload, or `not.toContain` below would pass
+    // against ciphertext whatever was written.
+    const written = openInsightsCachedText(
+      (userUpdate.mock.calls.at(-1) as unknown as [{ data: object }])[0].data,
+    );
     expect(written).toContain("on days when you slept longer");
     expect(written).not.toContain("because you slept more");
   });

@@ -11,15 +11,15 @@
  */
 
 import { dayOffsetToDayKey } from "@/lib/insights/bucket-series";
-import {
-  MOOD_GREEN_MAX,
-  MOOD_GREEN_MIN,
-  type DailyPoint,
-  type MoodAggregateEntry,
+import { MOOD_GREEN_MAX, MOOD_GREEN_MIN } from "@/lib/insights/mood-bands";
+import type {
+  DailyPoint,
+  MoodAggregateEntry,
 } from "@/lib/insights/mood-aggregates";
 import { round } from "@/lib/insights/status-shared";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import { wallClockInTz } from "@/lib/tz/wall-clock";
+import { READING_SPREAD, standardDeviation } from "@/lib/stats/spread";
 
 // --- In-target % over the last 30 daily points (lifted from mood-status) ---
 
@@ -289,11 +289,11 @@ export function computeMoodStability(
 ): MoodStability | null {
   if (daily.length < STABILITY_MIN_DAYS) return null;
 
-  const values = daily.map((bucket) => bucket.value);
-  const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
-  const variance =
-    values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length;
-  const stdDev = Math.sqrt(variance);
+  const stdDev =
+    standardDeviation(
+      daily.map((bucket) => bucket.value),
+      READING_SPREAD,
+    ) ?? 0;
 
   const normalised =
     Math.min(stdDev, STABILITY_SD_FULL_SCALE) / STABILITY_SD_FULL_SCALE;

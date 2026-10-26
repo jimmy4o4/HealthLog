@@ -376,7 +376,7 @@ const TIER_ORDER: RollupGranularity[] = ["DAY", "WEEK", "MONTH", "YEAR"];
  * future tier ever risks an unbounded count it must step coarser rather
  * than truncate; no silent cap lives on this path.
  *
- * v1.26.0 SEAM-N2 — the reader is bounded to the REQUESTED `[from, to]`
+ * v1.26.0 — the reader is bounded to the REQUESTED `[from, to]`
  * window on BOTH ends, not a trailing "now − windowDays … now" slice.
  * The caller passes arbitrary ISO instants (a historic "All" range whose
  * `to` need not be ≈ now), so anchoring on `Date.now()` returned the wrong
@@ -394,6 +394,8 @@ export async function readTieredRollupSeries(opts: {
 }): Promise<{
   granularity: RollupGranularity;
   rows: TieredSeriesRow[];
+  /** The first DAY bucket in the window: where the rollups' history starts. */
+  firstDay: Date;
 } | null> {
   const { userId, type, from, to, priorityJson } = opts;
   // Tier selection keys off the window WIDTH; derive it the same way the
@@ -454,6 +456,7 @@ export async function readTieredRollupSeries(opts: {
   });
   return {
     granularity,
+    firstDay: first,
     rows: rows.map((r) => ({
       type,
       // The chart's quantity at every tier: the average day of the bucket,

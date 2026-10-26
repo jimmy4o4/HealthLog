@@ -11,9 +11,10 @@ import { join } from "node:path";
 const mockPathnameRef = { value: "/settings/account" };
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathnameRef.value,
+  useRouter: () => ({ replace: () => {}, push: () => {} }),
 }));
 
-// v1.18.0 (S5) — the shell module-gates per-submodule nav entries off
+// v1.18.0 — the shell module-gates per-submodule nav entries off
 // `useAuth().user.modules`. The mock returns a user whose modules map is
 // mutated per-test via `mockModulesRef`. `undefined` (the default) means
 // every gate fails open, so all entries render.
@@ -59,6 +60,9 @@ import {
   SettingsShell,
   isSettingsSectionSlug,
 } from "../settings-shell";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 function renderShell(props: {
   active?: (typeof SETTINGS_SECTION_SLUGS)[number];
@@ -95,7 +99,7 @@ describe("SETTINGS_SECTION_SLUGS", () => {
     // one place.
     // v1.4.25 W5e added `sources` between `thresholds` and `ai`; v1.4.34
     // IW-D merged it into `thresholds`; v1.8.7.1 split it back out.
-    // v1.18.0 (S3) — `sources` is no longer a standalone slug: source
+    // v1.18.0 — `sources` is no longer a standalone slug: source
     // priority folded into Settings → Integrations as the "Sources"
     // sub-tab. `/settings/sources` 301-redirects to `/settings/integrations`.
     // v1.15.18 — `insights` sits between `dashboard` and `thresholds`: the
@@ -106,21 +110,21 @@ describe("SETTINGS_SECTION_SLUGS", () => {
     // v1.17 — `mood` sits between `medications` and `thresholds`: the
     // mood-tag management surface (groups, custom tags, hide/archive,
     // picker order), reached from the /mood page header's wrench glyph.
-    // v1.17.1 (F-2) — `layout` is the one "Layout & Personalization" home
+    // v1.17.1 — `layout` is the one "Layout & Personalization" home
     // and sits after `notifications`. The four personalization editor
     // slugs (`dashboard`, `insights`, `medications`, `mood`) keep their
     // routes so deep links resolve, but they are reached through the
     // Layout hub instead of four standalone nav entries.
-    // v1.18.0 (S4) — the standalone `reminders` hub is gone; reminder TYPES
+    // v1.18.0 — the standalone `reminders` hub is gone; reminder TYPES
     // live in `notifications`, each gated on its module. `/settings/reminders`
     // 301-redirects to `/settings/notifications`.
     // v1.18.0 — `modules` ("Was du trackst") sits right after `account` as
     // the single front door for enabling/disabling secondary domains.
-    // v1.18.0 (S5) — `gesundheitsakte` (the full health-record export) lifts
+    // v1.18.0 — `gesundheitsakte` (the full health-record export) lifts
     // out of Export & Import into its own top-level entry, before `export`;
     // `coach` gathers the Coach preference cards out of the AI section and
     // sits right after `ai`.
-    // v1.18.1 (D4) — `channels` + `sources` split out of the Integrations
+    // v1.18.1 — `channels` + `sources` split out of the Integrations
     // sub-tabs into their own left-side entries, right after `integrations`.
     // v1.25.3 — `channels` folded back into Notifications as an in-page group;
     // `/settings/channels` 301-redirects to `/settings/notifications#channels`.
@@ -148,10 +152,10 @@ describe("SETTINGS_SECTION_SLUGS", () => {
       // redirects in next.config.ts, so the dynamic route could never
       // serve them.
       "layout",
-      // v1.25 (W-ENV) — Environment (home location, travel overrides, backfill),
+      // v1.25 — Environment (home location, travel overrides, backfill),
       // module-gated on the opt-in `environment` module.
       "environment",
-      // v1.25 (W-RECORDS) — Anamnese (allergies + family history), always shown.
+      // v1.25 — Anamnese (allergies + family history), always shown.
       "anamnesis",
       // v1.35.0 — the Health Score composition surface.
       "score",
@@ -168,6 +172,15 @@ describe("SETTINGS_SECTION_SLUGS", () => {
       "privacy",
       "about",
     ]);
+  });
+
+  it("lists no Preview features page until the topic pages ship", () => {
+    // The stored flag and its API stay; the page and its nav entry return
+    // with the first preview the switch actually turns on.
+    expect(isSettingsSectionSlug("preview")).toBe(false);
+    expect(SETTINGS_SECTIONS.some((s) => s.slug === ("preview" as never))).toBe(
+      false,
+    );
   });
 
   it("`isSettingsSectionSlug` accepts known slugs and rejects others", () => {
@@ -190,23 +203,58 @@ describe("SETTINGS_SECTION_SLUGS", () => {
 });
 
 describe("<SettingsShell>", () => {
-  it("keeps meaningful non-interactive desktop groups while the mobile strip uses quiet separators", () => {
+  it("renders the nine groups as non-interactive sidebar headers, in order", () => {
     const html = renderShell({ active: "account" });
-    for (const label of [
+    const labels = [
       "Account",
-      "Your data",
-      "Display",
+      "Tracking",
+      "Arrangement",
+      "Notifications",
       "Health profile",
       "AI",
-      "Connectivity",
+      "Connections",
+      "Data",
       "System",
-    ]) {
-      expect(html).toContain(`>${label}</li>`);
+    ];
+    let cursor = -1;
+    for (const label of labels) {
+      const at = html.indexOf(`>${label}</li>`);
+      expect(at, label).toBeGreaterThan(cursor);
+      cursor = at;
     }
-    // Seven groups produce six quiet separators in the mobile strip.
-    expect(
-      html.match(/aria-hidden="true"/g)?.length ?? 0,
-    ).toBeGreaterThanOrEqual(6);
+  });
+
+  it("puts every section in the group the plan names", () => {
+    const groupOf = Object.fromEntries(
+      SETTINGS_SECTIONS.map((section) => [section.slug, section.group]),
+    );
+    expect(groupOf).toEqual({
+      account: "account",
+      security: "account",
+      access: "account",
+      modules: "tracking",
+      layout: "arrangement",
+      notifications: "notifications",
+      score: "healthProfile",
+      thresholds: "healthProfile",
+      anamnesis: "healthProfile",
+      environment: "healthProfile",
+      ai: "ai",
+      coach: "ai",
+      integrations: "connections",
+      sources: "connections",
+      api: "connections",
+      mcp: "connections",
+      export: "data",
+      gesundheitsakte: "data",
+      privacy: "data",
+      advanced: "data",
+      about: "system",
+    });
+    // Every routable section has a nav entry, and nothing else does.
+    expect([...SETTINGS_SECTIONS.map((s) => s.slug)].sort()).toEqual(
+      [...SETTINGS_SECTION_SLUGS].sort(),
+    );
   });
 
   it("starts the sticky desktop sidebar on the heading row", () => {
@@ -227,19 +275,14 @@ describe("<SettingsShell>", () => {
     expect(source).not.toMatch(/<aside[\s\S]*?md:row-start-2/);
   });
 
-  it("renders every navigable section link — once for the mobile strip and once for the desktop sidebar", () => {
+  it("renders every navigable section link in the sidebar", () => {
     const html = renderShell({ active: "account" });
-    // Every slug — including `about`, which returned to the shell nav
-    // as the last entry after living dropdown-only since v1.4.33 IW7 —
-    // renders in both layouts.
+    // The phone's section sheet mounts its list only when opened, so the
+    // server markup carries each link once, in the desktop sidebar.
     const navigableSlugs = SETTINGS_SECTIONS.map((section) => section.slug);
     for (const slug of navigableSlugs) {
       const matches = html.match(new RegExp(`href="/settings/${slug}"`, "g"));
-      // Two renders — mobile strip + desktop sidebar — guarantee the link
-      // exists in both layouts. Tablet/desktop hide the strip with `md:`,
-      // but the markup is always present so it's keyboard-discoverable
-      // before media queries resolve.
-      expect(matches?.length ?? 0).toBe(2);
+      expect(matches?.length ?? 0).toBe(1);
     }
   });
 
@@ -256,9 +299,9 @@ describe("<SettingsShell>", () => {
 
   it('marks the active section with aria-current="page" (and only that one)', () => {
     const html = renderShell({ active: "notifications" });
-    // Both layouts emit the active link, so two `aria-current="page"`.
+    // The sidebar marks the active link; the phone sheet is closed.
     const occurrences = html.match(/aria-current="page"/g);
-    expect(occurrences?.length ?? 0).toBe(2);
+    expect(occurrences?.length ?? 0).toBe(1);
 
     // And the active link is on the notifications href. Attribute order
     // in React SSR is alphabetic, so `aria-current` precedes `href` —
@@ -266,26 +309,36 @@ describe("<SettingsShell>", () => {
     // future React renderer changes.
     const activeLinkRegex =
       /<a\b[^>]*\baria-current="page"[^>]*\bhref="\/settings\/notifications"|<a\b[^>]*\bhref="\/settings\/notifications"[^>]*\baria-current="page"/g;
-    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(2);
+    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(1);
   });
 
   it("derives the active slug from the current pathname when `active` is omitted", () => {
     const html = renderShell({ pathname: "/settings/api" });
     const activeLinkRegex =
       /<a\b[^>]*\baria-current="page"[^>]*\bhref="\/settings\/api"|<a\b[^>]*\bhref="\/settings\/api"[^>]*\baria-current="page"/g;
-    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(2);
+    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(1);
   });
 
-  it("highlights the Layout hub when on a Layout child editor (v1.17.1 F-2)", () => {
-    // On `/settings/dashboard` (a Layout child reached through the hub) the
-    // Layout nav entry must read active even though Dashboard has no nav
-    // entry of its own. Both layouts emit the active link → two matches.
-    for (const child of ["/settings/dashboard", "/settings/insights"]) {
+  it("highlights the Arrangement hub on a legacy child path and on its sub-pages", () => {
+    // `/settings/dashboard` (a redirected legacy child) and the sub-pages
+    // under `/settings/layout/<id>` both read as the Arrangement entry.
+    for (const child of [
+      "/settings/dashboard",
+      "/settings/insights",
+      "/settings/layout/labs",
+    ]) {
       const html = renderShell({ pathname: child });
       const layoutActive =
         /<a\b[^>]*\baria-current="page"[^>]*\bhref="\/settings\/layout"|<a\b[^>]*\bhref="\/settings\/layout"[^>]*\baria-current="page"/g;
-      expect(html.match(layoutActive)?.length ?? 0).toBe(2);
+      expect(html.match(layoutActive)?.length ?? 0).toBe(1);
     }
+  });
+
+  it("highlights Modules on a module's own settings page", () => {
+    const html = renderShell({ pathname: "/settings/modules/labs" });
+    const modulesActive =
+      /<a\b[^>]*\baria-current="page"[^>]*\bhref="\/settings\/modules"|<a\b[^>]*\bhref="\/settings\/modules"[^>]*\baria-current="page"/g;
+    expect(html.match(modulesActive)?.length ?? 0).toBe(1);
   });
 
   // v1.37.19 — the Layout children left `SETTINGS_SECTION_SLUGS`, so no
@@ -421,7 +474,7 @@ describe("<SettingsShell>", () => {
     const html = renderShell({ pathname: "/settings/totally-bogus" });
     const activeLinkRegex =
       /<a\b[^>]*\baria-current="page"[^>]*\bhref="\/settings\/account"|<a\b[^>]*\bhref="\/settings\/account"[^>]*\baria-current="page"/g;
-    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(2);
+    expect(html.match(activeLinkRegex)?.length ?? 0).toBe(1);
   });
 
   it("resolves every section title via the i18n provider — English", () => {
@@ -432,12 +485,13 @@ describe("<SettingsShell>", () => {
     // (single-line; the longer "Notification channels" wrapped). The
     // `/notifications` inbox now shares the "Notifications" label.
     expect(html).toContain("Notifications");
-    // v1.17.1 (F-2) — the view/arrangement editors are reached through one hub
+    // v1.17.1 — the view/arrangement editors are reached through one hub
     // entry (route stays `/settings/layout`). v1.42 — the hub is named
     // "Layout": it arranges and picks what each module shows and holds no
     // theme, so "Appearance" promised a control it does not have.
     expect(html).toContain('href="/settings/layout"');
-    expect(html).toContain(">Layout</a>");
+    // v1.44 — the hub holds only order and view, and says so.
+    expect(html).toContain(">Arrangement</a>");
     // v1.25.3 — Channels folded into Notifications, so it is no longer a
     // left-side entry; Sources keeps its own.
     expect(html).not.toContain('href="/settings/channels"');
@@ -452,17 +506,17 @@ describe("<SettingsShell>", () => {
     // The ampersand is HTML-escaped by React SSR — assert on the encoded
     // form so we don't accidentally match a parser that double-escapes.
     expect(html).toContain("API &amp; tokens");
-    // v1.18.0 (S5) — the health record is its own top-level entry.
+    // v1.18.0 — the health record is its own top-level entry.
     expect(html).toContain('href="/settings/gesundheitsakte"');
     expect(html).toContain("Health record");
-    // v1.4.16 phase B7: the consolidated Export section is a top-level
+    // v1.4.16: the consolidated Export section is a top-level
     // entry in the sidebar; the link must be present in both locales.
     expect(html).toContain('href="/settings/export"');
     expect(html).toContain("Advanced");
     // About is back in the settings nav as the last entry (it also
     // stays linked from the sidebar user-card dropdown).
     expect(html).toContain('href="/settings/about"');
-    // v1.18.1 (D4) — Sources is a standalone nav entry again (split out of
+    // v1.18.1 — Sources is a standalone nav entry again (split out of
     // the Integrations sub-tabs). Targets keeps its own entry.
     expect(html).toContain('href="/settings/thresholds"');
     expect(html).toContain('href="/settings/sources"');
@@ -477,11 +531,11 @@ describe("<SettingsShell>", () => {
     // compound "Benachrichtigungs-Kanäle" wrapped). The `/notifications`
     // inbox now shares the "Benachrichtigungen" label.
     expect(html).toContain("Benachrichtigungen");
-    // v1.17.1 (F-2) — the view editors are reached through one hub entry
+    // v1.17.1 — the view editors are reached through one hub entry
     // (route stays `/settings/layout`). v1.42 — "Layout" in German too;
     // "Darstellung" now names the account page's language-and-units card.
     expect(html).toContain('href="/settings/layout"');
-    expect(html).toContain(">Layout</a>");
+    expect(html).toContain(">Anordnung</a>");
     // v1.25.3 — Channels ("Kanäle") folded into Notifications; Sources keeps
     // its own left-side entry.
     expect(html).not.toContain('href="/settings/channels"');
@@ -491,7 +545,7 @@ describe("<SettingsShell>", () => {
     expect(html).not.toContain('href="/settings/mood"');
     // Targets keeps its German nav entry ("Zielwerte").
     expect(html).toContain("Zielwerte");
-    // v1.18.6 (W9) — the AI section is named "KI-Anbieter" in German: the
+    // v1.18.6 — the AI section is named "KI-Anbieter" in German: the
     // page is about the provider / BYOK, not an "Auswertung".
     expect(html).toContain("KI-Anbieter");
     // German keeps the noun capitalised: "API & Tokens".
@@ -500,7 +554,7 @@ describe("<SettingsShell>", () => {
     // "Über diese App" (About) is back as the last in-shell nav entry
     // (the sidebar user-card dropdown keeps its own link too).
     expect(html).toContain('href="/settings/about"');
-    // v1.18.1 (D4) — Sources is a standalone nav entry again.
+    // v1.18.1 — Sources is a standalone nav entry again.
     expect(html).toContain('href="/settings/sources"');
   });
 
@@ -509,17 +563,14 @@ describe("<SettingsShell>", () => {
     expect(html).not.toContain("settings.sections.");
   });
 
-  it("mobile section strip uses `no-scrollbar` so the swipe area doesn't paint a horizontal scrollbar", () => {
-    // The 10-section strip is wider than 393 CSS px, so without
-    // `no-scrollbar` Chromium/WebKit paints an always-on horizontal
-    // scrollbar at the top of every settings page. The class is
-    // defined in `globals.css` and combines `scrollbar-width: none`
-    // (Firefox) with `::-webkit-scrollbar { display: none }` (everyone
-    // else) — scroll behaviour is preserved.
-    const html = renderShell({ active: "account" });
-    const nav = html.match(/<nav\b[^>]*md:hidden[^>]*>/);
+  it("gives the phone one button naming the section, not a strip of every section", () => {
+    const html = renderShell({ active: "security" });
+    const nav = html.match(/<nav\b[^>]*md:hidden[^>]*>[\s\S]*?<\/nav>/);
     expect(nav).not.toBeNull();
-    expect(nav![0]).toMatch(/\bno-scrollbar\b/);
-    expect(nav![0]).toMatch(/\boverflow-x-auto\b/);
+    expect(nav![0]).toContain('data-slot="settings-mobile-nav-trigger"');
+    expect(nav![0]).toContain("Security");
+    expect(nav![0]).toContain("Account");
+    expect(nav![0]).not.toContain("overflow-x-auto");
+    expect(nav![0]).not.toContain('href="/settings/');
   });
 });

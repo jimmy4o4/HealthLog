@@ -1,5 +1,5 @@
 /**
- * v1.30.3 (QA F4) — one-shot repair for the `PersonalRecord` rows the
+ * v1.30.3 — one-shot repair for the `PersonalRecord` rows the
  * pre-fix cumulative-day picker double-counted.
  *
  * Background: before `8902d3985` (v1.29.6), `findBestCumulativeDay`
@@ -42,6 +42,7 @@ import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import { CUMULATIVE_HK_TYPES } from "@/lib/measurements/apple-health-mapping";
 import { detectPersonalRecordsForUser } from "@/lib/personal-records/pr-detection-worker";
 import type { MeasurementType, PrismaClient } from "@/generated/prisma/client";
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 
 /** Budget for one account's delete-and-re-derive transaction. */
 const REDERIVE_TRANSACTION_TIMEOUT_MS = 5 * 60 * 1000;
@@ -163,6 +164,7 @@ export async function enqueueBootTimeCumulativePrRederivation(
         metricSlot: null,
         metricType: { in: CUMULATIVE_TYPES_ARRAY },
         createdAt: { lt: CUMULATIVE_PR_FIX_CUTOFF },
+        ...OWNED_BY_ACTIVE_ACCOUNT,
       },
       distinct: ["userId"],
       select: { userId: true },

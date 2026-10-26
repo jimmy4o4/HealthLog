@@ -1,5 +1,5 @@
 /**
- * v1.11.0 (Epic C, C5) — clinician-view presentation.
+ * v1.11.0 — clinician-view presentation.
  *
  * Asserts the load-bearing rendering properties: the fenced wellness card
  * carries the descriptive "not a clinical assessment / not a diagnosis"
@@ -163,6 +163,90 @@ describe("<ClinicianView>", () => {
     expect(html).not.toContain("Current smoker");
   });
 
+  it("shows the medication effect only beside the medication list", () => {
+    const report = makeReport({
+      medicationEffects: [
+        {
+          medicationName: "Named effect drug",
+          startsOn: "2026-01-05",
+          targets: [
+            {
+              type: "BLOOD_PRESSURE_SYS",
+              effect: {
+                present: false,
+                reason: "insufficient_after",
+                level: 0.95,
+                window: null,
+                days: {
+                  before: 40,
+                  after: 3,
+                  excludedLowAdherence: 0,
+                  excludedNotTaking: 0,
+                },
+                adherence: {
+                  status: "tracked",
+                  floorPct: 80,
+                  lookbackDays: 14,
+                },
+                levelChange: null,
+                slopeChangePerWeek: null,
+                preSlopePerWeek: null,
+                fit: null,
+                confounders: [],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const leaves = ["MEDICATION_EFFECT", "BLOOD_PRESSURE_SYS"] as const;
+    const est = {
+      estimate: -5,
+      ciLow: -7,
+      ciHigh: -3,
+      standardError: 1,
+      includesZero: false,
+    };
+    const fitted = makeReport({
+      medicationEffects: [
+        {
+          ...report.medicationEffects![0],
+          targets: [
+            {
+              type: "BLOOD_PRESSURE_SYS",
+              effect: {
+                ...report.medicationEffects![0].targets[0].effect,
+                present: true,
+                reason: undefined,
+                levelChange: est,
+                slopeChangePerWeek: est,
+                preSlopePerWeek: est,
+                window: {
+                  from: "2025-10-07",
+                  to: "2026-01-20",
+                  endReason: "today",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      render(fitted, {
+        selection: selectionFromLeaves([...leaves, "MEDICATION_LIST"]),
+      }),
+    ).toContain("This window can reach beyond the report period.");
+    expect(
+      render(report, {
+        selection: selectionFromLeaves([...leaves, "MEDICATION_LIST"]),
+      }),
+    ).toContain("Named effect drug");
+    expect(
+      render(report, { selection: selectionFromLeaves([...leaves]) }),
+    ).not.toContain("Named effect drug");
+  });
+
   it("names both windows when a lab's report and the saved band disagree", () => {
     // Two windows that disagree about the same number, and a card showing one
     // of them is a partial answer. The PDF settles this with a footnote under
@@ -242,6 +326,28 @@ describe("<ClinicianView>", () => {
     );
     expect(html).toContain("0.505");
     expect(html).toContain("0.495");
+  });
+
+  it("notes a screener total answered in an unvalidated translation under its row", () => {
+    const stats = {
+      SCI_SCORE: { avg: 18, min: 14, max: 22, count: 3, latest: 20 },
+      PHQ9_SCORE: { avg: 6, min: 4, max: 8, count: 2, latest: 4 },
+    };
+    const selection = selectionFromLeaves(["SCI_SCORE", "PHQ9_SCORE"]);
+    const marked = render(
+      makeReport({ stats, screenerUnvalidatedTranslations: { SCI_SCORE: 2 } }),
+      { selection },
+    );
+    expect(
+      marked.split('data-slot="clinician-screener-translation-note"').length -
+        1,
+    ).toBe(1);
+    expect(marked).toContain("2 of 3 results were answered in a translation");
+    const plain = render(
+      makeReport({ stats, screenerUnvalidatedTranslations: null }),
+      { selection },
+    );
+    expect(plain).not.toContain("clinician-screener-translation-note");
   });
 
   it("renders the fenced wellness card with the descriptive disclaimer", () => {

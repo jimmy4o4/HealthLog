@@ -4,6 +4,7 @@
  * Extracted from reminder-worker.ts, which owns the queue names, cron
  * schedules, and boss.work registrations.
  */
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import { type Job } from "pg-boss";
 import { fireAndForget } from "@/lib/logging/fire-and-forget";
 import { recordError, recordWithingsSync } from "@/lib/jobs/worker-status";
@@ -32,7 +33,7 @@ export interface WithingsSyncPayload {
 }
 
 /**
- * v1.4.25 W17b — payload for the activity-sync queue. When enqueued
+ * v1.4.25 — payload for the activity-sync queue. When enqueued
  * by the webhook handler, `userId` is set so the worker syncs only
  * that user; when enqueued by the cron schedule, `userId` is absent
  * and the worker iterates every connection (safety-net behaviour).
@@ -43,7 +44,7 @@ export interface WithingsActivitySyncPayload {
 }
 
 /**
- * v1.4.25 W17c — payload for the sleep-sync queue. Same shape and
+ * v1.4.25 — payload for the sleep-sync queue. Same shape and
  * webhook-vs-cron semantics as the activity payload.
  */
 export interface WithingsSleepSyncPayload {
@@ -85,6 +86,7 @@ export async function handleWithingsFallbackSync(
         evt.addWarning("Withings plan-park release failed; continuing");
       }
       const connections = await prisma.withingsConnection.findMany({
+        where: OWNED_BY_ACTIVE_ACCOUNT,
         select: { userId: true },
       });
 
@@ -124,7 +126,7 @@ export async function handleWithingsFallbackSync(
           // v1.18.1 — a fresh reading landed; resolve this user's Vorsorge
           // reminders eventfully. Fire-and-forget; the cron is the net.
           if (result.imported > 0) {
-            fireAndForget(enqueueReminderSatisfy(connection.userId), {
+            fireAndForget(() => enqueueReminderSatisfy(connection.userId), {
               action: "reminder.satisfy.enqueue",
             });
           }
@@ -193,6 +195,7 @@ export async function handleWithingsEcgSync(
       // No user-specific enqueue → cron fallback iterating every connection.
       if (targets.length === 0) {
         const connections = await prisma.withingsConnection.findMany({
+          where: OWNED_BY_ACTIVE_ACCOUNT,
           select: { userId: true },
         });
         targets.push(...connections);
@@ -247,7 +250,7 @@ export async function handleWithingsEcgSync(
 }
 
 /**
- * v1.4.25 W17b — activity-sync handler.
+ * v1.4.25 — activity-sync handler.
  *
  * Two enqueue paths feed this queue:
  *
@@ -277,6 +280,7 @@ export async function handleWithingsActivitySync(
       // No user-specific enqueue → cron fallback iterating everyone.
       if (targets.length === 0) {
         const connections = await prisma.withingsConnection.findMany({
+          where: OWNED_BY_ACTIVE_ACCOUNT,
           select: { userId: true },
         });
         targets.push(...connections);
@@ -304,7 +308,7 @@ export async function handleWithingsActivitySync(
             imported,
           });
           if (imported > 0) {
-            fireAndForget(enqueueReminderSatisfy(userId), {
+            fireAndForget(() => enqueueReminderSatisfy(userId), {
               action: "reminder.satisfy.enqueue",
             });
           }
@@ -332,7 +336,7 @@ export async function handleWithingsActivitySync(
 }
 
 /**
- * v1.4.25 W17c — sleep-sync handler. Same enqueue semantics as the
+ * v1.4.25 — sleep-sync handler. Same enqueue semantics as the
  * activity handler: per-user when the webhook fires, full-iteration
  * when the cron ticks.
  */
@@ -350,6 +354,7 @@ export async function handleWithingsSleepSync(
       }
       if (targets.length === 0) {
         const connections = await prisma.withingsConnection.findMany({
+          where: OWNED_BY_ACTIVE_ACCOUNT,
           select: { userId: true },
         });
         targets.push(...connections);
@@ -377,7 +382,7 @@ export async function handleWithingsSleepSync(
             imported,
           });
           if (imported > 0) {
-            fireAndForget(enqueueReminderSatisfy(userId), {
+            fireAndForget(() => enqueueReminderSatisfy(userId), {
               action: "reminder.satisfy.enqueue",
             });
           }

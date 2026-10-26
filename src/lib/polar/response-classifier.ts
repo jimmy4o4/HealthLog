@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — off-response classifier for Polar AccessLink replies.
+ * v1.17.0 — off-response classifier for Polar AccessLink replies.
  *
  * Polar signals failure through the HTTP status code, so the classification is
  * status-driven. The shared core lives in
@@ -58,6 +58,17 @@ export class PolarApiError extends IntegrationApiError {
  */
 export function isInvalidGrant(err: unknown): boolean {
   return isOAuthInvalidGrant(err, "Polar");
+}
+
+/**
+ * True for a collection read Polar refused with 403. AccessLink documents its
+ * 403 as "User has not accepted all mandatory consents": the token is good,
+ * the account does not share this one data type (or has nothing behind it).
+ * Only meaningful next to a read that succeeded with the same token — a 403 on
+ * every collection is the account-wide consent gap, and stays a failure.
+ */
+export function isPolarCollectionRefusal(err: unknown): boolean {
+  return err instanceof PolarApiError && err.httpStatus === 403;
 }
 
 /**

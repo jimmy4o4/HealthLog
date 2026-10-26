@@ -7,13 +7,15 @@
  * and byte formatting. Kept out of the client components so they stay
  * trivially unit-testable without a render harness.
  */
+import type {
+  DocumentLinkedProcedureDto,
+  InboundDocumentDto,
+  InboundDocumentKindValue,
+} from "@/lib/validations/inbound-documents";
 import {
   DOCUMENT_LIST_DEFAULT_LIMIT,
   INBOUND_DOCUMENT_KINDS,
-  type DocumentLinkedProcedureDto,
-  type InboundDocumentDto,
-  type InboundDocumentKindValue,
-} from "@/lib/validations/inbound-documents";
+} from "@/lib/documents/inbound-constants";
 import type { DocumentVaultFilters } from "@/lib/query-keys/documents";
 import { userDayKey } from "@/lib/tz/format";
 
@@ -168,6 +170,26 @@ export function isDocumentProcessing(
 }
 
 /**
+ * How often the Coach polls a staged attachment for its content index.
+ *
+ * The same "still processing" question the vault list asks, so the same
+ * bounded window answers it: a document that will never be indexed (an
+ * unsupported format, indexing disabled) used to be polled every 2.5 s for as
+ * long as the Coach stayed open. `false` once the index exists or the window
+ * has passed.
+ */
+export const STAGED_ATTACHMENT_POLL_MS = 2_500;
+
+export function stagedAttachmentPollInterval(
+  doc: Pick<InboundDocumentDto, "createdAt" | "hasContentIndex"> | undefined,
+  now: number = Date.now(),
+): number | false {
+  return doc && isDocumentProcessing(doc, now)
+    ? STAGED_ATTACHMENT_POLL_MS
+    : false;
+}
+
+/**
  * Whether ANY document in the list is still inside its processing window —
  * drives the vault list query's poll-while-indexing `refetchInterval`.
  */
@@ -280,21 +302,6 @@ export function formatMonthLabel(key: string, locale: string): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(`${key}-15T12:00:00.000Z`));
-}
-
-/** Locale byte formatting: 0 B / 412 KB / 1.2 MB / 2.4 GB. */
-export function formatBytes(bytes: number, locale: string): string {
-  const units = ["B", "KB", "MB", "GB"] as const;
-  let value = Math.max(0, bytes);
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const digits = unit === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 1;
-  return `${new Intl.NumberFormat(locale, {
-    maximumFractionDigits: digits,
-  }).format(value)} ${units[unit]}`;
 }
 
 /**

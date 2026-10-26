@@ -1,5 +1,5 @@
 /**
- * v1.7.0 W6 — nightly insight pre-generation cron.
+ * v1.7.0 — nightly insight pre-generation cron.
  *
  * Closes the gap the R-firstpaint audit surfaced: before this cron,
  * every daily briefing was generated lazily on the first `/insights`
@@ -48,6 +48,7 @@
  * Recurring pg-boss task — never runs inside an HTTP request and never
  * shells out to `tsx` (CLAUDE.md DO-NOTs).
  */
+import { activeAccount } from "@/lib/account-deletion/active-account";
 import { createHash, randomUUID } from "node:crypto";
 import pLimit from "p-limit";
 
@@ -79,8 +80,7 @@ import {
   type MetricStatusMetricId,
 } from "@/lib/insights/metric-status-registry";
 import { withTimeout } from "@/lib/insights/with-timeout";
-import { AI_BUDGETS } from "@/lib/ai/ai-budgets";
-import { resolveEffectiveTimeoutMs } from "@/lib/ai/effective-timeout";
+import { comprehensiveWarmBudgetMs } from "@/lib/jobs/model-time";
 import {
   INSIGHT_PREGENERATE_QUEUE,
   enqueueForceWarm,
@@ -90,13 +90,6 @@ import {
 
 export { INSIGHT_PREGENERATE_QUEUE, enqueueForceWarm };
 export type { InsightPregeneratePayload };
-
-/**
- * 04:30 Europe/Berlin. Slots between the cumulative drain (03:30) and
- * the feedback aggregator (04:00) maintenance window's tail so the
- * LLM-bound pass doesn't contend with the SQL-bound nightly folds.
- */
-export const INSIGHT_PREGENERATE_CRON = "30 4 * * *";
 
 /** Stale-cache threshold for the nightly discovery pass.
  *
@@ -159,85 +152,16 @@ const FORCE_WARM_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const WARM_PASS_CONCURRENCY = 3;
 
 /**
- * Bounded budget for one comprehensive generation inside a warm pass —
- * the forced single-user warm AND the nightly per-candidate loop. The
- * comprehensive insight is the single heaviest generation (full feature
- * extraction + a 1500-token completion) and a slow or stalled provider
- * could pin the whole warm for a minute-plus, after which the entire job
- * aborted with the per-status + generic-metric passes never run. Capping
- * it lets both paths abandon a slow comprehensive and still warm the
- * cheaper per-status (7) + generic-metric (~30) assessments, so the user's
- * cards are warm even when the briefing generation stalls. In the nightly
- * loop the cap also bounds head-of-line blocking: without it one stalled
- * provider pinned the whole batch behind a single candidate. Set a hair
- * below the queue's own retry horizon so a single tick stays bounded.
- *
- * v1.21.5 — raised from 45 s. The old cap sat BELOW the provider call's own
- * timeout (`AI_BUDGETS.comprehensive.timeoutMs`, now 120 s), so on a large
- * account the warm bound — not the provider — aborted the generation, and the
- * briefing never landed. The cap must sit just above the provider timeout so
- * the provider's own abort governs a genuine completion while this stays the
- * backstop against a wedged call. The per-user budget gate + the WARM_PASS
- * concurrency cap still bound total nightly cost.
- *
- * v1.25.3 — the cap is no longer a fixed constant. The per-user
- * `User.aiResponseTimeoutSeconds` setting (bounded 10–600 s at write-time) is
- * the operator's lever for slow self-hosted / local backends, and the AI
- * settings UI tells users to RAISE it for a model that loads slowly. The old
- * fixed 130 s cap sat below the upper end of that range, so any account whose
- * response timeout was ≥ ~130 s had every comprehensive warm clipped by the
- * warm bound — not the provider — before the generation could land, leaving the
- * briefing on its hard empty state. The warm budget now derives from the
- * resolved effective per-request timeout plus a fixed headroom for feature
- * extraction / prompt assembly / IO, so raising the response timeout actually
- * extends the warm/cron budget. A sane absolute ceiling (the 600 s write-time
- * maximum plus the same headroom) keeps a single wedged call from pinning the
- * worker forever, while staying ABOVE the largest value a user can configure.
+ * Bounded budget for one comprehensive generation inside a warm pass — the
+ * forced single-user warm AND the nightly per-candidate loop. A slow or
+ * stalled provider must not keep the per-status (7) + generic-metric (~30)
+ * passes from running, and in the nightly loop one stalled provider must not
+ * pin the whole batch behind a single candidate. The bound is a backstop
+ * against a wedged generation, never the deadline of a working one: every
+ * provider call carries its own abort, so `comprehensiveWarmBudgetMs`
+ * (`model-time.ts`) sits above the longest generation those calls allow.
  */
-
-/**
- * Fixed slack added on top of the resolved upstream provider timeout when
- * sizing the warm/cron outer abort: bounded-feature extraction, prompt
- * assembly, and the cache write all run inside the warm wrapper but outside the
- * single provider round-trip the response-timeout governs.
- */
-const COMPREHENSIVE_WARM_HEADROOM_MS = 30_000;
-
-/**
- * Largest value `User.aiResponseTimeoutSeconds` accepts (see the 10–600 s
- * write-time bound in `POST /api/user/ai-provider`), in ms. The warm ceiling is
- * derived from it so the ceiling is always ABOVE the maximum a user can set.
- */
-const AI_RESPONSE_TIMEOUT_MAX_MS = 600_000;
-
-/**
- * Absolute backstop on the warm outer abort. A misconfigured 600 s response
- * timeout still cannot pin the worker beyond this; the ceiling sits above the
- * write-time maximum (by exactly the headroom) so a legitimate 600 s setting is
- * honoured rather than silently clipped.
- */
-const COMPREHENSIVE_WARM_CEILING_MS =
-  AI_RESPONSE_TIMEOUT_MAX_MS + COMPREHENSIVE_WARM_HEADROOM_MS;
-
-/**
- * Outer-abort budget (ms) for one comprehensive warm, derived from the user's
- * resolved effective upstream timeout. `effectiveTimeoutMs + headroom`, clamped
- * to the absolute ceiling. A null/unset setting falls back to the comprehensive
- * surface budget (`AI_BUDGETS.comprehensive.timeoutMs`), so a default account
- * gets `120 s + headroom` rather than the old flat 130 s.
- */
-export function comprehensiveWarmBudgetMs(
-  aiResponseTimeoutSeconds: number | null | undefined,
-): number {
-  const effectiveTimeoutMs = resolveEffectiveTimeoutMs(
-    aiResponseTimeoutSeconds,
-    AI_BUDGETS.comprehensive.timeoutMs,
-  );
-  return Math.min(
-    effectiveTimeoutMs + COMPREHENSIVE_WARM_HEADROOM_MS,
-    COMPREHENSIVE_WARM_CEILING_MS,
-  );
-}
+export { comprehensiveWarmBudgetMs };
 
 /**
  * Short, redaction-safe error description for the failure annotations
@@ -373,7 +297,7 @@ async function warmPerStatusCaches(
 }
 
 /**
- * v1.18.7 (HIGH-1) — the production warm for the seven specialised status
+ * v1.18.7 — the production warm for the seven specialised status
  * cards. `generateStatusBatchForUser` builds the seven per-metric snapshots
  * once and issues ONE provider call for the metrics still needing the LLM,
  * fanning the response back into the same per-metric cache rows the
@@ -533,19 +457,18 @@ export async function findPregenerateCandidates(
   const staleBefore = new Date(now.getTime() - PREGENERATE_STALE_MS);
   const optedOut = await userIdsWithModuleOff(prisma, "insights");
   return prisma.user.findMany({
-    where: {
+    where: activeAccount({
       ...(optedOut.length > 0 ? { id: { notIn: optedOut } } : {}),
       OR: [
         { insightsCachedAt: null },
         { insightsCachedAt: { lt: staleBefore } },
       ],
-    },
+    }),
     // nulls-first is the default ascending order in Postgres, so
     // never-generated users sort ahead of merely-stale ones.
     orderBy: { insightsCachedAt: "asc" },
     take: cap,
-    // v1.25.3 — carry the per-user response-timeout so the warm outer abort
-    // scales with the operator's setting instead of a fixed cap.
+    // The per-user response timeout, so the warm outer abort scales with it.
     select: { id: true, locale: true, aiResponseTimeoutSeconds: true },
   });
 }
@@ -603,7 +526,7 @@ export async function runInsightPregenerate(
   const generate = options.generate ?? generateComprehensiveInsight;
   const enqueueRetry = options.enqueueRetry ?? enqueuePregenerateFailureRetry;
   const reportRun = options.reportRun ?? reportJobRun;
-  // v1.18.7 (HIGH-1) — when the caller injects its own `statusGenerators`
+  // v1.18.7 — when the caller injects its own `statusGenerators`
   // (the unit tests do), keep the per-card warm so those assertions hold;
   // production injects nothing, so the seven warm calls collapse into ONE
   // batched generation. The injected per-card path stays the test seam.
@@ -749,7 +672,7 @@ export async function runInsightPregenerate(
     // (`insights:${userId}`), so this never starves a user's manual
     // regenerate quota. The gate bounds the comprehensive cost only: a
     // blocked user still gets the refill-only status warm below, because
-    // the 02:xx status crons already skipped every pregenerate candidate
+    // the 02:00 status batch already skipped every pregenerate candidate
     // on the assumption that THIS pass warms their cards — exiting early
     // here left those cards cold until the first on-visit generation.
     const budget = briefing.available
@@ -888,7 +811,8 @@ export async function runInsightPregenerate(
             } else if (generated.credentialExpired) {
               // v1.42 — a dead sign-in (a Codex refresh token the issuer
               // revoked) does not heal in 45 minutes either; the person has
-              // to reconnect, and the ledger already tells them so.
+              // to reconnect. The refusal parked the connection as expired,
+              // which Settings shows, and the next run no longer counts it.
               settle("auth_failed", generated.reason);
             } else {
               settle("failed", generated.reason);
@@ -906,7 +830,7 @@ export async function runInsightPregenerate(
     // generator's content-hash gate turns a same-data regeneration into a
     // timestamp refresh with no provider call. The warm runs on every
     // comprehensive outcome (budget-blocked, failed, timed-out,
-    // consent-skipped included) because the 02:xx status crons skip every
+    // consent-skipped included) because the 02:00 status batch skips every
     // pregenerate candidate on the assumption that THIS pass covers them.
     //
     // Nothing to warm when the status notes themselves are unavailable.
@@ -1007,12 +931,12 @@ export async function forceWarmUser(
     today?: boolean;
   } = {},
 ): Promise<ForceWarmResult> {
-  // v1.18.11 P3 — one feature-cache scope for the whole forced warm of this
+  // v1.18.11 — one feature-cache scope for the whole forced warm of this
   // user, so the comprehensive briefing's bounded feature read is computed
   // once and reused by any sibling consumer in the same warm.
   return withFeatureCacheScope(async () => {
     const generate = options.generate ?? generateComprehensiveInsight;
-    // v1.18.7 (HIGH-1) — batch the seven status warms into ONE provider call
+    // v1.18.7 — batch the seven status warms into ONE provider call
     // in production; keep the per-card path when a test injects generators.
     const injectedStatusGenerators = options.statusGenerators;
     const warmStatus = (

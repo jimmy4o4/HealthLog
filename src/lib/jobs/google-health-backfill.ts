@@ -1,7 +1,7 @@
 /**
  * v1.26.0 — pg-boss queue + boot-time self-converging backfill for newly
  * connected Google Health accounts. Modelled on the Fitbit / WHOOP backfill
- * (`src/lib/jobs/fitbit-backfill.ts`): a discovery query enqueues one job per
+ * (`src/lib/fitbit/jobs/backfill.ts`): a discovery query enqueues one job per
  * connection that has NOT yet been backfilled, and the pass is idempotent
  * across reboots (the predicate `backfill_completed_at IS NULL` drops a
  * connection once its backfill finishes).
@@ -11,21 +11,27 @@
  * provisions it and the boot enqueue silently never drains (the v1.4.37
  * dead-queue class).
  */
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import {
   enqueueIntegrationBackfillAdmission,
+  INTEGRATION_BACKFILL_ADMISSION_QUEUE,
   INTEGRATION_BACKFILL_CONTINUATION_DELAY_SECONDS,
+  integrationBackfillAdmissionSendOptions,
+  integrationBackfillIdentity,
   integrationBackfillSourceOptions,
+  type IntegrationBackfillAdmissionPayload,
 } from "@/lib/jobs/integration-backfill-admission";
+import { runWithGoogleHealthBackfillResume } from "@/lib/google-health/sync-core";
 import {
-  readGoogleHealthBackfillCursors,
-  readGoogleHealthBackfillDone,
-  readGoogleHealthBackfillEdgeFilterUnsupported,
-  runWithGoogleHealthBackfillResume,
-} from "@/lib/google-health/sync-core";
+  googleHealthBackfillProgressAfterCompletion,
+  googleHealthBackfillRetryPending,
+  readGoogleHealthBackfillProgress,
+} from "@/lib/google-health/backfill-progress";
+import { googleHealthBackfillEndIsFinal } from "@/lib/google-health/backfill-bounds";
 import {
   isGoogleHealthParked,
   syncUserGoogleHealth,
@@ -33,20 +39,13 @@ import {
 import { GOOGLE_HEALTH_SYNC_LOCK_WAIT_MS } from "@/lib/google-health/sync-lock";
 import {
   googleHealthSliceBudget,
+  type GoogleHealthSliceStopReason,
   runWithGoogleHealthStop,
-} from "@/lib/google-health/client";
-import { GOOGLE_HEALTH_RESUMABLE_PAGE_CEILING } from "@/lib/google-health/sync-metrics";
+} from "@/lib/google-health/budget";
 import { reportJobProgress } from "@/lib/jobs/job-observer";
+import { LANE_YIELD_DELAY_SECONDS, laneWanted } from "@/lib/jobs/heavy-lane";
 import { GOOGLE_HEALTH_COLLECTION_KEYS } from "@/lib/google-health/collection-keys";
-
-export const GOOGLE_HEALTH_BACKFILL_QUEUE = "google-health-backfill";
-
-/**
- * Serial concurrency — a backfill walks years of history for one account and is
- * rate-bounded by Google's per-app quota; concurrency-1 keeps it from crowding
- * the request pool, matching `FITBIT_BACKFILL_CONCURRENCY`.
- */
-export const GOOGLE_HEALTH_BACKFILL_CONCURRENCY = 1;
+import { GOOGLE_HEALTH_BACKFILL_QUEUE } from "./google-health-backfill-queue";
 
 /**
  * One slice of a backfill: how long it walks and how many pages it reads
@@ -71,28 +70,67 @@ export const GOOGLE_HEALTH_BACKFILL_SLICE_PAGES = 500;
 export const GOOGLE_HEALTH_BACKFILL_THROTTLED_DELAY_SECONDS = 5 * 60;
 
 /**
- * The highest slice a backfill chain may reach, derived from the work a
- * backfill can do rather than guessed.
+ * How long a chain of slices may keep going, run back to back, before it is
+ * taken for counting progress it does not make: sixty days.
+ */
+const GOOGLE_HEALTH_BACKFILL_MAX_CHAIN_MS = 60 * 24 * 60 * 60 * 1000;
+
+/**
+ * The highest slice a backfill chain may reach: every collection once, the
+ * slices sixty days of back-to-back slicing hold, and two of slack for the
+ * first slice and the one that stamps the marker.
  *
  * A slice is continued only when it made progress that is on disk: it
- * finished a collection, it moved a resumable collection's edge after
- * writing at least one page, or a walk without the edge bound saved a place
- * in the list further than any before it. Collections finish once each, a
- * resumable collection's pages are capped across all attempts by its page
- * ceiling (`GOOGLE_HEALTH_RESUMABLE_PAGE_CEILING`, the sum of them), and a
- * saved place only ever moves forward, through no more pages than the ones
- * written plus the ones passed over, which the same ceiling bounds. So no
- * chain of progressing slices is longer than the collections plus twice
- * those pages; the two extra are slack for the first slice and the one that
- * stamps the marker. In
- * practice a chain is a handful of slices per year of dense history. A slice
- * past this is counting progress it does not make, and fails rather than
- * queueing another.
+ * finished a collection (or ended one short, at the horizon or on a walk
+ * that stopped getting anywhere), it moved a resumable collection's edge
+ * back after writing at least one page, or a walk without the edge bound
+ * saved a place in the list further than any before it. Each of those moves
+ * toward an end the backfill has (the edge cannot pass the horizon, and a
+ * walk that repeats itself is stopped, see `backfill-bounds.ts`), so this
+ * ceiling bounds nothing a working backfill reaches. It used to be derived
+ * from a page count that a dense heart-rate history passes in under three
+ * years (#1220); in time it stays meaningful however densely a device
+ * records. In practice a chain is a handful of slices per year of dense
+ * history. A slice past this fails rather than queueing another.
  */
 export const GOOGLE_HEALTH_BACKFILL_MAX_SLICE =
   GOOGLE_HEALTH_COLLECTION_KEYS.length +
-  2 * GOOGLE_HEALTH_RESUMABLE_PAGE_CEILING +
+  Math.ceil(
+    GOOGLE_HEALTH_BACKFILL_MAX_CHAIN_MS / GOOGLE_HEALTH_BACKFILL_SLICE_MS,
+  ) +
   2;
+
+/**
+ * The singleton key of a slice that waits for a parked collection's retry:
+ * the import's identity and the instant the retry is due. The instant comes
+ * from the stored note, so every slice that reads the same note derives the
+ * same key.
+ */
+export function googleHealthBackfillRetryKey(
+  userId: string,
+  dueAt: number,
+): string {
+  const identity = integrationBackfillIdentity({
+    kind: "google-health-backfill",
+    data: { userId, enqueuedAt: "" },
+  });
+  return `${identity}|retry-${new Date(dueAt).toISOString()}`;
+}
+
+/**
+ * The pause before the next slice, by why this one stopped: longer after a
+ * rate limit, and past the waiting job's return after giving way to it, so
+ * that job takes the lane before this import does again.
+ */
+export function nextSliceDelaySeconds(
+  stopReason: GoogleHealthSliceStopReason | null,
+): number {
+  if (stopReason === "rate_limited") {
+    return GOOGLE_HEALTH_BACKFILL_THROTTLED_DELAY_SECONDS;
+  }
+  if (stopReason === "lane_wanted") return LANE_YIELD_DELAY_SECONDS;
+  return INTEGRATION_BACKFILL_CONTINUATION_DELAY_SECONDS;
+}
 
 /** Test seam: a slice's budget, when not the production one. */
 export interface GoogleHealthBackfillSliceOptions {
@@ -188,16 +226,32 @@ export async function runGoogleHealthBackfillForUser(
     });
     return { imported: 0 };
   }
-  const done = readGoogleHealthBackfillDone(connection?.backfillProgress);
-  const cursors = readGoogleHealthBackfillCursors(connection?.backfillProgress);
-  const edgeFilterUnsupported = readGoogleHealthBackfillEdgeFilterUnsupported(
-    connection?.backfillProgress,
+  const {
+    done,
+    cursors,
+    edgeFilterUnsupported,
+    ended: endedBefore,
+  } = readGoogleHealthBackfillProgress(connection?.backfillProgress);
+  // A collection that ended short for good has read all it is going to, so
+  // it counts as finished alongside the ones read to the end. One parked
+  // after a first end without progress does not: it waits for another try.
+  const finishedCount = (): number =>
+    new Set([
+      ...done,
+      ...[...endedBefore]
+        .filter(([, e]) => googleHealthBackfillEndIsFinal(e))
+        .map(([key]) => key),
+    ]).size;
+  const doneBefore = finishedCount();
+  const parkedBefore = new Set(
+    googleHealthBackfillRetryPending(endedBefore)?.keys ?? [],
   );
-  const doneBefore = done.size;
 
   const budget = googleHealthSliceBudget(
     sliceOptions.sliceMs ?? GOOGLE_HEALTH_BACKFILL_SLICE_MS,
     sliceOptions.slicePages ?? GOOGLE_HEALTH_BACKFILL_SLICE_PAGES,
+    Date.now,
+    laneWanted,
   );
   const startedAt = Date.now();
   const {
@@ -205,6 +259,7 @@ export async function runGoogleHealthBackfillForUser(
     skipped,
     advanced,
     collections,
+    ended,
   } = await runWithGoogleHealthBackfillResume(
     userId,
     done,
@@ -220,9 +275,12 @@ export async function runGoogleHealthBackfillForUser(
       ),
     cursors,
     edgeFilterUnsupported,
+    endedBefore,
   );
 
-  const finished = done.size - doneBefore;
+  // `ended` is `endedBefore`, grown by this slice.
+  const doneAfter = finishedCount();
+  const finished = doneAfter - doneBefore;
   const sliceReport = {
     slice,
     elapsedMs: Date.now() - startedAt,
@@ -232,19 +290,21 @@ export async function runGoogleHealthBackfillForUser(
     skippedPages: budget.skippedPages,
     stopReason: budget.stopReason,
     imported,
-    collectionsDone: done.size,
+    collectionsDone: doneAfter,
     collectionsTotal: GOOGLE_HEALTH_COLLECTION_KEYS.length,
     collectionsFinished: finished,
     resumedPast: skipped.length,
     collections,
     // Where each unfinished resumable collection has got to, after this slice.
     edges: Object.fromEntries([...cursors].map(([key, c]) => [key, c.at])),
+    // Collections ended short of their history's start, and where.
+    ...(ended.size > 0 ? { ended: Object.fromEntries(ended) } : {}),
   };
   annotate({ meta: { "googleHealth.backfill.slice": sliceReport } });
   reportJobProgress({
     google_health_backfill_slice: slice,
     google_health_backfill_pages: budget.pages,
-    google_health_backfill_collections_done: done.size,
+    google_health_backfill_collections_done: doneAfter,
   });
 
   if (busy) {
@@ -253,28 +313,94 @@ export async function runGoogleHealthBackfillForUser(
     );
   }
 
+  /**
+   * Queue the next slice. A slice that waits for a parked collection's retry
+   * goes under a key named after when the retry is due, instead of its slice
+   * number: every slice that meets the same wait, a boot's included, names the
+   * same job, and the queue keeps one. Under the slice number a boot during
+   * the day-long wait started a second chain beside the waiting one.
+   */
+  const sendNextSlice = async (
+    delaySeconds: number,
+    retryDueAt?: number,
+  ): Promise<boolean> => {
+    if (slice + 1 > GOOGLE_HEALTH_BACKFILL_MAX_SLICE) return false;
+    const boss = getGlobalBoss();
+    if (!boss) return false;
+    const payload: IntegrationBackfillAdmissionPayload = {
+      kind: "google-health-backfill",
+      data: {
+        userId,
+        enqueuedAt: new Date().toISOString(),
+        slice: slice + 1,
+      },
+    };
+    const sent =
+      retryDueAt === undefined
+        ? await enqueueIntegrationBackfillAdmission(boss, payload, delaySeconds)
+        : await boss.send(INTEGRATION_BACKFILL_ADMISSION_QUEUE, payload, {
+            ...integrationBackfillAdmissionSendOptions(payload),
+            singletonKey: googleHealthBackfillRetryKey(userId, retryDueAt),
+            startAfter: delaySeconds,
+          });
+    return Boolean(sent);
+  };
+
+  // Collections parked after a first end without progress
+  // (`backfill-bounds.ts`). Once nothing else is left, the next slice waits
+  // until the earliest of them is due; the marker is never stamped over one.
+  const pending = googleHealthBackfillRetryPending(ended);
+  const onlyRetriesLeft =
+    pending !== null &&
+    GOOGLE_HEALTH_COLLECTION_KEYS.every(
+      (key) => done.has(key) || pending.keys.includes(key),
+    );
+  if (pending && (onlyRetriesLeft || !failed)) {
+    const waitSeconds = Math.ceil((pending.dueAt - Date.now()) / 1000);
+    const delaySeconds = Math.max(
+      INTEGRATION_BACKFILL_CONTINUATION_DELAY_SECONDS,
+      waitSeconds,
+    );
+    // A retry already due is an ordinary next slice; only a wait is keyed on
+    // when it ends.
+    const delayed =
+      waitSeconds > INTEGRATION_BACKFILL_CONTINUATION_DELAY_SECONDS;
+    if (
+      await sendNextSlice(delaySeconds, delayed ? pending.dueAt : undefined)
+    ) {
+      annotate({
+        action: {
+          name: "google_health.backfill.retry_scheduled",
+          details: { slice, collections: pending.keys, delaySeconds },
+        },
+      });
+      return { imported, continued: true };
+    }
+    // Not queued: most often the same retry is already waiting, sent by the
+    // slice that parked the collection, and this is a boot's slice meeting
+    // the same wait. Nothing is lost either way: the marker is not stamped,
+    // so the next boot offers the backfill again.
+    annotate({
+      action: {
+        name: "google_health.backfill.retry_not_queued",
+        details: { slice, collections: pending.keys },
+      },
+    });
+    return { imported };
+  }
+
   if (failed) {
-    // Progress is what this slice put on disk: collections finished, and
-    // edges moved. Either is enough to go on; neither means stuck.
-    const progressed = finished > 0 || advanced.size > 0;
-    if (progressed && slice + 1 <= GOOGLE_HEALTH_BACKFILL_MAX_SLICE) {
-      const boss = getGlobalBoss();
-      const sent = boss
-        ? await enqueueIntegrationBackfillAdmission(
-            boss,
-            {
-              kind: "google-health-backfill",
-              data: {
-                userId,
-                enqueuedAt: new Date().toISOString(),
-                slice: slice + 1,
-              },
-            },
-            budget.stopReason === "rate_limited"
-              ? GOOGLE_HEALTH_BACKFILL_THROTTLED_DELAY_SECONDS
-              : INTEGRATION_BACKFILL_CONTINUATION_DELAY_SECONDS,
-          )
-        : null;
+    // Progress is what this slice put on disk: collections finished, edges
+    // moved, or a collection parked for another attempt. Any is enough to go
+    // on; none means stuck.
+    const newlyParked = (pending?.keys ?? []).filter(
+      (key) => !parkedBefore.has(key),
+    ).length;
+    const progressed = finished > 0 || advanced.size > 0 || newlyParked > 0;
+    if (progressed) {
+      const sent = await sendNextSlice(
+        nextSliceDelaySeconds(budget.stopReason),
+      );
       if (sent) {
         annotate({
           action: {
@@ -284,7 +410,7 @@ export async function runGoogleHealthBackfillForUser(
               slice,
               stopReason: budget.stopReason,
               collectionsFinished: finished,
-              collectionsDone: done.size,
+              collectionsDone: doneAfter,
               edgesMoved: [...advanced.keys()],
             },
           },
@@ -314,9 +440,16 @@ export async function runGoogleHealthBackfillForUser(
     );
   }
 
+  // The note of how far it got goes with the stamp, except where a
+  // collection ended short: that stays, so the card can say where its
+  // history ends and why.
+  const kept = googleHealthBackfillProgressAfterCompletion(ended);
   await prisma.googleHealthConnection.update({
     where: { userId },
-    data: { backfillCompletedAt: new Date(), backfillProgress: Prisma.DbNull },
+    data: {
+      backfillCompletedAt: new Date(),
+      backfillProgress: kept ?? Prisma.DbNull,
+    },
   });
 
   annotate({
@@ -354,7 +487,7 @@ export async function enqueueBootTimeGoogleHealthBackfill(
 
   try {
     const connections = await prisma.googleHealthConnection.findMany({
-      where: { backfillCompletedAt: null },
+      where: { backfillCompletedAt: null, ...OWNED_BY_ACTIVE_ACCOUNT },
       select: { userId: true },
     });
 

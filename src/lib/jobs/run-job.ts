@@ -91,6 +91,20 @@ async function signalRunFailed(
 }
 
 /**
+ * A queue's handler module that failed to load before any job asked for it
+ * (the worker's boot preload, `preloadHandlers`). Reported the way a failed
+ * run is, so the operator hears about it at deploy time on the line the
+ * repeated-failure alert already reads, instead of on the queue's first job.
+ */
+export async function reportHandlerLoadFailure(
+  queue: string,
+  error: unknown,
+): Promise<void> {
+  await reportWorkerError(queue, error, { phase: "handler_preload" });
+  await signalRunFailed(queue, "handler_load_failed", error);
+}
+
+/**
  * Wrap a handler for `boss.work`. Resolves with the bounded, redacted
  * persistence representation on `ok: true`; reports and rethrows on
  * `ok: false`.
@@ -116,7 +130,21 @@ export function runJob<J>(
       await signalRunFailed(queue, "handler_threw", error);
       throw error;
     }
-    if (outcome.ok) return serializeJobOutcome(outcome);
+    // The work is done by now. A fact that breaks the contract is a
+    // programming error in the handler, reported at error level and dropped
+    // from the result; failing the run over it would retry work that already
+    // succeeded (a nightly VACUUM, a full sweep).
+    if (outcome.ok) {
+      return serializeJobOutcome(outcome, {
+        onInvalidFact: (key, reason) =>
+          emitSignal({
+            action: "job.outcome.fact_invalid",
+            level: "error",
+            meta: { queue, key },
+            error: new TypeError(reason),
+          }),
+      });
+    }
 
     const failure = new JobFailure(queue, outcome.reason, outcome.cause);
     const causeMessage =

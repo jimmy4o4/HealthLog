@@ -19,7 +19,7 @@ on top of it, see [building skills](../api/mcp-skills.md).
 
 > **Read this before enabling writes.** A remote, write-capable connector
 > reached over OAuth is a powerful combination. Read the
-> [trust model](#trust-model-read-this-before-enabling-writes) at the end
+> [trust model](#trust-model--read-this-before-enabling-writes) at the end
 > of this page first.
 
 ## Prerequisites
@@ -30,7 +30,7 @@ Three things must be true before `/mcp` will answer:
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`APP_URL` is set**       | The endpoint fails closed without a pinned canonical origin. `APP_URL` (or `NEXT_PUBLIC_APP_URL`) is the origin every OAuth document and audience check is anchored to — `Host` is never trusted. Without it the surface stays invisible (`404`). |
 | **The global API is on**   | The operator's instance-wide API switch must be enabled (it is by default). With it off, every token path — including `/mcp` — returns `404`.                                                                                                     |
-| **The `mcp` module is on** | A per-account opt-in that ships off by default; you turn it on in Settings. Until then `/mcp` answers `404` for that account.                                                                                                                     |
+| **The `mcp` module is on** | A per-account opt-in that ships off by default; you turn it on in **Settings → Modules**. Until then `/mcp` answers `404` for that account.                                                                                                       |
 
 `APP_URL` is the same origin you already use for passkeys and invite
 links — for example `https://health.example`. It must be reachable by the
@@ -40,18 +40,22 @@ LAN-only origin works for Claude Desktop over stdio).
 
 ## 1. Enable the module
 
-In the app: **Settings → MCP**. The card has three parts:
+The switch lives with every other module: **Settings → Modules**, the
+**MCP** row. Turn it on and the `/mcp` endpoint goes live for your account.
 
-- **Enable** — the opt-in switch. Toggle it on; the `/mcp` endpoint goes
-  live for your account and the card shows your endpoint URL
-  (`<origin>/mcp`).
+**Settings → MCP connector** is where you use it. The page has three parts:
+
+- **State** — whether the module is on, with a link to its switch in
+  Modules, and your endpoint URL (`<origin>/mcp`). Turning the module off
+  pauses the endpoint; your tokens and connections stay and work again
+  once it is back on.
 - **Connections** — cloud connectors that completed the OAuth flow appear
   here; revoke any of them.
 - **Tokens** — manual connector tokens (see below).
 
 ## 2. Mint a connector token
 
-Still in **Settings → MCP → Tokens**:
+Still in **Settings → MCP connector → Tokens**:
 
 1. Choose the scope with the **write** toggle:
    - **off** → a read-only token (`health:read`). This is the default and
@@ -102,7 +106,7 @@ refused (`403`) as a DNS-rebinding defence.
    client-id-metadata-document clients with dynamic registration as a
    fallback.
 3. Approve the consent screen. The connection then appears under
-   **Settings → MCP → Connections**, where you can revoke it.
+   **Settings → MCP connector → Connections**, where you can revoke it.
 
 No token to paste — OAuth mints and rotates a short-lived `health:read`
 access token (60 minutes, with a refresh token) behind the scenes.

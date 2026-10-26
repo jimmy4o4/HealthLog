@@ -325,6 +325,7 @@ async function runRawCompletionWithFallback(args: {
     },
     workingProvider: { providerType: "anthropic" },
     fallbackHops: [],
+    tokensSpent: 0,
   };
 }
 
@@ -543,7 +544,7 @@ export const modules = {
   }),
   aboutMe: () => ({ getSelfContextTextForUser: async () => null }),
   snapshot: () => ({ buildCoachSnapshot: async () => snapshotFor() }),
-  scheduledDoses: () => ({ getScheduledDoseValues: async () => [] }),
+  scheduledDoses: () => ({ getScheduledDosePlan: async () => [] }),
   workoutEvidence: () => ({
     buildWorkoutEvidenceSection: async () => null,
   }),

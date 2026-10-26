@@ -22,10 +22,13 @@
  * addition defeats them, and no test substitutes for that review.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import {
+  readSource,
+  readSourceText,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 const VALIDATOR_MODULE = "@/lib/validations/external-id";
@@ -39,7 +42,7 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 /**
@@ -89,6 +92,21 @@ const EXEMPT: Record<string, string> = {
   "lib/validations/backup.ts":
     "restore payload is a server-written backup; refusing a stored id would block a restore",
 };
+
+/**
+ * The backup payload schema is composed from one slice per domain, each a
+ * part of the same server-written file, so every slice carries the payload's
+ * exemption and its reason.
+ */
+const BACKUP_SCHEMA_SLICE =
+  /^lib\/(?:export\/[\w-]+-backup-schema|cycle\/backup-schema)\.ts$/;
+
+function exemptionFor(rel: string): string | undefined {
+  if (rel in EXEMPT) return EXEMPT[rel];
+  return BACKUP_SCHEMA_SLICE.test(rel)
+    ? EXEMPT["lib/validations/backup.ts"]
+    : undefined;
+}
 
 /**
  * Trees where a stored identity is derived from input that never passes
@@ -174,8 +192,9 @@ describe("every client-supplied external id routes through the stability floor",
   it.each(declaringFiles())(
     "%s either applies the field check or names the per-entry checker",
     (rel) => {
-      if (rel in EXEMPT) {
-        expect(EXEMPT[rel].length).toBeGreaterThan(20);
+      const exemption = exemptionFor(rel);
+      if (exemption !== undefined) {
+        expect(exemption.length).toBeGreaterThan(20);
         return;
       }
 
@@ -197,7 +216,7 @@ describe("every client-supplied external id routes through the stability floor",
   it.each(declaringFiles())(
     "%s — every per-entry marker points at a file that really checks per entry",
     (rel) => {
-      if (rel in EXEMPT) return;
+      if (exemptionFor(rel) !== undefined) return;
       const source = read(rel);
       MARKER.lastIndex = 0;
       const targets = [...source.matchAll(new RegExp(MARKER, "g"))].map(
@@ -265,9 +284,9 @@ describe("identities derived outside a Zod schema stay inside the floor", () => 
     const b = body("lib/import/csv-measurements.ts");
     expect(b).toContain("isStableExternalId");
     expect(b).toContain('skip("unstable_external_id")');
-    expect(read("lib/import/csv-measurements.ts")).toContain(
-      '| "unstable_external_id"',
-    );
+    expect(
+      readSource("src/lib/import/csv-measurements.ts", "unstable_external_id"),
+    ).toContain('| "unstable_external_id"');
   });
 
   it("the MCP write path checks the key BEFORE it is hashed into an identity", () => {
@@ -346,7 +365,7 @@ describe("the intake idempotency key is never read across users", () => {
     const found = intakeQueriesFilteringOnTheKey();
     expect(found.length).toBeGreaterThanOrEqual(6);
     expect(found.map((f) => f.file)).toContain(
-      "app/api/medications/intake/bulk/route.ts",
+      "lib/medications/intake-bulk/entry-write.ts",
     );
   });
 
@@ -361,9 +380,8 @@ describe("the intake idempotency key is never read across users", () => {
   });
 
   it("the schema keeps the key unique per user, not globally", () => {
-    const schema = readFileSync(
+    const schema = readSourceText(
       join(process.cwd(), "prisma", "schema.prisma"),
-      "utf8",
     );
     expect(schema).toContain("@@unique([userId, idempotencyKey])");
     expect(schema).not.toMatch(
@@ -376,17 +394,38 @@ describe("the batch surfaces refuse per entry, never whole-batch", () => {
   // Each of these drains a client sync queue. A schema-level refusal here
   // would stop a whole batch of good rows because of one bad one, which is
   // worse than the duplicate it prevents.
-  const BATCH_ROUTES = [
-    "app/api/measurements/batch/route.ts",
-    "app/api/mood-entries/bulk/route.ts",
-    "app/api/medications/intake/bulk/route.ts",
-    "app/api/workouts/batch/route.ts",
-    "app/api/cycle/day-logs/bulk/route.ts",
-    "app/api/import/route.ts",
-  ];
+  //
+  // A surface whose ingest moved into a service names the service files
+  // beside the route: the route parses, the service refuses per entry.
+  const BATCH_SURFACES: Record<string, readonly string[]> = {
+    "app/api/measurements/batch/route.ts": [
+      "lib/measurements/batch-ingest/prepare.ts",
+      "lib/measurements/batch-ingest/ingest.ts",
+    ],
+    "app/api/mood-entries/bulk/route.ts": ["lib/mood/bulk-ingest.ts"],
+    "app/api/medications/intake/bulk/route.ts": [
+      "lib/medications/intake-bulk/entry.ts",
+      "lib/medications/intake-bulk/ingest.ts",
+    ],
+    "app/api/workouts/batch/route.ts": [
+      "lib/workouts/batch-ingest/entries.ts",
+      "lib/workouts/batch-ingest/ingest.ts",
+    ],
+    "app/api/cycle/day-logs/bulk/route.ts": [],
+    "app/api/import/route.ts": [
+      "lib/import/json/measurements.ts",
+      "lib/import/json/mood.ts",
+      "lib/import/json/run.ts",
+    ],
+  };
+  const BATCH_ROUTES = Object.keys(BATCH_SURFACES);
+
+  /** The route and the service files that carry its per-entry ingest. */
+  const surface = (rel: string): string =>
+    [rel, ...BATCH_SURFACES[rel]].map((file) => body(file)).join("\n");
 
   it.each(BATCH_ROUTES)("%s classifies each entry itself", (rel) => {
-    const source = body(rel);
+    const source = surface(rel);
     expect(source).toContain("classifyExternalId");
     expect(source).toContain("unstableExternalIdMeta");
   });
@@ -396,7 +435,7 @@ describe("the batch surfaces refuse per entry, never whole-batch", () => {
     (rel) => {
       // The JSON importer has no per-entry status envelope — it reports a
       // skipped COUNT — so it is the one batch surface without the code.
-      expect(body(rel)).toContain("UNSTABLE_EXTERNAL_ID_REASON");
+      expect(surface(rel)).toContain("UNSTABLE_EXTERNAL_ID_REASON");
     },
   );
 });

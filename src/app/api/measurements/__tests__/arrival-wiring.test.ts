@@ -52,9 +52,13 @@ vi.mock("@/lib/db", () => {
 });
 
 vi.mock("@/lib/auth/audit", () => ({ auditLog: vi.fn() }));
-vi.mock("@/lib/logging/context", () => ({ annotate: vi.fn() }));
+vi.mock("@/lib/logging/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/logging/context")>()),
+  annotate: vi.fn(),
+}));
 vi.mock("@/lib/logging/fire-and-forget", () => ({
-  fireAndForget: (promise: Promise<unknown>) => void promise.catch(() => {}),
+  fireAndForget: (start: () => Promise<unknown>) =>
+    void start().catch(() => {}),
 }));
 vi.mock("@/lib/crypto/note-cipher", () => ({
   encryptNote: vi.fn(() => null),
@@ -83,6 +87,7 @@ vi.mock("@/lib/illness/safety-floor-check", () => ({
 }));
 vi.mock("@/lib/rollups/measurement-rollups", () => ({
   recomputeBucketsForMeasurement: vi.fn(async () => {}),
+  recomputeBucketsForKeys: vi.fn(async () => {}),
   collapseToTypeDayKeys: vi.fn(
     (rows: Array<{ type: string; measuredAt: Date }>) => rows,
   ),

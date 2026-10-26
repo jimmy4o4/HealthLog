@@ -13,6 +13,7 @@ import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { apiFetchRaw, apiGet } from "@/lib/api/api-fetch";
 import { readUpdatedAtToken, withBaseToken } from "@/lib/api/optimistic-token";
+import { InlineAction } from "@/components/ui/inline-action";
 
 /**
  * v1.16.11 — medication low-stock alert threshold (Settings →
@@ -27,7 +28,7 @@ import { readUpdatedAtToken, withBaseToken } from "@/lib/api/optimistic-token";
 
 interface NotificationPrefsShape {
   medication: { lowStockRunwayDays: number | null; reorderLeadDays?: number };
-  // v1.32.22 (R5b) — optimistic-concurrency token, a sibling key on the
+  // v1.32.22 — optimistic-concurrency token, a sibling key on the
   // resolved prefs response, echoed on every PATCH from this card.
   updatedAt?: string;
 }
@@ -120,47 +121,55 @@ export function LowStockCard({
       clearTimerRef.current = null;
     }
 
-    // v1.32.22 (R5b) — echo the base token so a concurrent notification-prefs
+    // v1.32.22 — echo the base token so a concurrent notification-prefs
     // write (the iOS client, another web card) 409s instead of reverting a
     // sibling category through the server-side deep-merge.
-    const res = await apiFetchRaw("/api/auth/me/notification-prefs", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        withBaseToken(
-          body,
-          readUpdatedAtToken(queryClient, queryKeys.authNotificationPrefs()),
+    let saved = false;
+    try {
+      // A request that never reaches the server (offline, a dropped
+      // connection) is a failed save like any other, not a stuck one: it
+      // falls through to the error branch, and `finally` lowers the flag.
+      const res = await apiFetchRaw("/api/auth/me/notification-prefs", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          withBaseToken(
+            body,
+            readUpdatedAtToken(queryClient, queryKeys.authNotificationPrefs()),
+          ),
         ),
-      ),
-    });
+      }).catch(() => null);
 
-    if (res.ok) {
-      setMsg(successMsg);
-      setMsgType("success");
-      await Promise.all([
-        queryClient.invalidateQueries({
+      saved = res?.ok === true;
+      if (res?.ok) {
+        setMsg(successMsg);
+        setMsgType("success");
+        await Promise.all([
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.authNotificationPrefs(),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.settingsReminderThresholds(),
+          }),
+        ]);
+      } else if (res?.status === 409) {
+        // The prefs advanced since they were loaded. Refetch (the active query
+        // reseeds a fresh token) and nudge — the caller reverts its optimistic
+        // value, so the card snaps back to server truth for a re-apply.
+        await queryClient.invalidateQueries({
           queryKey: queryKeys.authNotificationPrefs(),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.settingsReminderThresholds(),
-        }),
-      ]);
-    } else if (res.status === 409) {
-      // The prefs advanced since they were loaded. Refetch (the active query
-      // reseeds a fresh token) and nudge — the caller reverts its optimistic
-      // value, so the card snaps back to server truth for a re-apply.
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.authNotificationPrefs(),
-      });
-      setMsg(t("common.conflictReloaded"));
-      setMsgType("error");
-    } else {
-      setMsg(t("notifications.lowStock.saveError"));
-      setMsgType("error");
+        });
+        setMsg(t("common.conflictReloaded"));
+        setMsgType("error");
+      } else {
+        setMsg(t("notifications.lowStock.saveError"));
+        setMsgType("error");
+      }
+      scheduleClear();
+    } finally {
+      setSaving(false);
     }
-    scheduleClear();
-    setSaving(false);
-    return res.ok;
+    return saved;
   }
 
   async function persist(next: number | null, successMsg: string) {
@@ -320,13 +329,11 @@ export function LowStockCard({
       {/* v1.16.11 — back-link to the medications list, the surface the
           alert is about (the supply tab links here the same way). */}
       <p>
-        <Link
-          href="/medications"
-          className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
-          data-slot="low-stock-medications-link"
-        >
-          {t("notifications.lowStock.medicationsLink")}
-        </Link>
+        <InlineAction asChild tone="muted">
+          <Link href="/medications" data-slot="low-stock-medications-link">
+            {t("notifications.lowStock.medicationsLink")}
+          </Link>
+        </InlineAction>
       </p>
     </SettingsCard>
   );

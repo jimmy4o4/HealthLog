@@ -197,21 +197,20 @@ describe("<SleepQualitySection> data-gating", () => {
 
 describe("<RecoverySection> data-gating", () => {
   it("shows the calm empty note when there is no recovery data at all", () => {
-    analyticsMock.mockReturnValue(
-      analyticsWith({ SLEEP_DURATION: summary({ count: 10 }) }),
-    );
+    // The server resolves the empty reason beside the summaries.
+    const empty = analyticsWith({ SLEEP_DURATION: summary({ count: 10 }) });
+    analyticsMock.mockReturnValue({
+      ...empty,
+      data: { ...empty.data, recoveryEmpty: "general" },
+    });
     const html = render(<RecoverySection />);
     expect(html).toContain('data-slot="recovery-empty"');
     // Routed through the shared <EmptyState> (dashed bordered card), not the
     // old hand-rolled div — the empty title comes from the unified primitive.
     expect(html).toContain("border-dashed");
     expect(html).not.toContain('data-slot="recovery-block-DAY_STRAIN"');
-    // An Oura account sees this note too: it must say where Oura's readiness
-    // lives rather than tell a connected user to connect Oura.
     expect(html).not.toContain("Connect a WHOOP, Polar or Oura account");
-    expect(html).toContain(
-      "Oura&#x27;s readiness appears as your recovery score",
-    );
+    expect(html).toContain("WHOOP or Polar");
   });
 
   it("renders a canonical chart block for the present signal", () => {

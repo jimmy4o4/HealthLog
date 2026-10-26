@@ -7,6 +7,10 @@ import { showErrorToast } from "@/lib/errors/error-toast";
 import { toastWrittenOutcome } from "@/components/outcome/outcome-toast";
 import { stepUpErrorKey } from "@/components/settings/access/grant-action-error";
 import { SettingsCardActions } from "@/components/settings/_card-actions";
+import {
+  ReproofCancelledError,
+  useRecentProof,
+} from "@/components/settings/security-section/use-recent-proof";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,7 +69,14 @@ export function ManagedProfileHandover({
   const { t } = useTranslations();
   const fmt = useFormatters();
   const status = useManagedProfileHandover(profileId);
-  const create = useCreateManagedProfileHandover();
+  // Minting the link is gated on a fresh second factor. The dialog asks for it
+  // when the server says so and the mint is sent again, so a Guardian who
+  // signed in more than five minutes ago is not left with a sentence telling
+  // them to confirm a factor somewhere this panel does not offer.
+  const recentProof = useRecentProof({
+    description: t("settings.reproof.descriptionChange"),
+  });
+  const create = useCreateManagedProfileHandover(recentProof.run);
   const revoke = useRevokeManagedProfileHandover();
   const [replacing, setReplacing] = useState(false);
 
@@ -77,6 +88,7 @@ export function ManagedProfileHandover({
   if (status.isError) {
     return (
       <QueryErrorCard
+        error={status.error}
         title={t("recordSharing.managed.handover.loadError")}
         onRetry={() => void status.refetch()}
       />
@@ -105,6 +117,7 @@ export function ManagedProfileHandover({
       })}
       className="space-y-4 rounded-lg border p-3"
     >
+      {recentProof.dialog}
       <p className="text-sm">
         {t("recordSharing.managed.handover.description", {
           name: profileName,
@@ -359,7 +372,7 @@ function HandoverProposalForm({
         {replacing && <p>{t("recordSharing.managed.handover.replaceNote")}</p>}
       </div>
 
-      {create.isError && (
+      {create.isError && !(create.error instanceof ReproofCancelledError) && (
         <p
           role="alert"
           data-slot="managed-profile-handover-error"
@@ -436,7 +449,7 @@ function HandoverLink({
       </p>
       <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
         {/* The QR quiet zone stays white in both themes: a scanner needs the
-            contrast, and UI-STANDARDS §4 names this exemption. */}
+            contrast, and ui-standards.md §4 names this exemption. */}
         {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL minted client-side; nothing for the image optimiser to do */}
         <img
           src={link.qrDataUrl}

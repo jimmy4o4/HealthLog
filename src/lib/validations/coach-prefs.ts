@@ -1,5 +1,5 @@
 /**
- * v1.4.23 H4 — per-user Coach prompt-tuning preferences.
+ * v1.4.23 — per-user Coach prompt-tuning preferences.
  *
  * Persisted as a Json blob on `User.coachPrefsJson`. Null = legacy
  * defaults (tone="warm", verbosity="default", no metrics excluded,
@@ -8,17 +8,27 @@
  * `excludeMetrics` BEFORE landing in the system prompt so the model
  * never sees data the user opted out of.
  *
- * v1.4.25 W5 — extended with `defaultWindow`, since then made the
+ * v1.4.25 — extended with `defaultWindow`, since then made the
  * Coach's lookback limit: a per-conversation window can narrow it, never
  * widen it (`src/lib/ai/coach/history-reach.ts`).
  */
 import { z } from "zod/v4";
 
+import { REASONING_LEVELS } from "@/lib/ai/reasoning/levels";
 import {
-  DEFAULT_REASONING_LEVEL,
-  REASONING_LEVELS,
-  type ReasoningLevel,
-} from "@/lib/ai/reasoning/levels";
+  COACH_DATA_CLUSTERS,
+  DEFAULT_COACH_PREFS,
+} from "@/lib/ai/coach/prefs-constants";
+
+// The values a client component needs live in a zod-free module, so the
+// Coach and the settings pages do not pull the schema library in with them.
+// Re-exported here for the server code that imports them from the schema.
+export {
+  DEFAULT_COACH_CLUSTERS,
+  DEFAULT_COACH_PREFS,
+  coachReasoningLevel,
+  type CoachDataCluster,
+} from "@/lib/ai/coach/prefs-constants";
 
 /**
  * Tone presets the Coach system-prompt prefix toggles between. v1.4.22
@@ -59,7 +69,7 @@ export const coachExcludeMetricEnum = z.enum([
   "sleep",
   "resting_hr",
   "steps",
-  // v1.4.36 W3 T2 — optional context blocks the user can opt out of.
+  // v1.4.36 — optional context blocks the user can opt out of.
   // `medications` covers the snapshot's compliance + GLP-1 weeklyContext;
   // `anthropometrics` covers height / age / gender on `context`. Each
   // gates a single labelled block at the snapshot/feature layer, so an
@@ -99,39 +109,10 @@ export type CoachDefaultWindow = z.infer<typeof coachDefaultWindowEnum>;
  * The cluster set is the opt-in source of truth going forward;
  * `excludeMetrics` stays valid for back-compat and only narrows.
  */
-export const coachDataClusterEnum = z.enum([
-  "cardio",
-  "body",
-  "activity",
-  "workouts",
-  "sleep",
-  "mood",
-  "glucose",
-  "medication",
-  "mobility",
-  "environment",
-]);
-export type CoachDataCluster = z.infer<typeof coachDataClusterEnum>;
+export const coachDataClusterEnum = z.enum(COACH_DATA_CLUSTERS);
 
 /**
- * Clusters enabled when the user has never touched the cluster picker
- * (`dataClusters === undefined`). These four reproduce today's legacy
- * five domains: cardio carries BP + pulse, body carries weight, mood
- * and medication map straight through. The additive members riding
- * inside cardio/body (HRV, resting HR, body-composition) only surface
- * when the user actually has rows for them — empty blocks are dropped —
- * so a web-only account stays close to the legacy 5-domain output while
- * an iOS account quietly gains the extra signals it already stores.
- */
-export const DEFAULT_COACH_CLUSTERS: ReadonlyArray<CoachDataCluster> = [
-  "cardio",
-  "body",
-  "mood",
-  "medication",
-];
-
-/**
- * v1.18.1 (Workstream C) — Coach cadence-suggestion state. Persisted
+ * v1.18.1 — Coach cadence-suggestion state. Persisted
  * inside the same `coachPrefsJson` blob so the suggestion engine has a
  * single, atomic place for the non-naggy machinery:
  *
@@ -185,7 +166,7 @@ export const coachPrefsSchema = z.object({
   // — an empty array means "the user turned everything off", which is a
   // distinct, valid state from "never picked".
   dataClusters: z.array(coachDataClusterEnum).max(10).optional(),
-  // v1.18.1 (Workstream C) — cadence-suggestion state. Optional with NO
+  // v1.18.1 — cadence-suggestion state. Optional with NO
   // top-level default so a legacy blob (and `parse({})`) stays byte-
   // identical: an absent key reads as `undefined`, and call sites fall
   // back to `DEFAULT_REMINDER_SUGGESTION_PREFS`. When the key IS present,
@@ -215,25 +196,6 @@ export const coachPrefsSchema = z.object({
 });
 
 export type CoachPrefs = z.infer<typeof coachPrefsSchema>;
-
-/**
- * Default preferences applied when the user has never opened the
- * settings cog. Equivalent to `coachPrefsSchema.parse({})` but
- * returned as a plain object so call sites can compare references
- * (e.g., short-circuit a snapshot rebuild when prefs match defaults).
- */
-export const DEFAULT_COACH_PREFS: CoachPrefs = {
-  tone: "warm",
-  verbosity: "default",
-  excludeMetrics: [],
-  showEvidenceByDefault: false,
-  defaultWindow: "allTime",
-};
-
-/** The person's reasoning level; an absent key is the default, `medium`. */
-export function coachReasoningLevel(prefs: CoachPrefs): ReasoningLevel {
-  return prefs.reasoning ?? DEFAULT_REASONING_LEVEL;
-}
 
 /**
  * Parse a row's `coachPrefsJson` Json blob into a typed `CoachPrefs`,

@@ -1,5 +1,5 @@
 /**
- * v1.4.33 C1 — `?slice=summaries` integration coverage.
+ * v1.4.33 — `?slice=summaries` integration coverage.
  *
  * Pins the slim summaries slice against the real Postgres + the real
  * `regr_slope` / `regr_r2` functions, not a unit-level `$queryRaw`
@@ -137,12 +137,13 @@ describe("GET /api/analytics?slice=summaries (C1)", () => {
     const prisma = getPrismaClient();
     const user = await seedSession("slim-populated-user");
 
-    // 14 descending-WEIGHT entries spaced one day apart. Slope per
-    // day = (84.0 - 80.0) / 13 ≈ -0.308 — solidly inside the "down"
-    // band (|slope| >= 0.01 units/day threshold).
+    // 21 descending-WEIGHT entries spaced one day apart. Slope per
+    // day = (84.0 - 80.0) / 20 = -0.2 — solidly inside the "down"
+    // band (|slope| >= 0.01 units/day threshold). Twenty days of span
+    // clear the 15 a 30-day window needs before it carries a trend.
     const now = Date.now();
     const DAY_MS = 24 * 60 * 60 * 1000;
-    const N = 14;
+    const N = 21;
     const rows = Array.from({ length: N }, (_, i) => ({
       userId: user.id,
       type: "WEIGHT" as const,
@@ -167,7 +168,7 @@ describe("GET /api/analytics?slice=summaries (C1)", () => {
     expect(weight.count).toBe(N);
     // Most-recent row in DESCENDING construction = index 0 = value 80.
     expect(weight.latest).toBeCloseTo(80, 1);
-    // Min / max across the 14 rows.
+    // Min / max across the 21 rows.
     expect(weight.min).toBeCloseTo(80, 1);
     expect(weight.max).toBeCloseTo(84, 1);
     // 7-day window covers the first 7 entries (descending dates).
@@ -183,6 +184,68 @@ describe("GET /api/analytics?slice=summaries (C1)", () => {
 
     // Sanity-check: PULSE is empty on this fixture.
     expect(envelope.data.summaries.PULSE.count).toBe(0);
+  });
+
+  it("reports no trend for readings taken minutes apart in one sitting", async () => {
+    // Three systolic readings 2 and 4 minutes apart, the only ones the
+    // account holds. REGR_SLOPE over them is about −2,160 mmHg per day;
+    // the dashboard tile printed seven days of that as its 7-day trend.
+    const prisma = getPrismaClient();
+    const user = await seedSession("slim-one-sitting-user");
+    const start = Date.now() - 30 * 60 * 1000;
+    await prisma.measurement.createMany({
+      data: [130, 124, 118].map((value, i) => ({
+        userId: user.id,
+        type: "BLOOD_PRESSURE_SYS" as const,
+        value,
+        unit: "mmHg",
+        source: "MANUAL" as const,
+        measuredAt: new Date(start + i * 2 * 60 * 1000),
+      })),
+    });
+
+    const { GET } = await import("@/app/api/analytics/route");
+    const response = await (
+      GET as unknown as (req: Request) => Promise<Response>
+    )(new Request("http://localhost/api/analytics?slice=summaries"));
+    expect(response.status).toBe(200);
+    const sys = ((await response.json()) as SlimEnvelope).data.summaries
+      .BLOOD_PRESSURE_SYS;
+    expect(sys.count).toBe(3);
+    expect(sys.avg7).toBeCloseTo(124, 1);
+    expect(sys.slope7).toBeNull();
+    expect(sys.slope30).toBeNull();
+  });
+
+  it("summarises sleep over the whole history, not the last year", async () => {
+    const prisma = getPrismaClient();
+    const user = await seedSession("slim-sleep-history");
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const morning = new Date();
+    morning.setUTCHours(6, 0, 0, 0);
+    // One 7 h night every third day for two years.
+    const nights = Array.from({ length: 244 }, (_, i) => ({
+      userId: user.id,
+      type: "SLEEP_DURATION" as const,
+      value: 420,
+      unit: "minutes",
+      source: "APPLE_HEALTH" as const,
+      measuredAt: new Date(morning.getTime() - i * 3 * DAY_MS),
+      externalId: `uuid-slice-night-${i}`,
+      sleepStage: "CORE" as const,
+    }));
+    await prisma.measurement.createMany({ data: nights });
+
+    const { GET } = await import("@/app/api/analytics/route");
+    const response = await (
+      GET as unknown as (req: Request) => Promise<Response>
+    )(new Request("http://localhost/api/analytics?slice=summaries"));
+    expect(response.status).toBe(200);
+    const sleep = ((await response.json()) as SlimEnvelope).data.summaries
+      .SLEEP_DURATION;
+    // Every night counts, and the window a year back has nights in it.
+    expect(sleep.count).toBe(244);
+    expect(sleep.avg30LastYear).toBe(420);
   });
 
   it("default slice still carries the thick envelope (additive contract)", async () => {

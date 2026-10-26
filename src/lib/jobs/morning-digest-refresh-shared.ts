@@ -1,5 +1,5 @@
 /**
- * S4 — generator-free contract for the `morning-digest-refresh` queue.
+ * Generator-free contract for the `morning-digest-refresh` queue.
  *
  * The sleep-arrival trigger (`@/lib/daily/morning-refresh-trigger`) — reached
  * from the Withings, WHOOP, and Apple-Health sleep-write seams — enqueues a
@@ -16,8 +16,25 @@
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import { annotate } from "@/lib/logging/context";
 import { logCaught } from "@/lib/logging/signal";
+import {
+  COMPREHENSIVE_WARM_CEILING_MS,
+  expireAboveModelTime,
+} from "@/lib/jobs/model-time";
 
 export const MORNING_DIGEST_REFRESH_QUEUE = "morning-digest-refresh";
+
+/**
+ * The job's expiry: the longest comprehensive generation the largest response
+ * timeout allows, plus headroom. The refresh is one forced generation of up
+ * to `COMPREHENSIVE_MODEL_CALLS` calls in a row, each with the person's
+ * timeout (up to ten minutes), which outlived pg-boss's fifteen-minute
+ * default: pg-boss failed the job and queued a retry while the handler was
+ * still generating (#1274). The handler bounds the generation by the same
+ * worst case (`comprehensiveWarmBudgetMs`), so the job cannot outlive this.
+ */
+export const MORNING_DIGEST_REFRESH_EXPIRE_SECONDS = expireAboveModelTime(
+  COMPREHENSIVE_WARM_CEILING_MS,
+);
 
 export interface MorningDigestRefreshPayload {
   userId: string;
@@ -72,6 +89,7 @@ export async function enqueueMorningDigestRefresh(
       retryLimit: 2,
       retryDelay: 60,
       retryBackoff: true,
+      expireInSeconds: MORNING_DIGEST_REFRESH_EXPIRE_SECONDS,
     });
     annotate({
       action: { name: "daily.morning_refresh.enqueued" },

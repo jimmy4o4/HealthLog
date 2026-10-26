@@ -4,9 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Loader2, Pill } from "lucide-react";
 
-import { useAiCapability } from "@/hooks/use-ai-capability";
+import { useAiCapability, useAiProviderState } from "@/hooks/use-ai-capability";
 import { useAuth } from "@/hooks/use-auth";
-import { nextStatusPollInterval } from "@/hooks/use-insight-status";
+import {
+  nextStatusPollInterval,
+  statusPollMaxAttempts,
+} from "@/hooks/use-insight-status";
+import { pollAttemptCount } from "@/lib/queries/refetch-interval";
 import { queryKeys } from "@/lib/query-keys";
 import { useTranslations } from "@/lib/i18n/context";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +31,7 @@ import { apiGet } from "@/lib/api/api-fetch";
 import { getMedicationCategoryLabel } from "@/lib/medications/category-label";
 
 /**
- * v1.4.25 W4 — `/insights/medications`.
+ * v1.4.25 — `/insights/medications`.
  *
  * Routed Medication-Compliance sub-page. Mirrors the per-medication
  * grid from the v1.4.24 mother page (compliance bars + heatmap +
@@ -101,11 +105,13 @@ export default function InsightsMedikamentePage() {
   // The compliance summary and the per-medication sentences are status notes:
   // read only while the `statusText` capability is available.
   const statusText = useAiCapability("statusText");
+  const { responseTimeoutMs } = useAiProviderState();
 
   const {
     data: comprehensive,
     isLoading: isComprehensiveLoading,
     isError: isComprehensiveError,
+    error: comprehensiveError,
     refetch: refetchComprehensive,
   } = useQuery({
     queryKey: queryKeys.insightsComprehensive(),
@@ -135,14 +141,13 @@ export default function InsightsMedikamentePage() {
     enabled: isAuthenticated && statusText.available,
     staleTime: 60 * 1000,
     retry: 0,
-    // v1.8.4 — bounded preparing poll: stop after the shared attempt
-    // ceiling so a persistently failing generation can't poll an open
-    // page forever.
+    // Bounded poll whose ceiling follows the response timeout (#1274).
     refetchInterval: (query) =>
       nextStatusPollInterval(
         query.state.data?.preparing,
-        query.state.dataUpdateCount,
+        pollAttemptCount(query.state),
         query.state.data?.revalidating,
+        statusPollMaxAttempts(responseTimeoutMs),
       ),
   });
 
@@ -179,6 +184,7 @@ export default function InsightsMedikamentePage() {
         explainerMetric="medications"
       >
         <QueryErrorCard
+          error={comprehensiveError}
           description={t("insights.loadError")}
           onRetry={() => refetchComprehensive()}
         />
@@ -187,7 +193,7 @@ export default function InsightsMedikamentePage() {
   }
 
   if (medications.length === 0) {
-    // v1.4.27 F17 — medication compliance is event-driven so the
+    // v1.4.27 — medication compliance is event-driven so the
     // gate reads `medications.length > 0`. CTA targets `/medications`
     // (the dedicated medication-management surface).
     return (
@@ -245,7 +251,7 @@ export default function InsightsMedikamentePage() {
             med.categoryLabel,
           );
           return (
-            <Card key={med.id} className="gap-2 py-3 md:py-4">
+            <Card key={med.id} density="compact">
               <CardHeader>
                 <TileHeader icon={Pill} title={med.name} />
                 <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
@@ -270,7 +276,7 @@ export default function InsightsMedikamentePage() {
                     <span>{t("insights.compliance7d")}</span>
                     <span className="font-medium">{med.compliance7}%</span>
                   </div>
-                  {/* v1.4.33 IW9 — aria-label so the bar has an
+                  {/* v1.4.33 — aria-label so the bar has an
                       accessible name (Lighthouse a11y 91/94). */}
                   <Progress
                     value={med.compliance7}
@@ -391,11 +397,7 @@ function MedicationComplianceCalendar({
   }
 
   if (!data?.dailyCompliance) {
-    return (
-      <div className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-xs">
-        {t("insights.complianceNoData")}
-      </div>
-    );
+    return <EmptyState size="compact" title={t("insights.complianceNoData")} />;
   }
 
   return (

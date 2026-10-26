@@ -6,7 +6,11 @@
  * token, or run an admin backup, restore, wipe or reset. Those routes answer
  * 401 `auth.reproof.required` with `meta.methods` when the session carries no
  * recent proof; the web opens the re-proof dialog, posts the proof here, and
- * retries.
+ * retries. The fresh-factor routes (`requireFreshMfa`: the managed-profile
+ * acts, second-factor and passkey changes, the password change, account
+ * deletion, the data wipe, key rotation) answer 401 `auth.stepup.required`
+ * with `meta.methods` on a browser session, and the same dialog clears them
+ * here with a possession proof.
  *
  * What a proof stamps on the session row:
  *   - `totp`, `webauthn` or `passkey`: `mfaVerifiedAt` and `reproofAt`. The
@@ -38,14 +42,8 @@ import {
   recentProofMethods,
   requireCookieAuth,
 } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  apiValidationError,
-  getClientIp,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { prisma } from "@/lib/db";
 import { auditLog } from "@/lib/auth/audit";
 import { annotate } from "@/lib/logging/context";
@@ -64,19 +62,11 @@ export const POST = apiHandler(async (request: NextRequest) => {
   const { user, session } = await requireCookieAuth();
   const ip = getClientIp(request);
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, stepUpMintSchema, {
     maxBytes: 64 * 1024,
+    message: "Invalid request",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = stepUpMintSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiValidationError(
-      "Invalid request",
-      sanitiseZodIssues(parsed.error.issues),
-      422,
-    );
-  }
+  if (!parsed.ok) return parsed.error;
   const proof = parsed.data;
 
   // Refuse a proof that could not satisfy the gate BEFORE spending a guess on

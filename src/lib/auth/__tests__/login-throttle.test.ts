@@ -4,7 +4,7 @@
  * The case it exists for: somebody who is not the owner types wrong passwords
  * for the account from two addresses. That used to lock a password-only
  * account (the phone app's password sign-in with it) for as long as they kept
- * it up. Now the owner's own device or network is not held back at all, and
+ * it up. Now the owner's own browser or phone is not held back at all, and
  * anywhere else waits a bounded, growing time.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,8 +97,7 @@ async function guess(
   const attempt = await beginAccountLoginAttempt({
     user: OWNER,
     identifier: "owner",
-    request: req(opts.headers),
-    ip,
+    request: req({ "x-forwarded-for": ip, ...opts.headers }),
   });
   if (attempt.waiting) return "waiting";
   if (opts.right) await attempt.succeeded();
@@ -125,6 +124,15 @@ describe("waitAfter", () => {
     expect(waitAfter(FREE_FAILURES + 100)).toBe(MAX_WAIT_MS);
   });
 });
+
+/** The owner's browser, remembered as a trusted device until `expiresAt`. */
+function rememberBrowser(expiresAt: Date) {
+  deviceCookie = "device-token";
+  vi.mocked(prisma.trustedDevice.findUnique).mockResolvedValue({
+    userId: "owner-1",
+    expiresAt,
+  } as never);
+}
 
 describe("somebody guessing from two addresses", () => {
   async function tenGuesses() {
@@ -160,36 +168,33 @@ describe("somebody guessing from two addresses", () => {
 
   it("the owner's remembered browser still gets through", async () => {
     await tenGuesses();
-    deviceCookie = "device-token";
-    // The device's expiry is compared against the wall clock, not the mocked
-    // rate-limit clock `now`, so it is anchored to the wall clock too: an
-    // expiry fixed relative to `now` expired for real once the calendar
-    // passed it.
-    vi.mocked(prisma.trustedDevice.findUnique).mockResolvedValue({
-      userId: "owner-1",
-      expiresAt: new Date(Date.now() + 30 * 86_400_000),
-    } as never);
+    // The device's expiry is read against the same clock as the wait, the
+    // mocked `now`. It used to be compared with `new Date()`, which the mock
+    // does not reach, so this expiry ran out for real on 2026-10-26 at noon
+    // UTC, 30 days after `now`, and the test failed from then on.
+    rememberBrowser(new Date(now + 30 * 86_400_000));
     expect(await guess("203.0.113.51", { right: true })).toBe("checked");
   });
 
-  it("the owner's home network, seen on a recent session, still gets through", async () => {
+  it("a remembered browser whose device has expired is throttled like anyone", async () => {
     await tenGuesses();
-    vi.mocked(prisma.session.findFirst).mockImplementation((async (args: {
-      where: { ipAddress?: string };
-    }) =>
-      args.where.ipAddress === "203.0.113.9" ? { id: "s-1" } : null) as never);
-    expect(await guess("203.0.113.9", { right: true })).toBe("checked");
+    rememberBrowser(new Date(now - 1));
+    expect(await guess("203.0.113.52", { right: true })).toBe("waiting");
   });
 
-  it("a place the account has signed in from never counts toward the wait", async () => {
+  it("an address the account signed in from is no exemption: a guesser can claim it", async () => {
+    // A session of the owner's from this address. The guesser shares the
+    // network, or names the address in a forwarding header; either way the
+    // address says nothing about who is typing.
     vi.mocked(prisma.session.findFirst).mockResolvedValue({
       id: "s-1",
     } as never);
-    for (let i = 0; i < 20; i++) {
-      expect(await guess("203.0.113.9")).toBe("checked");
-    }
-    vi.mocked(prisma.session.findFirst).mockResolvedValue(null);
-    expect(await guess("198.51.100.1")).toBe("checked");
+    vi.mocked(prisma.refreshToken.findFirst).mockResolvedValue({
+      id: "rt-1",
+    } as never);
+    const answers: string[] = [];
+    for (let i = 0; i < 10; i++) answers.push(await guess("203.0.113.9"));
+    expect(answers.slice(FREE_FAILURES)).toContain("waiting");
   });
 
   it("an unknown place waits at most fifteen minutes, however long the guessing went on", async () => {
@@ -215,8 +220,7 @@ describe("an identifier that names no account", () => {
       const attempt = await beginAccountLoginAttempt({
         user: null,
         identifier: "Nobody",
-        request: req(),
-        ip: "198.51.100.1",
+        request: req({ "x-forwarded-for": "198.51.100.1" }),
       });
       await attempt.failed();
     }

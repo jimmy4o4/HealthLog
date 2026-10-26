@@ -32,8 +32,8 @@ import {
   enqueueSummaryCatchUp,
   runSummaryCatchUpForUser,
   MAX_ENQUEUES_PER_RUN,
-  DOCUMENT_SUMMARY_CATCHUP_QUEUE,
 } from "../document-summary-catchup";
+import { DOCUMENT_SUMMARY_CATCHUP_QUEUE } from "../document-summary-catchup-queue";
 import { prisma } from "@/lib/db";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import { documentAutoReadEnabled } from "@/lib/documents/document-settings";
@@ -241,7 +241,17 @@ describe("enqueueSummaryCatchUp", () => {
 });
 
 describe("the toggle copy discloses the catch-up", () => {
-  const LOCALES = ["de", "en", "es", "fr", "it", "pl", "ko"] as const;
+  const LOCALES = [
+    "de",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "pl",
+    "ko",
+    "nl",
+    "pt-BR",
+  ] as const;
 
   function autoReadCopy(locale: string): { subLabel: string; honesty: string } {
     const bundle = JSON.parse(

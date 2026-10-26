@@ -45,8 +45,15 @@ import { useFormatters, useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { apiFetchRaw, apiGet } from "@/lib/api/api-fetch";
 import { getApiErrorMessage } from "./_shared";
-import { KeyBackupCard } from "./key-backup-card";
-import { useKeyBackupStatus } from "./use-key-backup-status";
+import {
+  recentProofErrorMessage,
+  throwIfReproofRequired,
+  useRecentProof,
+} from "@/components/settings/security-section/use-recent-proof";
+import { RecoveryKitCard } from "./recovery-kit-card";
+import { useRecoveryKit } from "./use-recovery-kit";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface ColumnScan {
   model: string;
@@ -81,6 +88,11 @@ interface EncryptionStatus {
       lastWrittenAt: string;
       neededUntil: string | null;
     }>;
+    dumps: Array<{
+      keyId: string;
+      local: number;
+      offhost: { lastWrittenAt: string; neededUntil: string | null } | null;
+    }>;
     offhostExpirationDays: number | null;
     retiredKeysStillNeeded: string[];
   };
@@ -94,7 +106,7 @@ export function EncryptionSection() {
 
   // Same query as the card's own (deduplicated by key): read here only to
   // know when the page can paint the cards below it in one step.
-  const keyBackup = useKeyBackupStatus();
+  const recoveryKit = useRecoveryKit();
   const statusQuery = useQuery({
     queryKey: queryKeys.adminEncryptionStatus(),
     queryFn: async (): Promise<EncryptionStatus> => {
@@ -105,12 +117,22 @@ export function EncryptionSection() {
     staleTime: 15_000,
   });
 
+  // Rotation needs the admin's second factor proved within five minutes. When
+  // it is older the server names the proofs that clear it, the shared dialog
+  // collects one, and the rotation is queued once more.
+  const recentProof = useRecentProof({
+    description: t("settings.reproof.descriptionChange"),
+  });
   const rotate = useMutation({
     mutationFn: async () => {
-      const res = await apiFetchRaw("/api/admin/encryption/rotate", {
-        method: "POST",
-        credentials: "include",
-      });
+      const res = await recentProof.run(async () =>
+        throwIfReproofRequired(
+          await apiFetchRaw("/api/admin/encryption/rotate", {
+            method: "POST",
+            credentials: "include",
+          }),
+        ),
+      );
       if (!res.ok) {
         if (res.status === 401) {
           throw new Error(t("admin.section.encryption.stepUpNeeded"));
@@ -126,10 +148,12 @@ export function EncryptionSection() {
       });
     },
     onError: (err: Error) => {
-      showErrorToast(
+      const message = recentProofErrorMessage(
+        err,
         err.message || t("admin.section.encryption.rotateFailed"),
-        { cause: err },
       );
+      if (message === null) return;
+      showErrorToast(message, { cause: err });
     },
   });
 
@@ -139,14 +163,14 @@ export function EncryptionSection() {
   // downward the moment the status resolved. Same shape as
   // `coach-feedback-section.tsx`, which fixed this for itself and never had
   // the fix carried across.
-  // Until both reads land, only the key-backup card paints. It is the first
+  // Until both reads land, only the recovery kit card paints. It is the first
   // card and grows into its loaded shape with nothing under it yet; painting
-  // the coverage card below it while the backup card was still a one-line
-  // loader moved that card down the page when the backup status arrived.
-  if (statusQuery.isLoading || keyBackup.isLoading) {
+  // the coverage card below it while the kit was still a one-line loader
+  // moved that card down the page when the kit arrived.
+  if (statusQuery.isLoading || recoveryKit.isLoading) {
     return (
       <div className="space-y-6">
-        <KeyBackupCard />
+        <RecoveryKitCard />
       </div>
     );
   }
@@ -154,7 +178,7 @@ export function EncryptionSection() {
   if (statusQuery.isError || !statusQuery.data) {
     return (
       <div className="space-y-6">
-        <KeyBackupCard />
+        <RecoveryKitCard />
         <SettingsCard>
           <SettingsCardHeader
             icon={ShieldCheck}
@@ -165,9 +189,15 @@ export function EncryptionSection() {
             {t("admin.section.encryption.coverageDetail")}
           </p>
 
-          <p role="alert" className="text-destructive text-sm">
-            {t("admin.section.encryption.loadError")}
-          </p>
+          {statusQuery.isError ? (
+            <QueryErrorRow
+              inset
+              error={statusQuery.error}
+              slot="encryption-status-error"
+              message={t("admin.section.encryption.loadError")}
+              onRetry={() => void statusQuery.refetch()}
+            />
+          ) : null}
         </SettingsCard>
       </div>
     );
@@ -182,7 +212,8 @@ export function EncryptionSection() {
 
   return (
     <div className="space-y-6">
-      <KeyBackupCard />
+      {recentProof.dialog}
+      <RecoveryKitCard />
       {/* ── Coverage summary ───────────────────────────────────────── */}
       <SettingsCard>
         <SettingsCardHeader
@@ -204,11 +235,11 @@ export function EncryptionSection() {
           />
           <Stat
             label={t("admin.section.encryption.totalRows")}
-            value={s.totalRows.toLocaleString()}
+            value={fmt.integer(s.totalRows)}
           />
           <Stat
             label={t("admin.section.encryption.staleRows")}
-            value={s.staleRows.toLocaleString()}
+            value={fmt.integer(s.staleRows)}
           />
         </div>
         {/* "Safe to drop the legacy key" needs a legacy key to drop. With a
@@ -248,46 +279,7 @@ export function EncryptionSection() {
           description={t("admin.section.encryption.backupsDescription")}
         />
         <p className="text-sm">{t("admin.section.encryption.backupsDetail")}</p>
-        <ul className="space-y-1 text-sm" data-slot="encryption-backup-keys">
-          {s.backups.stored.map((row) => (
-            <li key={`stored-${row.keyId}`}>
-              {t("admin.section.encryption.backupsStoredLine", {
-                key: row.keyId,
-                count: row.copies,
-                when: fmt.dateTime(row.oldestAt),
-              })}
-            </li>
-          ))}
-          {s.backups.unrecorded.copies > 0 && s.backups.unrecorded.oldestAt ? (
-            <li>
-              {t("admin.section.encryption.backupsUnrecordedLine", {
-                count: s.backups.unrecorded.copies,
-                when: fmt.dateTime(s.backups.unrecorded.oldestAt),
-              })}
-            </li>
-          ) : null}
-          {s.backups.offhost.map((row) => (
-            <li key={`offhost-${row.keyId}`}>
-              {row.neededUntil
-                ? t("admin.section.encryption.backupsOffhostLine", {
-                    key: row.keyId,
-                    when: fmt.dateTime(row.lastWrittenAt),
-                    until: fmt.dateTime(row.neededUntil),
-                  })
-                : t("admin.section.encryption.backupsOffhostLineUnknown", {
-                    key: row.keyId,
-                    when: fmt.dateTime(row.lastWrittenAt),
-                  })}
-            </li>
-          ))}
-          {s.backups.stored.length === 0 &&
-          s.backups.unrecorded.copies === 0 &&
-          s.backups.offhost.length === 0 ? (
-            <li className="text-muted-foreground">
-              {t("admin.section.encryption.backupsNone")}
-            </li>
-          ) : null}
-        </ul>
+        <BackupKeyNeedsList backups={s.backups} />
       </SettingsCard>
 
       {/* ── Rotation status + trigger ──────────────────────────────── */}
@@ -389,6 +381,7 @@ export function ColumnCoverage({
   initiallyOpen?: boolean;
 }) {
   const { t } = useTranslations();
+  const fmt = useFormatters();
   const [open, setOpen] = useState(initiallyOpen);
   const [showAll, setShowAll] = useState(false);
   const withRows = columns.filter((c) => c.total > 0);
@@ -420,15 +413,17 @@ export function ColumnCoverage({
         {open ? (
           <>
             {shown.length === 0 ? (
-              <p className="text-muted-foreground text-sm">
-                {t("admin.section.encryption.columnsNoneWithRows")}
-              </p>
+              <EmptyState
+                variant="plain"
+                size="compact"
+                title={t("admin.section.encryption.columnsNoneWithRows")}
+              />
             ) : (
               /* Focusable, named scroll region: on a phone the table scrolls
                sideways, and a keyboard user has to be able to reach it
                (axe scrollable-region-focusable). */
               <div
-                className="overflow-x-auto"
+                className="relative overflow-x-auto"
                 tabIndex={0}
                 role="region"
                 aria-label={t("admin.section.encryption.columnsTitle")}
@@ -459,16 +454,12 @@ export function ColumnCoverage({
                           <td className="py-2 pr-3 font-mono text-xs">
                             {c.model}.{c.field}
                           </td>
-                          <td className="py-2 pr-3">
-                            {c.total.toLocaleString()}
-                          </td>
-                          <td className="py-2 pr-3">
-                            {active.toLocaleString()}
-                          </td>
+                          <td className="py-2 pr-3">{fmt.integer(c.total)}</td>
+                          <td className="py-2 pr-3">{fmt.integer(active)}</td>
                           <td className="py-2">
                             {stale > 0 ? (
                               <Badge variant="secondary">
-                                {stale.toLocaleString()}
+                                {fmt.integer(stale)}
                               </Badge>
                             ) : (
                               <span className="text-muted-foreground">0</span>
@@ -502,6 +493,85 @@ export function ColumnCoverage({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Per key id, the copies and dumps that still need it. */
+function BackupKeyNeedsList({
+  backups,
+}: {
+  backups: EncryptionStatus["backups"];
+}) {
+  const { t } = useTranslations();
+  const fmt = useFormatters();
+  return (
+    <ul className="space-y-1 text-sm" data-slot="encryption-backup-keys">
+      {backups.stored.map((row) => (
+        <li key={`stored-${row.keyId}`}>
+          {t("admin.section.encryption.backupsStoredLine", {
+            key: row.keyId,
+            count: row.copies,
+            when: fmt.dateTime(row.oldestAt),
+          })}
+        </li>
+      ))}
+      {backups.unrecorded.copies > 0 && backups.unrecorded.oldestAt ? (
+        <li>
+          {t("admin.section.encryption.backupsUnrecordedLine", {
+            count: backups.unrecorded.copies,
+            when: fmt.dateTime(backups.unrecorded.oldestAt),
+          })}
+        </li>
+      ) : null}
+      {backups.offhost.map((row) => (
+        <li key={`offhost-${row.keyId}`}>
+          {row.neededUntil
+            ? t("admin.section.encryption.backupsOffhostLine", {
+                key: row.keyId,
+                when: fmt.dateTime(row.lastWrittenAt),
+                until: fmt.dateTime(row.neededUntil),
+              })
+            : t("admin.section.encryption.backupsOffhostLineUnknown", {
+                key: row.keyId,
+                when: fmt.dateTime(row.lastWrittenAt),
+              })}
+        </li>
+      ))}
+      {backups.dumps.map((row) => (
+        <li key={`dump-${row.keyId}`}>
+          {[
+            row.local > 0
+              ? t("admin.section.encryption.backupsDumpLocalLine", {
+                  key: row.keyId,
+                  count: row.local,
+                })
+              : null,
+            row.offhost
+              ? row.offhost.neededUntil
+                ? t("admin.section.encryption.backupsDumpOffhostLine", {
+                    key: row.keyId,
+                    when: fmt.dateTime(row.offhost.lastWrittenAt),
+                    until: fmt.dateTime(row.offhost.neededUntil),
+                  })
+                : t("admin.section.encryption.backupsDumpOffhostLineUnknown", {
+                    key: row.keyId,
+                    when: fmt.dateTime(row.offhost.lastWrittenAt),
+                  })
+              : null,
+          ]
+            .filter((line): line is string => line !== null)
+            .join(" ")}
+        </li>
+      ))}
+      {backups.stored.length === 0 &&
+      backups.unrecorded.copies === 0 &&
+      backups.offhost.length === 0 &&
+      backups.dumps.length === 0 ? (
+        <li className="text-muted-foreground">
+          {t("admin.section.encryption.backupsNone")}
+        </li>
+      ) : null}
+    </ul>
   );
 }
 

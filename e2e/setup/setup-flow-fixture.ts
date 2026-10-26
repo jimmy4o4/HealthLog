@@ -1,5 +1,5 @@
 /**
- * v1.39 (C2) — the state the setup-flow journeys start from, and nothing else.
+ * v1.39 — the state the setup-flow journeys start from, and nothing else.
  *
  * Each journey owns one account and walks it from the welcome screen to the
  * dashboard. What a walk leaves behind — the answers row, the completion
@@ -57,7 +57,8 @@ export async function resetSetupFlow(username: string): Promise<void> {
         WHERE key IN (
           'onboarding-answers:' || $1,
           'onboarding-restart:' || $1,
-          'managed-profile:create:' || $1
+          'managed-profile:create:' || $1,
+          'record-write:' || $1
         )`,
       [id],
     );

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 
-import { useTranslations } from "@/lib/i18n/context";
+import { useFormatters, useTranslations } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 /**
@@ -59,13 +59,17 @@ function pickIcon(item: MoodNarrativeItem): ComponentType<{
   return ICONS[item.kind] ?? Tag;
 }
 
+/** Vars carrying a one-decimal score figure (`mood-narratives.ts`). */
+const DECIMAL_VARS = ["delta", "value"] as const;
+
 export function MoodNarrativeFeed({ items }: { items: MoodNarrativeItem[] }) {
   const { t } = useTranslations();
+  const fmt = useFormatters();
 
   if (items.length === 0) return null;
 
   return (
-    // v1.12.4 (C2) — the takeaways are short one-liners, so a single
+    // v1.12.4 — the takeaways are short one-liners, so a single
     // full-width column wasted horizontal space and stacked into a long
     // ladder. Lay them two-up on anything wider than a phone; a lone
     // takeaway still spans the row rather than orphaning half of it.
@@ -89,6 +93,13 @@ export function MoodNarrativeFeed({ items }: { items: MoodNarrativeItem[] }) {
         if (vars.weekdayKey) vars.weekday = t(vars.weekdayKey);
         if (vars.tagKey) vars.tag = t(vars.tagKey);
         if (vars.bucketKey) vars.bucket = t(vars.bucketKey);
+        // The server spells the score figures with a full stop so they
+        // survive JSON unchanged; they are printed in the reader's notation.
+        for (const name of DECIMAL_VARS) {
+          const raw = vars[name];
+          const value = raw === undefined ? Number.NaN : Number(raw);
+          if (Number.isFinite(value)) vars[name] = fmt.number(value, 1);
+        }
         return (
           <li
             key={`${item.kind}-${index}`}

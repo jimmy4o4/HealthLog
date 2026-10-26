@@ -44,7 +44,12 @@ import {
 } from "@/lib/validations/managed-profile-handover";
 import { onboardingStateResource } from "./onboarding";
 import { aiAccountBlock, moduleAccessMap } from "./profile";
-import { dataEnvelope, errorEnvelope, stdResponses } from "./shared";
+import {
+  dataEnvelope,
+  errorEnvelope,
+  stdResponses,
+  listEnvelope,
+} from "./shared";
 import { isoDateTime } from "@/lib/validations/datetime";
 
 /**
@@ -75,7 +80,7 @@ const accountGrantInvite = inviteGrantSchema.meta({
 const createManagedProfileRequest = createManagedProfileSchema.meta({
   id: "CreateManagedProfileRequest",
   description:
-    "Create a health record for somebody who has no login of their own — a child, a dependent adult, an animal. The caller becomes its first Guardian in the same transaction, through an ordinary MANAGE grant with the new record as grantor, so the profile appears in `accountAccess.accounts` on the next `GET /api/auth/me` and is switched into like any other shared record. `displayName` is the only required text; `dateOfBirth` is an optional `YYYY-MM-DD` and is never synthesised from a year. `gender` is optional and takes the same three values `PATCH /api/auth/me` takes for an ordinary account (`MALE`, `FEMALE`, `OTHER`) or null; absent and null both mean not recorded, and the value is what the cycle module derives its default from, so a record created for a child who does not need it starts with it off. `locale` and `timezone` belong to the RECORD and not to the Guardian reading it: they decide how the profile's own reminders are worded and when its day starts. Strict — an unexpected field is a 422 rather than an ignored key. Cookie transport only and step-up gated (`requireFreshMfa`, unconditional): a Bearer caller cannot mint a credential-less person and a permanent management relationship, and an account with no second factor enrolled is refused rather than waved through. Rate-limited to ten an hour per caller.",
+    "Create a health record for somebody who has no login of their own — a child, a dependent adult, an animal. The caller becomes its first Guardian in the same transaction, through an ordinary MANAGE grant with the new record as grantor, so the profile appears in `accountAccess.accounts` on the next `GET /api/auth/me` and is switched into like any other shared record. `displayName` is the only required text; `dateOfBirth` is an optional `YYYY-MM-DD` and is never synthesised from a year. `gender` is optional and takes the same three values `PATCH /api/auth/me` takes for an ordinary account (`MALE`, `FEMALE`, `OTHER`) or null; absent and null both mean not recorded, and the value is what the cycle module derives its default from, so a record created for a child who does not need it starts with it off. `locale` and `timezone` belong to the RECORD and not to the Guardian reading it: they decide how the profile's own reminders are worded and when its day starts. Strict — an unexpected field is a 422 rather than an ignored key. Cookie transport only and step-up gated (`requireFreshMfa`, unconditional): a Bearer caller cannot mint a credential-less person and a permanent management relationship, and an account with no second factor enrolled is refused rather than waved through. A primary passkey counts as that factor here: a passkey sign-in or a passkey re-proof at POST /api/auth/reproof stamps the session. Rate-limited to ten an hour per caller.",
 });
 
 const updateManagedProfileRequest = updateManagedProfileSchema.meta({
@@ -349,11 +354,11 @@ const recordActivityResponse = z
       .describe(
         "How far back this feed can see, in days. Resolved from the instance's audit retention setting (365 by default, operator-configurable), NOT a constant — an instance running a 90-day window sends 90. The query is bounded to this window, so it is the real limit of the list and not only a caption. Show it beside the rows.",
       ),
-    truncated: z
-      .boolean()
-      .describe(
-        "True when the read reached its row ceiling, so `entries` is the most recent activity inside the window rather than all of it. A client must say so — a list that stops at its own cap in silence lets the oldest row read as the beginning. False means the list is everything inside the window.",
-      ),
+    truncated: z.boolean().meta({
+      deprecated: true,
+      description:
+        "Deprecated: read `meta.truncated`, which carries the same value. Whether the list stopped at its row ceiling; kept in `data` for clients built against v1.43.6 and earlier.",
+    }),
   })
   .meta({
     id: "RecordActivity",
@@ -569,7 +574,7 @@ const accountPayload = z
     notificationPrefs: z.looseObject({
       medication: z.looseObject({ clientManaged: z.boolean() }),
     }),
-    // v1.39 (C1) — enumerated for the same reason `notificationPrefs` is: a
+    // v1.39 — enumerated for the same reason `notificationPrefs` is: a
     // client DECIDES on it. The getting-started checklist orders its rows from
     // `needs` and stays on screen while the flow is unfinished, and a future
     // native client renders the steps it knows. Always present, and resolved
@@ -870,14 +875,14 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Account sharing"],
       summary: "Who opened this record, and when",
       description:
-        "Every audit row filed under this account that somebody else performed, newest first — one row per delegate per day with a count, rather than one per request. `retentionDays` rides the response because audit history is purged on a schedule the operator configures: a view that showed the rows without the window would imply a completeness it does not have, and clients must state the number the server sends rather than assume the 365-day default. Not delegable: a grant is not an introduction to the other people in the household.",
+        "Every audit row filed under this account that somebody else performed, newest first — one row per delegate per day with a count, rather than one per request. `retentionDays` rides the response because audit history is purged on a schedule the operator configures: a view that showed the rows without the window would imply a completeness it does not have, and clients must state the number the server sends rather than assume the 365-day default. Whether the list stopped at its row ceiling is `meta.truncated`; the `truncated` field in `data` carries the same value and is deprecated. Not delegable: a grant is not an introduction to the other people in the household.",
       responses: {
         ...stdResponses,
         "200": {
           description: "The activity, and how far back it can see.",
           content: {
             "application/json": {
-              schema: dataEnvelope(
+              schema: listEnvelope(
                 recordActivityResponse,
                 "RecordActivityEnvelope",
               ),
@@ -900,7 +905,7 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           description: "Grants given and received.",
           content: {
             "application/json": {
-              schema: dataEnvelope(
+              schema: listEnvelope(
                 grantListResponse,
                 "AccountGrantListEnvelope",
               ),
@@ -940,7 +945,8 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           content: { "application/json": { schema: errorEnvelope } },
         },
         "404": {
-          description: "No account on this instance carries that identifier.",
+          description:
+            "No account on this instance carries that identifier (`meta.errorCode: sharing.invite.no_account`).",
           content: { "application/json": { schema: errorEnvelope } },
         },
         "409": {
@@ -1089,12 +1095,12 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         },
         "401": {
           description:
-            "No fresh second-factor proof (`meta.errorCode: auth.stepup.required`), or none enrolled at all (`meta.errorCode: auth.stepup.mfa_not_enrolled`) — this gate is unconditional, so an account without a second factor cannot create a managed profile until it enrols one. The ordinary unauthenticated 401 arrives here too, including for a Bearer caller, whose transport this gate does not read.",
+            "No fresh second-factor proof (`meta.errorCode: auth.stepup.required`, with `meta.methods` naming the proofs that clear it at POST /api/auth/reproof), or none enrolled at all (`meta.errorCode: auth.stepup.mfa_not_enrolled`) — this gate is unconditional, so an account with neither a second factor nor a passkey cannot create a managed profile until it enrols one. A passkey counts: an account whose only strong credential is a passkey is offered `passkey` in `meta.methods`. The ordinary unauthenticated 401 arrives here too, including for a Bearer caller, whose transport this gate does not read.",
           content: { "application/json": { schema: errorEnvelope } },
         },
         "429": {
           description:
-            "More than ten profiles from one caller within the hour. No error code — rate-limit refusals carry none anywhere in this API; branch on the status. Nothing was created.",
+            "More than ten profiles from one caller within the hour (`meta.errorCode: http.rate_limited`, the status default; a 429 has one meaning here, so the status alone is enough to branch on). Nothing was created.",
           content: { "application/json": { schema: errorEnvelope } },
         },
       },
@@ -1162,7 +1168,7 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         },
         "429": {
           description:
-            "More than ten edits from one caller within the hour — the ceiling creation carries. No error code; branch on the status. Nothing was changed, and the refusal lands before the record named in the path is looked at.",
+            "More than ten edits from one caller within the hour — the ceiling creation carries. `meta.errorCode: http.rate_limited`, the status default. Nothing was changed, and the refusal lands before the record named in the path is looked at.",
           content: { "application/json": { schema: errorEnvelope } },
         },
       },
@@ -1171,18 +1177,23 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Account sharing"],
       summary: "Delete a managed record",
       description:
-        "Ends the record and everything in it. This is the documented way OUT of the last-Guardian floor, which is why it carries no last-Guardian refusal of its own: a Guardian may not strand a record with nobody looking after it, but they may end the record. Any active Guardian may do it, from a cookie session with a fresh second factor.",
+        "Ends the record and everything in it. This is the documented way OUT of the last-Guardian floor, which is why it carries no last-Guardian refusal of its own: a Guardian may not strand a record with nobody looking after it, but they may end the record. Any active Guardian may do it, from a cookie session with a fresh second factor.\n\n" +
+        "With a deletion grace window (`ACCOUNT_DELETION_GRACE_DAYS`, 14 days by default) the record is locked rather than erased: it leaves every Guardian's view at once (reads of it answer 404), nothing acts for it, and the purge job erases it at `scheduledPurgeAt`. Until then an admin can undo the deletion. Without a window it is erased now and `scheduledPurgeAt` is null.",
       requestParams: {
         path: z.object({ id: z.string() }),
       },
       responses: {
         ...stdResponses,
         "200": {
-          description: "The record is gone.",
+          description:
+            "The record is gone from the Guardian's view; it is erased at `scheduledPurgeAt`, or already was when that is null.",
           content: {
             "application/json": {
               schema: dataEnvelope(
-                z.object({ deleted: z.literal(true) }),
+                z.object({
+                  deleted: z.literal(true),
+                  scheduledPurgeAt: isoDateTime().nullable(),
+                }),
                 "DeletedManagedProfileEnvelope",
               ),
             },
@@ -1234,7 +1245,7 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Account sharing"],
       summary: "Invite another Guardian",
       description:
-        "Offers somebody else a share in looking after this profile, at MANAGE over the whole record. Cookie-only and step-up gated, like every act in this family — the read beside it is not. **Resolve refusals on `meta.errorCode` first and fall back to the status only for the two arms that carry none**, because this route answers 404 twice and the codeless one is the less serious of the two: an identifier that matches no account carries no code, while `managed_profile.not_found` means the caller is not a Guardian of that profile at all. A client branching on the status first would tell somebody to check a spelling when the real answer is that the record is no longer theirs to administer.",
+        "Offers somebody else a share in looking after this profile, at MANAGE over the whole record. Cookie-only and step-up gated, like every act in this family — the read beside it is not. **Resolve refusals on `meta.errorCode`, not on the status**, because this route answers 404 twice and the two need different next steps: `sharing.invite.no_account` means no account carries that identifier, while `managed_profile.not_found` means the caller is not a Guardian of that profile at all. A client branching on the status would tell somebody to check a spelling when the real answer is that the record is no longer theirs to administer.",
       requestParams: {
         path: z.object({ id: z.string() }),
       },
@@ -1267,7 +1278,7 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         },
         "404": {
           description:
-            "Two refusals share this status and only one carries a code. **No `meta.errorCode`**: no account on this instance carries that identifier — the same deliberate disclosure to an authenticated caller that `POST /api/account/grants` makes, and codeless there too, so this family does not answer one way here and another way one page over. `meta.errorCode: managed_profile.not_found`: no such managed profile, or the caller is not one of its Guardians.",
+            "Two refusals share this status, each with its own code. `meta.errorCode: sharing.invite.no_account`: no account on this instance carries that identifier — the same deliberate disclosure to an authenticated caller that `POST /api/account/grants` makes, with the same code, so this family does not answer one way here and another way one page over. `meta.errorCode: managed_profile.not_found`: no such managed profile, or the caller is not one of its Guardians.",
           content: { "application/json": { schema: errorEnvelope } },
         },
         "409": {
@@ -1282,7 +1293,7 @@ export const accountSharingPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         },
         "429": {
           description:
-            "More than ten invitations from one caller within the hour. No error code, as above; branch on the status.",
+            "More than ten invitations from one caller within the hour (`meta.errorCode: http.rate_limited`, the status default).",
           content: { "application/json": { schema: errorEnvelope } },
         },
       },

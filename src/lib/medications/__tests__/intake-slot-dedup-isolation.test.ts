@@ -1,5 +1,5 @@
 /**
- * v1.8.2 reconcile (cleanup-job MEDIUM) — per-slot error isolation.
+ * v1.8.2 (cleanup-job MEDIUM) — per-slot error isolation.
  *
  * The winner-`scheduledFor` normalise can throw P2002 (a tombstoned row
  * already sits on the canonical instant with the winner's source — the
@@ -25,13 +25,13 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/jobs/boss-instance", () => ({ getGlobalBoss: vi.fn() }));
 vi.mock("@/lib/logging/context", () => ({ annotate: vi.fn() }));
-vi.mock("@/lib/rollups/medication-compliance-rollups", () => ({
-  recomputeMedicationComplianceForEvent: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/lib/medications/dose-day-refresh", () => ({
+  refreshDoseSlot: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { dedupeUserIntakeSlots } from "../intake-slot-dedup";
 import { prisma } from "@/lib/db";
-import { recomputeMedicationComplianceForEvent } from "@/lib/rollups/medication-compliance-rollups";
+import { refreshDoseSlot } from "@/lib/medications/dose-day-refresh";
 
 const TZ = "Europe/Berlin";
 
@@ -156,7 +156,7 @@ describe("dedupeUserIntakeSlots — per-slot error isolation", () => {
     // succeeded → exactly one normalised row counted.
     expect(summary.rowsNormalised).toBe(1);
     // Both canonical days recomputed despite the collision.
-    expect(recomputeMedicationComplianceForEvent).toHaveBeenCalledTimes(2);
+    expect(refreshDoseSlot).toHaveBeenCalledTimes(2);
   });
 
   it("isolates a non-P2002 error per slot without dead-lettering the job", async () => {
@@ -179,7 +179,7 @@ describe("dedupeUserIntakeSlots — per-slot error isolation", () => {
 });
 
 /**
- * v1.20.2 F4 — the per-medication dedup read path is batched. The
+ * v1.20.2 — the per-medication dedup read path is batched. The
  * pre-v1.20.2 shape issued a `findFirst` (latest takenAt) + a `findMany`
  * (all rows) PER medication → 2N round-trips. The batched path pulls
  * every live row for the user's medication set in ONE `findMany`, groups

@@ -22,7 +22,10 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ApiError, apiGet } from "@/lib/api/api-fetch";
 import { queryKeys } from "@/lib/query-keys";
-import type { OcrSkippedRowDto } from "@/lib/validations/labs-ocr";
+import type {
+  OcrExtractResponseDto,
+  OcrSkippedRowDto,
+} from "@/lib/validations/labs-ocr";
 import { EncounterSuggestionField } from "@/components/encounters/encounter-suggestion-field";
 import { useTranslations } from "@/lib/i18n/context";
 
@@ -102,6 +105,10 @@ export function extractErrorMessage(
         return t("labs.ocr.fileType");
       case "labs.ocr.pdfNeedsAnthropic":
         return t("labs.ocr.pdfNeedsAnthropic");
+      case "labs.ocr.outputLimit":
+        return t("labs.ocr.outputLimit");
+      case "labs.ocr.tooLarge":
+        return t("labs.ocr.tooLarge");
       case "consent.ai.required":
         return t("labs.ocr.consentRequired");
       case "ai.provider.none":
@@ -110,6 +117,8 @@ export function extractErrorMessage(
         return t("aiRuns.errorWorkerUnavailable");
       case "aiRuns.timedOut":
         return t("aiRuns.errorTimedOut");
+      case "aiRuns.readerBusy":
+        return t("aiRuns.errorReaderBusy");
       default:
         break;
     }
@@ -152,7 +161,7 @@ export function OcrReviewDialog({
   const pickerId = useId();
   const [stage, setStage] = useState<Stage>("pick");
   const [rows, setRows] = useState<OcrReviewRow[]>([]);
-  // S9 — in vision mode the picked file is retained so, on commit, it can be
+  // In vision mode the picked file is retained so, on commit, it can be
   // filed into the Documents vault and cross-linked to the committed labs. Text
   // mode keeps the image on-device, so nothing is retained there.
   const [pickedFile, setPickedFile] = useState<File | null>(null);
@@ -171,6 +180,9 @@ export function OcrReviewDialog({
     read: number;
     total: number;
   } | null>(null);
+  // Set when a read stopped short: cut at the output limit, pages the
+  // provider never answered for, or more readings than one scan carries.
+  const [readNotes, setReadNotes] = useState<OcrReadNotesValue>({});
   const [focusRequest, setFocusRequest] = useState(0);
   const reviewListRef = useRef<HTMLDivElement>(null);
 
@@ -236,6 +248,7 @@ export function OcrReviewDialog({
     setStage("pick");
     setShowErrors(false);
     setPageCoverage(null);
+    setReadNotes({});
     setRows([]);
     setPickedFile(null);
     setVisitId(null);
@@ -260,6 +273,12 @@ export function OcrReviewDialog({
         }
         setRows(seeded);
         setPageCoverage(data.pageCoverage ?? null);
+        setReadNotes({
+          truncated: data.truncated,
+          unreadPages: data.unreadPages,
+          stoppedBy: data.stoppedBy,
+          rowsCapped: data.rowsCapped,
+        });
         setStage("review");
       },
       onError: (err) =>
@@ -437,6 +456,7 @@ export function OcrReviewDialog({
           </p>
 
           <OcrPageCoverageNote coverage={pageCoverage} />
+          <OcrReadNotes notes={readNotes} />
 
           {showErrors && rowErrors.size > 0 ? (
             <p
@@ -496,5 +516,60 @@ export function OcrPageCoverageNote({
         total: coverage.total,
       })}
     </p>
+  );
+}
+
+type OcrReadNotesValue = Pick<
+  OcrExtractResponseDto,
+  "truncated" | "unreadPages" | "stoppedBy" | "rowsCapped"
+>;
+
+/**
+ * What the read could not give the person, said beside the rows for the same
+ * reason as the page note: a list that looks complete is one nobody checks.
+ * A read cut at the provider's output limit (rows up to the cut are kept),
+ * pages the provider never answered for, and a report with more readings
+ * than one scan carries. Renders nothing for a clean read.
+ */
+export function OcrReadNotes({ notes }: { notes: OcrReadNotesValue }) {
+  const { t } = useTranslations();
+  const { truncated, unreadPages, stoppedBy, rowsCapped } = notes;
+  if (!truncated && !unreadPages && !rowsCapped) return null;
+  return (
+    <div data-slot="ocr-read-notes" className="text-warning space-y-1 text-sm">
+      {truncated ? (
+        <p>
+          {truncated.pages.length > 0
+            ? t("labs.ocr.truncatedPages", {
+                pages: truncated.pages.join(", "),
+              })
+            : t("labs.ocr.truncated")}
+        </p>
+      ) : null}
+      {stoppedBy ? (
+        <p>
+          {stoppedBy === "budget"
+            ? t("labs.ocr.stoppedBudget")
+            : stoppedBy === "error"
+              ? t("labs.ocr.stoppedError")
+              : t("labs.ocr.stoppedUnavailable")}
+        </p>
+      ) : null}
+      {unreadPages ? (
+        <p>
+          {unreadPages.length > 0
+            ? t("labs.ocr.unreadPages", { pages: unreadPages.join(", ") })
+            : t("labs.ocr.unreadParts")}
+        </p>
+      ) : null}
+      {rowsCapped ? (
+        <p>
+          {t("labs.ocr.rowsCapped", {
+            kept: rowsCapped.kept,
+            found: rowsCapped.found,
+          })}
+        </p>
+      ) : null}
+    </div>
   );
 }

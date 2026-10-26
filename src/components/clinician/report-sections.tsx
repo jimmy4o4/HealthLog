@@ -26,14 +26,15 @@ import {
 } from "@/lib/doctor-report/stat-display";
 import type { FractionDigitsFormat } from "@/lib/format/recorded-number";
 import { convertGlucose, resolveGlucoseUnit } from "@/lib/glucose";
-import { MEASUREMENT_TYPE_LABEL_KEYS } from "@/lib/measurements/type-label-keys";
 import {
   isReportLeafId,
   isStructuredLeafId,
   REPORT_GROUPS,
+  reportMeasurementLabelKey,
   type ReportLeafId,
 } from "@/lib/report-selection/catalogue";
 import type { ReportSelection } from "@/lib/report-selection/selection";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export type Translate = (
   key: string,
@@ -185,9 +186,11 @@ export function LeafSection({
           {t("clinicianView.sectionUnavailable")}
         </p>
       ) : empty ? (
-        <p className="text-muted-foreground text-sm">
-          {t("clinicianView.sectionEmpty")}
-        </p>
+        <EmptyState
+          variant="plain"
+          size="compact"
+          title={t("clinicianView.sectionEmpty")}
+        />
       ) : (
         children
       )}
@@ -242,17 +245,35 @@ export function MeasurementGroups({
         >
           {group.rows.map(({ type, stat }) => {
             const digits = reportStatFractionDigits(type, stat!, glucoseUnit);
+            const label = t(reportMeasurementLabelKey(type));
+            // A screener total answered in a translation that has not been
+            // validated says so under its row, as the PDF does.
+            const unvalidated =
+              report.screenerUnvalidatedTranslations?.[type] ?? 0;
             return (
-              <StatRow
-                key={type}
-                label={t(MEASUREMENT_TYPE_LABEL_KEYS[type])}
-                value={statSummary(t, reportStatUnit(type, glucoseUnit, t), {
-                  latest: show(type, stat!.latest, digits),
-                  avg: show(type, stat!.avg, digits),
-                  min: show(type, stat!.min, digits),
-                  max: show(type, stat!.max, digits),
-                })}
-              />
+              <Fragment key={type}>
+                <StatRow
+                  label={label}
+                  value={statSummary(t, reportStatUnit(type, glucoseUnit, t), {
+                    latest: show(type, stat!.latest, digits),
+                    avg: show(type, stat!.avg, digits),
+                    min: show(type, stat!.min, digits),
+                    max: show(type, stat!.max, digits),
+                  })}
+                />
+                {unvalidated > 0 && (
+                  <p
+                    className="text-muted-foreground text-xs"
+                    data-slot="clinician-screener-translation-note"
+                  >
+                    {t("doctorReport.screenerUnvalidated", {
+                      label,
+                      count: unvalidated,
+                      total: stat!.count,
+                    })}
+                  </p>
+                )}
+              </Fragment>
             );
           })}
         </Section>

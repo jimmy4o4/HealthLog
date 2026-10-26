@@ -8,9 +8,8 @@ import type {
   WebhookChannelConfig,
   EmailChannelConfig,
   ChannelType,
-  EventType,
 } from "@/lib/notifications/types";
-import { EVENT_DEFAULT_ENABLED } from "@/lib/notifications/types";
+import { resolveEventDefault } from "@/lib/notifications/event-defaults";
 import { sendViaTelegram } from "@/lib/notifications/senders/telegram";
 import { sendViaNtfy } from "@/lib/notifications/senders/ntfy";
 import { sendViaWebPush } from "@/lib/notifications/senders/web-push";
@@ -216,15 +215,13 @@ export async function dispatchNotification(
     channels.sort((a, b) => channelPriority(a.type) - channelPriority(b.type));
 
     const now = new Date();
-    // v1.4.25 W16c — per-event default policy. Most events stay
+    // v1.4.25 — per-event default policy. Most events stay
     // opt-out (no row = enabled); PERSONAL_RECORD flips to opt-in
     // (no row = disabled) so the iOS backfill doesn't saturate the
     // lock-screen on first launch. The user enables it explicitly
     // from /settings/notifications once they've seen the badge a few
     // times and decided they want push.
-    let defaultEnabled =
-      EVENT_DEFAULT_ENABLED[recipientPayload.eventType as EventType] ?? true;
-
+    //
     // v1.7.0 — MOOD_REMINDER single source of truth = the visible card.
     // The event used to default OFF, layered on top of the per-user
     // `moodReminderEnabled` flag, so a user who flipped the card still
@@ -234,13 +231,14 @@ export async function dispatchNotification(
     // opt-out (a `NotificationPreference` row with `enabled = false`) is
     // still honoured below via `pref.enabled` — only the no-row default
     // is derived from the card.
-    if (recipientPayload.eventType === "MOOD_REMINDER") {
-      const user = await prisma.user.findUnique({
-        where: { id: delivery.recipientUserId },
-        select: { moodReminderEnabled: true },
-      });
-      defaultEnabled = user?.moodReminderEnabled === true;
-    }
+    //
+    // The resolution lives in `event-defaults.ts` because the /notifications
+    // matrix has to show the same answer: it reads the map the preferences
+    // route publishes from that module, never the constant table.
+    const defaultEnabled = await resolveEventDefault(
+      delivery.recipientUserId,
+      recipientPayload.eventType,
+    );
     // Operator kill switches for the three channels that carry one, read at
     // most once per dispatch and only when such a channel is actually in the
     // cascade — a cascade of APNs + webhook + email pays nothing for it.

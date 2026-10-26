@@ -1,18 +1,14 @@
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import { annotate } from "@/lib/logging/context";
-import { shouldEmitSecureCookie } from "@/lib/auth/secure-cookie";
-import { checkRateLimit } from "@/lib/rate-limit";
-import { getAuthorizationUrl } from "@/lib/oura/client";
-import { getOuraClientCredentials } from "@/lib/oura/credentials";
 import {
-  OAUTH_STATE_TTL_MS,
-  mintSignedState,
-  oauthStateCookieName,
-} from "@/lib/oauth/signed-state";
+  setConnectStateCookie,
+  startOAuthConnect,
+} from "@/lib/integrations/oauth-kit/connect-start";
+import { annotate } from "@/lib/logging/context";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 
 /**
- * v1.17.0 (F4) — redirect the user to the Oura consent screen.
+ * v1.17.0 — redirect the user to the Oura consent screen.
  *
  * Credentials resolve DB-first then env (`getOuraClientCredentials`): a user's
  * BYO Oura client id/secret wins, falling back to the shared env app
@@ -45,8 +41,8 @@ export const GET = apiHandler(async () => {
     );
   }
 
-  const creds = await getOuraClientCredentials(user.id);
-  if (!creds) {
+  const started = await startOAuthConnect("oura", user.id);
+  if (!started.ok) {
     annotate({ action: { name: "oura.connect.no_credentials" } });
     return NextResponse.redirect(
       new URL(
@@ -56,16 +52,8 @@ export const GET = apiHandler(async () => {
     );
   }
 
-  const state = mintSignedState("oura", user.id);
-  const url = getAuthorizationUrl(state, creds);
-
-  const response = NextResponse.redirect(url);
-  response.cookies.set(oauthStateCookieName("oura"), state, {
-    httpOnly: true,
-    secure: shouldEmitSecureCookie(),
-    sameSite: "lax",
-    maxAge: Math.floor(OAUTH_STATE_TTL_MS / 1000),
-    path: "/",
-  });
-  return response;
+  return setConnectStateCookie(
+    NextResponse.redirect(started.authorizationUrl),
+    started.cookie,
+  );
 });

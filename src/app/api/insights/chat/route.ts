@@ -81,7 +81,9 @@ const COACH_CONCURRENT_TURNS = 2;
 const COACH_TURN_SLOT_MS = TURN_LIMITS.user.wallMs + 30_000;
 
 async function handleChatRequest(request: NextRequest): Promise<Response> {
-  const auth = await requireAuth();
+  // A turn is metered by the Coach's own buckets (`coach-chat`, the turn
+  // slot), not the shared write ceiling.
+  const auth = await requireAuth(undefined, { writeBucket: "own" });
   // The `coach` capability, right after auth and before the rate limit and
   // the body parse. It folds in what the Coach module gate, the operator
   // switch and the `disableCoach` opt-out used to answer separately, plus
@@ -245,7 +247,7 @@ async function handleChatRequest(request: NextRequest): Promise<Response> {
 // the conversationId existence check + 20-turn cap.
 export const POST = apiHandler(handleChatRequest);
 
-/** v1.30.2 (QoL H1) — hard cap on the `?q=` search string length. */
+/** v1.30.2 — hard cap on the `?q=` search string length. */
 const LIST_QUERY_MAX_LEN = 200;
 
 /**
@@ -256,7 +258,7 @@ const LIST_QUERY_MAX_LEN = 200;
  * on the previous page; callers receive `{ nextCursor: null }` when
  * they have reached the end.
  *
- * v1.30.2 (QoL H1) — optional `q` narrows the page to conversations whose
+ * v1.30.2 — optional `q` narrows the page to conversations whose
  * TITLE contains the text (case-insensitive substring). This makes the
  * history rail's search reach the caller's FULL conversation set instead
  * of only the loaded page; the client re-issues the cursor walk under the

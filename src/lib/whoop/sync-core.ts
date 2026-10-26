@@ -3,18 +3,17 @@
  * Measurement upsert/rollup-fold helpers, cursors, and sync status handling.
  *
  * Mirrors `src/lib/withings/sync.ts`:
- *   - `getValidToken` decrypts the stored pair, refreshes at
- *     `tokenExpiresAt - 5 min`, and persists BOTH rotated tokens (WHOOP
- *     invalidates the prior access AND refresh token on every refresh — the
- *     same discipline Withings uses for its rotating refresh token). A
- *     provider/user advisory lock serializes refresh, and token state is
- *     re-read inside the transaction before the one-time token is spent.
+ *   - `getValidToken` resolves the token through the shared OAuth token
+ *     lifecycle (`src/lib/integrations/oauth-kit/token.ts`, descriptor in
+ *     `./oauth-descriptor`): refreshed at `tokenExpiresAt - 5 min` under the
+ *     provider/user advisory lock, BOTH rotated tokens persisted (WHOOP
+ *     invalidates the prior access AND refresh token on every refresh).
  *   - Each per-resource sync (`sync-recovery` / `sync-sleep` / `sync-cycle` /
  *     `sync-workout`) upserts into `Measurement` / `Workout` keyed on
  *     `(userId, type, source = WHOOP, externalId)` so a re-post (WHOOP
  *     re-scores recovery/sleep after the fact) overwrites in place rather than
  *     minting a duplicate. After the upserts the rollup tier is re-folded
- *     (`recomputeBucketsForMeasurement`) and the status-insight caches are
+ *     (`recomputeBucketsForKeys`) and the status-insight caches are
  *     invalidated, identical to the Withings tail.
  *
  * The incremental window starts from `lastSyncedAt - overlap`. WHOOP re-scores
@@ -27,7 +26,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { prisma } from "@/lib/db";
 import type { MeasurementType } from "@/generated/prisma/client";
-import { encrypt, decrypt } from "@/lib/crypto";
 import { getEvent } from "@/lib/logging/context";
 import {
   markSyncFailureRecorded,
@@ -36,24 +34,16 @@ import {
   type FailureKind,
 } from "@/lib/integrations/status";
 import {
-  collapseToTypeDayKeys,
-  recomputeBucketsForMeasurement,
-} from "@/lib/rollups/measurement-rollups";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/comprehensive-generate";
-import {
-  emitInsertedMeasurementArrivals,
-  type InsertedMeasurementArrivalRow,
-} from "@/lib/arrivals/measurement-emit";
-import {
-  acquireProviderTokenRefreshLock,
-  PROVIDER_REFRESH_TRANSACTION_OPTIONS,
-} from "@/lib/integrations/oauth-refresh";
+  afterProviderWrite,
+  invalidateProviderStatus,
+} from "@/lib/integrations/sync-kit/after-write";
+import type { InsertedMeasurementArrivalRow } from "@/lib/arrivals/measurement-emit";
+import { obtainAccessToken } from "@/lib/integrations/oauth-kit/token";
 import {
   MeasurementReconciliationError,
   reconcileExternalMeasurement,
 } from "@/lib/measurements/reconcile-external-measurement";
-import { refreshAccessToken } from "./client";
-import { getUserWhoopCredentials } from "./credentials";
+import { whoopTokenDescriptor } from "./oauth-descriptor";
 import {
   WhoopApiError,
   classifyWhoopError,
@@ -164,9 +154,6 @@ export async function handleCollectionFetchError(
   throw markSyncFailureRecorded(err);
 }
 
-/** Refresh the access token this many ms before `tokenExpiresAt`. */
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
-
 /**
  * Overlap window for the incremental sync, in ms. WHOOP re-scores recovery
  * and sleep after the fact, and a night can reach the WHOOP cloud DAYS late
@@ -259,94 +246,36 @@ export async function getValidToken(
 ): Promise<WhoopTokenInfo | null> {
   const connection = await prisma.whoopConnection.findUnique({
     where: { userId },
+    select: { id: true, whoopUserId: true },
   });
   if (!connection?.whoopUserId) return null;
-
-  if (
-    connection.tokenExpiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS >=
-    Date.now()
-  ) {
-    return {
-      accessToken: decrypt(connection.accessToken),
-      connection: {
-        id: connection.id,
-        whoopUserId: connection.whoopUserId,
-      },
-    };
-  }
-
-  const creds = await getUserWhoopCredentials(userId);
-  if (!creds) {
-    getEvent()?.addWarning(
-      `No WHOOP credentials found for user ${userId} during token refresh`,
-    );
-    await recordSyncFailure({
-      userId,
-      integration: "whoop",
-      kind: "reauth_required",
-      message: "WHOOP credentials missing — token refresh skipped",
-      errorCode: "credentials_missing",
-    });
-    // A dead token means every resource "succeeds" with 0 rows — without a
-    // ledger entry the cycle reads as clean and `recordSyncSuccess` un-parks
-    // `error_reauth` while the hourly cohort hammers the dead refresh token.
-    // Fail the cycle's verdict so the park holds.
-    noteHardFailure(WHOOP_TOKEN_HARD_FAIL);
-    return null;
-  }
+  const meta = { id: connection.id, whoopUserId: connection.whoopUserId };
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      await acquireProviderTokenRefreshLock(tx, "whoop", userId);
-
-      const current = await tx.whoopConnection.findUnique({
-        where: { userId },
-      });
-      if (!current?.whoopUserId) {
-        // The connection vanished on the re-read inside the advisory lock
-        // (disconnect/webhook race). Register on the ledger so the cycle does
-        // not stamp success over a connection that no longer exists — the same
-        // invariant as the refresh branch below.
-        noteHardFailure(WHOOP_TOKEN_HARD_FAIL);
-        return null;
-      }
-
-      if (
-        current.tokenExpiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS >=
-        Date.now()
-      ) {
-        return {
-          accessToken: decrypt(current.accessToken),
-          connection: {
-            id: current.id,
-            whoopUserId: current.whoopUserId,
-          },
-        };
-      }
-
-      const newTokens = await refreshAccessToken(
-        decrypt(current.refreshToken),
-        creds,
+    const result = await obtainAccessToken(whoopTokenDescriptor, userId);
+    if (result.kind === "token") {
+      return { accessToken: result.accessToken, connection: meta };
+    }
+    if (result.kind === "no_credentials") {
+      getEvent()?.addWarning(
+        `No WHOOP credentials found for user ${userId} during token refresh`,
       );
-      const expiresAt = new Date(Date.now() + newTokens.expires_in * 1000);
-
-      await tx.whoopConnection.update({
-        where: { id: current.id },
-        data: {
-          accessToken: encrypt(newTokens.access_token),
-          refreshToken: encrypt(newTokens.refresh_token),
-          tokenExpiresAt: expiresAt,
-        },
+      await recordSyncFailure({
+        userId,
+        integration: "whoop",
+        kind: "reauth_required",
+        message: "WHOOP credentials missing — token refresh skipped",
+        errorCode: "credentials_missing",
       });
-
-      return {
-        accessToken: newTokens.access_token,
-        connection: {
-          id: current.id,
-          whoopUserId: current.whoopUserId,
-        },
-      };
-    }, PROVIDER_REFRESH_TRANSACTION_OPTIONS);
+    }
+    // No credentials, or the connection vanished between the read above and
+    // the token read (disconnect/webhook race). A dead token means every
+    // resource "succeeds" with 0 rows — without a ledger entry the cycle reads
+    // as clean and `recordSyncSuccess` un-parks `error_reauth` while the hourly
+    // cohort hammers the dead refresh token. Fail the cycle's verdict so the
+    // park holds.
+    noteHardFailure(WHOOP_TOKEN_HARD_FAIL);
+    return null;
   } catch (err) {
     getEvent()?.addWarning(
       `WHOOP token refresh failed for user ${userId}: ${err}`,
@@ -418,17 +347,8 @@ export async function upsertWhoopMeasurements(
 
   let imported = 0;
   const touchedTypes = new Set<MeasurementType>();
-  const invalidateTouchedTypes = (): void => {
-    if (touchedTypes.size === 0) return;
-
-    void invalidateStatusInsightsForTypes(userId, [...touchedTypes], {
-      source: "sync",
-    }).catch((err) => {
-      getEvent()?.addWarning(
-        `whoop: status-insight invalidate failed for ${userId}: ${err}`,
-      );
-    });
-  };
+  const invalidateTouchedTypes = (): void =>
+    invalidateProviderStatus(userId, "whoop", touchedTypes);
 
   for (
     let chunkStart = 0;
@@ -498,19 +418,15 @@ export async function upsertWhoopMeasurements(
     }
 
     opts.onInserted?.(insertedRows);
-    void emitInsertedMeasurementArrivals(userId, insertedRows, "whoop").catch(
-      () => {},
-    );
-    try {
-      const keys = collapseToTypeDayKeys(touched);
-      for (const k of keys) {
-        await recomputeBucketsForMeasurement(userId, k.type, k.measuredAt);
-      }
-    } catch (err) {
-      getEvent()?.addWarning(
-        `whoop: rollup recompute failed for ${userId}: ${err}`,
-      );
-    }
+    // Each chunk folds its own days; the status cards are re-warmed once,
+    // after the last chunk (or the one that failed).
+    await afterProviderWrite({
+      userId,
+      provider: "whoop",
+      touched,
+      arrivals: { rows: insertedRows, source: "whoop" },
+      invalidateStatus: false,
+    });
   }
 
   invalidateTouchedTypes();

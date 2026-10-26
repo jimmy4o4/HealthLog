@@ -42,7 +42,7 @@ export interface PayloadForCoverage {
 }
 
 /**
- * v1.4.16 phase B5a — citation-coverage post-validation.
+ * v1.4.16 — citation-coverage post-validation.
  *
  * After the schema parse + cross-citation check pass, the wrapper
  * counts how many recommendations make a normative claim
@@ -141,6 +141,16 @@ const NORMATIVE_KEYWORDS: Record<Locale, readonly string[]> = {
     "powyzej",
     "ponizej",
   ],
+  nl: [
+    "doel",
+    "streefwaarde",
+    "zou moeten",
+    "hoort",
+    "normaalwaarde",
+    "normaal bereik",
+    "boven de",
+    "onder de",
+  ],
   ko: [
     "목표",
     "권장",
@@ -151,6 +161,22 @@ const NORMATIVE_KEYWORDS: Record<Locale, readonly string[]> = {
     "이하",
     "초과",
     "미만",
+  ],
+  // "meta" alone would also open "metabolismo" and "metade", so the goal noun
+  // is spelled with its preposition.
+  "pt-BR": [
+    "meta de",
+    "metas de",
+    "alvo",
+    "objetivo",
+    "deveria",
+    "deve ser",
+    "devem ser",
+    "faixa normal",
+    "acima d",
+    "abaixo d",
+    "superior a",
+    "inferior a",
   ],
 };
 

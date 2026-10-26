@@ -8,6 +8,10 @@ import {
   stepUpErrorKey,
 } from "@/components/settings/access/grant-action-error";
 import { endOfDayIso } from "@/components/settings/access/grant-invite-card";
+import {
+  ReproofCancelledError,
+  useRecentProof,
+} from "@/components/settings/security-section/use-recent-proof";
 import { Button } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { DateField } from "@/components/ui/date-field";
@@ -80,8 +84,14 @@ export function ManagedProfileGuardians({
   const { t } = useTranslations();
   const fmt = useFormatters();
   const { user } = useAuth();
-  const invite = useInviteManagedProfileGuardian();
-  const remove = useRemoveManagedProfileGuardian();
+  // Both acts are gated on a fresh second factor; the dialog collects it and
+  // the request goes out once more. A closed dialog changed nothing and says
+  // nothing.
+  const recentProof = useRecentProof({
+    description: t("settings.reproof.descriptionChange"),
+  });
+  const invite = useInviteManagedProfileGuardian(recentProof.run);
+  const remove = useRemoveManagedProfileGuardian(recentProof.run);
 
   const [identifier, setIdentifier] = useState("");
   const [expiresOn, setExpiresOn] = useState("");
@@ -116,6 +126,7 @@ export function ManagedProfileGuardians({
 
   return (
     <div data-slot="managed-profile-guardians" className="space-y-3">
+      {recentProof.dialog}
       <h3 className="text-sm font-medium">
         {t("recordSharing.managed.guardiansTitle", { name: profileName })}
       </h3>
@@ -129,7 +140,9 @@ export function ManagedProfileGuardians({
           // one is the caller's own — which the route refuses anyway.
           const removable = !isSelf;
           const failed =
-            remove.isError && remove.variables?.grantId === guardian.grantId;
+            remove.isError &&
+            !(remove.error instanceof ReproofCancelledError) &&
+            remove.variables?.grantId === guardian.grantId;
           return (
             <li
               key={guardian.grantId}
@@ -138,7 +151,7 @@ export function ManagedProfileGuardians({
               data-guardian-state={guardian.state}
               className="space-y-2 py-3 first:pt-0 last:pb-0"
             >
-              {/* UI-STANDARDS §11 inline action row. */}
+              {/* ui-standards.md §11 inline action row. */}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
@@ -159,6 +172,7 @@ export function ManagedProfileGuardians({
                   <div className="flex shrink-0 items-center">
                     <ConfirmButton
                       slot="managed-profile-guardian-remove"
+                      destructive
                       size="sm"
                       className="min-h-11 sm:min-h-9"
                       label={t("recordSharing.managed.guardianRemove")}
@@ -269,7 +283,7 @@ export function ManagedProfileGuardians({
             ? t("recordSharing.managed.guardianInviting")
             : t("recordSharing.managed.guardianInvite")}
         </Button>
-        {invite.isError && (
+        {invite.isError && !(invite.error instanceof ReproofCancelledError) && (
           <p
             role="alert"
             data-slot="managed-profile-guardian-error"
@@ -295,18 +309,12 @@ export function ManagedProfileGuardians({
 /**
  * The message for a refused Guardian invitation.
  *
- * Six refusals, and **two of them carry no `errorCode`** — the rate limit
- * (`guardians/route.ts`, before the body is even read) and the unknown-account
- * 404. That asymmetry is the route's actual shape, not laziness here: the
- * other four arms publish a stable code and are matched on it, and these two
- * have to be told apart by status because there is nothing else to branch on.
- * Recorded in `02-13.1-CONTRACT-FINDINGS.md` so whoever freezes the contract
- * decides deliberately whether to close it.
- *
- * The code switch runs FIRST, and the order matters: `managed_profile.not_found`
- * is a 404 WITH a code, and an unknown account is a 404 without one. Branching
- * on status first would tell somebody to check the spelling of a name when the
- * real answer is that they are not a Guardian of that profile any more.
+ * Six refusals, matched on their code. The route answers 404 twice, and the
+ * two need different next steps: `sharing.invite.no_account` asks somebody to
+ * check the spelling of a name, `managed_profile.not_found` says they are not
+ * a Guardian of that profile any more. Branching on the status would collapse
+ * them, so only the statuses with a single meaning fall back to the status: a
+ * 429 (wait, whatever the code) and a 401 (the step-up gate).
  */
 export function guardianInviteErrorKey(err: unknown): string {
   if (!(err instanceof ApiError)) return "recordSharing.managed.errorOffline";
@@ -327,14 +335,13 @@ export function guardianInviteErrorKey(err: unknown): string {
       return "recordSharing.managed.guardianErrorManagedInvitee";
     case "managed_profile.not_found":
       return "recordSharing.actionError.profileNotFound";
+    case "sharing.invite.no_account":
+      return "recordSharing.managed.guardianErrorNoAccount";
     default:
       break;
   }
 
-  // The two codeless arms. Waiting is the recovery for one and correcting the
-  // identifier is the recovery for the other, so they must not collapse.
   if (err.status === 429) return "recordSharing.managed.guardianErrorRateLimit";
-  if (err.status === 404) return "recordSharing.managed.guardianErrorNoAccount";
   // The step-up gate this whole family carries. Not a failure — and it comes
   // in two shapes, because an account with no factor enrolled cannot clear it.
   if (err.status === 401) return stepUpErrorKey(err);

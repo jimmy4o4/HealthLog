@@ -29,6 +29,11 @@ import {
   enqueueBootTimeFreeTextEncryptionBackfill,
   runFreeTextEncryptionBackfillForUser,
 } from "@/lib/jobs/free-text-encryption-backfill";
+import {
+  INSIGHTS_CACHE_SELECT,
+  insightsCacheWrite,
+  openInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
 import { getPrismaClient, truncateAllTables } from "./setup";
 
 function makeCapturingBoss() {
@@ -485,6 +490,33 @@ describe("free-text encryption backfill (real Postgres)", () => {
       (await enqueueBootTimeFreeTextEncryptionBackfill()).error,
     ).toBeNull();
     expect(second.sent).toEqual([]);
+  });
+
+  it("has no readable insights cache left after migration 0430", async () => {
+    const prisma = getPrismaClient();
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'users' AND column_name LIKE 'insights_cached_text%'
+      ORDER BY column_name`;
+    expect(columns.map((c) => c.column_name)).toEqual([
+      "insights_cached_text_encrypted",
+    ]);
+    const indexes = await prisma.$queryRaw<{ indexname: string }[]>`
+      SELECT indexname FROM pg_indexes
+      WHERE indexname = 'users_insights_cached_text_backfill_idx'`;
+    expect(indexes).toEqual([]);
+
+    // The sealed column still round-trips through the one module.
+    await seedUser("ic-a");
+    await prisma.user.update({
+      where: { id: "ic-a" },
+      data: insightsCacheWrite("current"),
+    });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: "ic-a" },
+      select: INSIGHTS_CACHE_SELECT,
+    });
+    expect(openInsightsCachedText(row)).toBe("current");
   });
 
   it("has the partial indexes migration 0361 adds", async () => {

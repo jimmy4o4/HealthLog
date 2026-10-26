@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
+
+import { reportRouterSearch, writeUrlState } from "@/lib/url-state";
 import {
   Suspense,
   useCallback,
@@ -56,12 +58,7 @@ import {
   takeDayYield,
   useDayFocus,
 } from "./day-layer-controller";
-import {
-  parseDayParam,
-  shiftDateKey,
-  stripDayOf,
-  withDayHref,
-} from "./day-url";
+import { parseDayParam, shiftDateKey, stripDayOf } from "./day-url";
 import { useLongDayLabel } from "./day-label";
 import type { DayViewProps } from "./day-view";
 import { usePrefetchDay } from "./use-day";
@@ -167,12 +164,14 @@ function DayLayer() {
   // A parameter the layer cannot open leaves the URL quietly.
   useEffect(() => {
     if (raw === null || date !== null) return;
-    window.history.replaceState(
-      null,
-      "",
-      withDayHref(window.location.pathname, window.location.search, null),
-    );
+    writeUrlState((params) => params.delete(DAY_QUERY_PARAM));
   }, [raw, date]);
+  // The layer reads the router's copy of the URL; it tells the URL-state
+  // queue when that copy has caught up with a write.
+  const routerSearch = searchParams.toString();
+  useEffect(() => {
+    reportRouterSearch(routerSearch);
+  }, [routerSearch]);
 
   useEffect(() => {
     publishOpenDay(date);
@@ -238,22 +237,7 @@ function DayLayer() {
   const shortLabel = useLongDayLabel("short");
   const { t } = useTranslations();
   const titleId = useId();
-  const titleRef = useRef<HTMLHeadingElement | null>(null);
-  // Focus asked for before the day's content had loaded: the heading takes
-  // it the moment it mounts.
-  const titleFocusPending = useRef(false);
-  const attachTitle = useCallback((el: HTMLHeadingElement | null) => {
-    titleRef.current = el;
-    if (el && titleFocusPending.current) {
-      titleFocusPending.current = false;
-      el.focus({ preventScroll: true });
-    }
-  }, []);
-  const focusTitle = useCallback(() => {
-    const el = titleRef.current;
-    if (el) el.focus({ preventScroll: true });
-    else titleFocusPending.current = true;
-  }, []);
+  const { attachTitle, focusTitle, cancelTitleFocus } = useTitleFocus();
   const panelRef = useRef<HTMLElement>(null);
   const stripRef = useRef<HTMLButtonElement>(null);
   // Set by a fold (the strip, its shortcut): focus then lands on the strip,
@@ -297,11 +281,7 @@ function DayLayer() {
     // Read again, not from the render: a Back on this page has just closed it.
     if (!readDayOpen(owner)) return;
     restoring.current = true;
-    window.history.replaceState(
-      null,
-      "",
-      withDayHref(window.location.pathname, window.location.search, railDay),
-    );
+    writeUrlState((params) => params.set(DAY_QUERY_PARAM, railDay));
   }, [shell, raw, leftOpen, railDay, owner]);
 
   // What the polite region says: the day that just opened or was stepped to.
@@ -320,6 +300,7 @@ function DayLayer() {
       restoring.current = false;
       return;
     }
+    cancelTitleFocus();
     if (before !== null && shell === "docked") {
       // Collapsed for a neighbouring panel: focus stays where it was, and the
       // day counts as folded by the person, who opened the other panel.
@@ -343,13 +324,12 @@ function DayLayer() {
       }
     }
     collapsing.current = false;
-  }, [date, shell, owner, focusTitle]);
+  }, [date, shell, owner, focusTitle, cancelTitleFocus]);
 
   const onStep = useCallback(
     (delta: number) => {
       if (date === null) return;
-      if (delta > 0 && date >= today) return;
-      stepDay(date, delta);
+      stepDay(delta, today);
     },
     [date, today],
   );
@@ -613,6 +593,43 @@ function DockedTitle({
 }
 
 /**
+ * Focus for the day's heading: at once when it is there, or the moment it
+ * mounts when the day's content was still loading. A waiting request is
+ * honoured only while focus is still where it was when the request was made:
+ * once the person has moved on (the Coach's input took focus on load, then
+ * they opened the conversations), a heading that mounts late must not pull
+ * focus back to a day that is about to fold away. It also ends with the day
+ * (`cancelTitleFocus`) and never lands inside a panel already inert.
+ */
+function useTitleFocus() {
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const pending = useRef(false);
+  const requestedFrom = useRef<Element | null>(null);
+  const attachTitle = useCallback((el: HTMLHeadingElement | null) => {
+    titleRef.current = el;
+    if (el && pending.current) {
+      pending.current = false;
+      const active = document.activeElement;
+      const stayed = active === requestedFrom.current || active === null;
+      if (stayed && !el.closest("[inert]")) el.focus({ preventScroll: true });
+    }
+  }, []);
+  const focusTitle = useCallback(() => {
+    const el = titleRef.current;
+    if (el) {
+      el.focus({ preventScroll: true });
+      return;
+    }
+    pending.current = true;
+    requestedFrom.current = document.activeElement;
+  }, []);
+  const cancelTitleFocus = useCallback(() => {
+    pending.current = false;
+  }, []);
+  return { attachTitle, focusTitle, cancelTitleFocus };
+}
+
+/**
  * Return focus to whatever opened the day; failing that, to `fallback` (the
  * collapsed edge's control), or to the page.
  */
@@ -630,9 +647,10 @@ function returnFocus(fallback?: HTMLElement | null) {
 }
 
 /**
- * The modal frames. The bottom sheet opens at a bit over half the height and
- * grows to full height from its handle: drag it up or tap it. Dragging down
- * shrinks a full sheet, then closes it.
+ * The modal frames. On a phone the bottom sheet opens at a bit over half the
+ * height, so the chart stays in view above it, and grows to the full 90 dvh
+ * when it is pulled up or its grip is tapped (the sheet primitive's preview
+ * step). Pulled down it closes, from either height.
  */
 function DaySheet({
   shell,
@@ -650,50 +668,7 @@ function DaySheet({
   render: (extra: Partial<DayViewProps>) => React.ReactNode;
 }) {
   const { t } = useTranslations();
-  const [full, setFull] = useState(false);
-  const drag = useRef<{ y: number; moved: boolean } | null>(null);
   const bottom = shell === "bottom";
-
-  const grabber = bottom ? (
-    <button
-      type="button"
-      data-slot="day-sheet-handle"
-      aria-label={full ? t("day.sheetShrink") : t("day.sheetExpand")}
-      aria-expanded={full}
-      onPointerDown={(event) => {
-        drag.current = { y: event.clientY, moved: false };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={(event) => {
-        const start = drag.current;
-        if (!start) return;
-        if (Math.abs(event.clientY - start.y) > 8) start.moved = true;
-      }}
-      onPointerUp={(event) => {
-        const start = drag.current;
-        drag.current = null;
-        if (!start) return;
-        const dy = event.clientY - start.y;
-        if (!start.moved) return;
-        if (dy < -40) setFull(true);
-        else if (dy > 60) {
-          if (full) setFull(false);
-          else onDismiss();
-        }
-      }}
-      onClick={() => {
-        // A drag ends in a click as well; only a tap toggles.
-        if (drag.current?.moved) return;
-        setFull((value) => !value);
-      }}
-      className="focus-visible:ring-ring/50 mx-auto flex h-6 w-16 shrink-0 touch-none items-center justify-center rounded-full focus-visible:ring-[3px] focus-visible:outline-none"
-    >
-      <span
-        className="bg-muted-foreground/40 h-1.5 w-9 rounded-full"
-        aria-hidden="true"
-      />
-    </button>
-  ) : null;
 
   return (
     <Sheet
@@ -705,10 +680,15 @@ function DaySheet({
       <SheetContent
         ref={panelRef as React.Ref<HTMLDivElement>}
         side={bottom ? "bottom" : "right"}
+        preview={bottom ? "58dvh" : undefined}
+        previewLabels={
+          bottom
+            ? { expand: t("day.sheetExpand"), shrink: t("day.sheetShrink") }
+            : undefined
+        }
         showCloseButton={false}
         data-slot="day-panel"
         data-shell={shell}
-        data-full={bottom && full ? "true" : undefined}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           focusTitle();
@@ -730,30 +710,18 @@ function DaySheet({
           if (owner && owner !== panelRef.current) event.preventDefault();
         }}
         className={cn(
-          // Quicker than the primitive's 500 ms, which read as lag on a
-          // layer opened from a tap; no slide at all under reduced motion.
-          "bg-card gap-0 p-0 data-[state=closed]:duration-200 data-[state=open]:duration-300 motion-reduce:animate-none",
+          "bg-card gap-0 p-0",
           bottom
-            ? cn(
-                "rounded-t-2xl transition-[height] duration-200 motion-reduce:transition-none",
-                // Full height leaves a strip of the page above the
-                // sheet, and never less than the status bar of an
-                // installed app plus a margin: a 2.5rem strip put the
-                // handle under a 59 px Dynamic Island.
-                full
-                  ? "h-[calc(100dvh-max(2.5rem,env(safe-area-inset-top,0px)+0.75rem))]"
-                  : "h-[58dvh]",
-              )
-            : "w-105 max-w-[90vw] sm:max-w-105",
+            ? "rounded-t-2xl"
+            : // Quicker than the primitive's 500 ms, which read as lag on a
+              // layer opened from a tap; no slide at all under reduced motion.
+              "w-105 max-w-[90vw] data-[state=closed]:duration-200 data-[state=open]:duration-300 motion-reduce:animate-none sm:max-w-105",
         )}
       >
         <SheetDescription className="sr-only">
           {t("day.description")}
         </SheetDescription>
-        {render({
-          above: grabber,
-          headerClassName: bottom ? undefined : "py-3",
-        })}
+        {render({ headerClassName: bottom ? undefined : "py-3" })}
       </SheetContent>
     </Sheet>
   );

@@ -11,7 +11,7 @@
  * read plus the shared accumulators, so the emitted shape and ordering
  * are unchanged.
  *
- * v1.30.4 (C1) — `GET /api/workouts` collapses cross-source duplicate
+ * v1.30.4 — `GET /api/workouts` collapses cross-source duplicate
  * sessions (e.g. Apple Watch + WHOOP recording the same run) with
  * `pickCanonicalWorkoutRows()` before the UI ever sees them; this block
  * read `prisma.workout.findMany` raw, so a dual-source user's Coach
@@ -25,7 +25,10 @@ import {
   getQuantityTransform,
   type UnitPreference,
 } from "@/lib/measurements/display-transform";
-import { pickCanonicalWorkoutRows } from "@/lib/measurements/pick-canonical-workout-rows";
+import {
+  canonicalWorkoutsInRange,
+  type WindowedWorkouts,
+} from "@/lib/workouts/canonical-read";
 import type { MeasurementSource } from "@/generated/prisma/client";
 import { annotate } from "@/lib/logging/context";
 import { tzDayKey, tzWeekday } from "../snapshot-series";
@@ -43,7 +46,8 @@ import type {
 const WORKOUT_RECENT_CAP = 15;
 
 interface WorkoutsBlockContext {
-  workoutRows: Array<{
+  workoutRows: WindowedWorkouts<{
+    id: string;
     sportType: string;
     startedAt: Date;
     durationSec: number;
@@ -53,7 +57,7 @@ interface WorkoutsBlockContext {
     maxHeartRate: number | null;
     source: MeasurementSource;
   }>;
-  // v1.30.4 (C1) — the user's own source-priority blob, same shape
+  // v1.30.4 — the user's own source-priority blob, same shape
   // `pickCanonicalWorkoutRows` and the sleep block already consume.
   // `null` falls back to the canonical default ladder.
   sourcePriorityJson: unknown;
@@ -85,7 +89,7 @@ export function buildWorkoutsBlock(ctx: Readonly<WorkoutsBlockContext>): void {
   // `startedAt` ASC (its documented contract) — the builder wants
   // most-recent-first for the capped `recent` list, so re-establish
   // DESC order after the pick, same as `GET /api/workouts` does.
-  const workoutRows = pickCanonicalWorkoutRows(
+  const workoutRows = canonicalWorkoutsInRange(
     rawWorkoutRows,
     sourcePriorityJson ?? null,
   ).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());

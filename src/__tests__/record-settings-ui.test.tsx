@@ -1,9 +1,24 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 const fromRoot = (...segments: string[]) => resolve(process.cwd(), ...segments);
+
+/** The managed settings section and every family form it composes. */
+async function readManagedSettingsView(): Promise<string> {
+  const folder = fromRoot("src/components/settings/managed-record");
+  const forms = (await readdir(folder)).filter((name) => name.endsWith(".tsx"));
+  expect(forms.length).toBeGreaterThanOrEqual(7);
+  const sources = await Promise.all([
+    readFile(
+      fromRoot("src/components/settings/managed-record-settings-section.tsx"),
+      "utf8",
+    ),
+    ...forms.map((name) => readFile(resolve(folder, name), "utf8")),
+  ]);
+  return sources.join("\n");
+}
 
 function expectMatchingMessageKeys(expected: unknown, actual: unknown): void {
   if (
@@ -27,7 +42,7 @@ function expectMatchingMessageKeys(expected: unknown, actual: unknown): void {
 }
 
 describe("managed record settings UI", () => {
-  it("gates shared deep links and renders integration status without controls", async () => {
+  it("gates shared deep links and controls integrations only through the managed-record routes", async () => {
     const [
       statusView,
       managedSettingsView,
@@ -40,26 +55,32 @@ describe("managed record settings UI", () => {
         fromRoot("src/components/settings/managed-integration-status.tsx"),
         "utf8",
       ),
-      readFile(
-        fromRoot("src/components/settings/managed-record-settings-section.tsx"),
-        "utf8",
-      ),
+      readManagedSettingsView(),
       readFile(fromRoot("src/app/settings/[section]/page.tsx"), "utf8"),
       readFile(fromRoot("src/app/settings/layout/[module]/page.tsx"), "utf8"),
       readFile(
         fromRoot("src/components/settings/record-settings-section-gate.tsx"),
         "utf8",
       ),
-      ...["de", "en", "es", "fr", "it", "pl", "ko"].map((locale) =>
-        readFile(fromRoot(`messages/${locale}.json`), "utf8"),
+      ...["de", "en", "es", "fr", "it", "pl", "ko", "nl", "pt-BR"].map(
+        (locale) => readFile(fromRoot(`messages/${locale}.json`), "utf8"),
       ),
     ]);
 
     expect(statusView).toContain("recordSettingsIntegrations");
     expect(statusView).toContain("/api/record-settings/integrations");
     expect(statusView).toContain("assertRecordSettingsResponseForRecord");
-    expect(statusView).not.toContain("<Button");
-    expect(statusView).not.toContain("<Link");
+    // A guardian's controls go through the fenced managed-record routes, never
+    // the owner's provider routes and never a navigation to the API.
+    expect(statusView).toContain(
+      "/api/record-settings/integrations/${provider}/connect",
+    );
+    expect(statusView).toContain(
+      "/api/record-settings/integrations/${provider}/disconnect",
+    );
+    expect(statusView).not.toMatch(/["`]\/api\/\$\{provider\}\//);
+    expect(statusView).not.toMatch(/loadDocument\(\s*["`]\/api/);
+    expect(statusView).not.toMatch(/<Link[\s>]/);
     expect(settingsPage).toContain("RecordSettingsSectionGate");
     expect(sectionGate).toContain("if (!inSharedRecord) return children");
     expect(sectionGate).toContain("ManagedIntegrationStatus");

@@ -75,6 +75,8 @@ const sleepScore: SleepScoreValue = {
     { key: "composition", value: 88, weight: 0.15 },
   ],
   windowNights: 20,
+  rhythmNights: 20,
+  rhythmMinNights: 3,
   series: [78, 82],
 };
 
@@ -207,7 +209,7 @@ describe("resolveDeterministicAssessment", () => {
   });
 });
 
-// v1.22 (W6) — the deterministic fallback now closes with a band-conditioned
+// v1.22 — the deterministic fallback now closes with a band-conditioned
 // "what it means for today" read (a closed table; no number introduced), so the
 // provider-less + demo score cards carry the forward interpretation too.
 describe("band → meaning enrichment (deterministic fallback)", () => {

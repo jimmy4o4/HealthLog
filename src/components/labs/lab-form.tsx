@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { DateTimeField } from "@/components/ui/date-time-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,7 +98,7 @@ interface LabFormProps {
   onSuccess?: (created: LabResultDto) => void;
   onCancel?: () => void;
   /**
-   * v1.30.1 (H3 QoL fix) — "Save & add another": the sheet stays open, the
+   * v1.30.1 — "Save & add another": the sheet stays open, the
    * reading is cleared for the next entry, and `takenAt` is PRESERVED (a
    * real lab report is 10-20 analytes sharing one blood-draw date, usually
    * in the past — re-picking that date for every row was the pain point).
@@ -180,7 +181,7 @@ export function LabForm({
   // The bounds are derived from what is typed; what is typed is kept verbatim.
   const [sourceRangeOpen, setSourceRangeOpen] = useState(false);
   const [sourceRange, setSourceRange] = useState("");
-  // v1.30.1 H3 — which submit button is in flight, so the OTHER one doesn't
+  // v1.30.1 — which submit button is in flight, so the OTHER one doesn't
   // also show a spinner. `!== null` replaces the old plain `submitting`
   // boolean for every disabled check below.
   const [pendingAction, setPendingAction] = useState<
@@ -219,7 +220,7 @@ export function LabForm({
     e.preventDefault();
     setError(null);
 
-    // v1.30.1 H3 — both Save and Save & add another are `type="submit"`
+    // v1.30.1 — both Save and Save & add another are `type="submit"`
     // buttons tied to this one `<form>` via the HTML `form` attribute (they
     // render portalled into the sheet's footer, outside the `<form>` tag
     // itself); `submitter` distinguishes which one fired this submit.
@@ -355,7 +356,7 @@ export function LabForm({
           {t("common.cancel")}
         </Button>
       ) : null}
-      {/* v1.30.1 H3 — additive: only renders when the caller wires up
+      {/* v1.30.1 — additive: only renders when the caller wires up
           `onSavedKeepOpen`. `data-action` is how `handleSubmit` tells this
           button apart from the plain Save below via `event.submitter`. */}
       {onSavedKeepOpen ? (
@@ -424,28 +425,18 @@ export function LabForm({
 
         <div className="space-y-1.5">
           <Label>{t("labs.form.resultType")}</Label>
-          <div className="flex gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={resultType === "numeric" ? "secondary" : "ghost"}
-              className="min-h-11 flex-1 sm:min-h-9"
-              onClick={() => setResultType("numeric")}
-              aria-pressed={resultType === "numeric"}
-            >
-              {t("labs.form.numeric")}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={resultType === "qualitative" ? "secondary" : "ghost"}
-              className="min-h-11 flex-1 sm:min-h-9"
-              onClick={() => setResultType("qualitative")}
-              aria-pressed={resultType === "qualitative"}
-            >
-              {t("labs.form.qualitative")}
-            </Button>
-          </div>
+          <Segmented
+            mode="toggle"
+            stretch
+            label={t("labs.form.resultType")}
+            slot="lab-form-result-type"
+            value={resultType}
+            onChange={setResultType}
+            options={[
+              { value: "numeric", label: t("labs.form.numeric") },
+              { value: "qualitative", label: t("labs.form.qualitative") },
+            ]}
+          />
         </div>
 
         {/* One column at every width, as in the measurement form. A second

@@ -81,10 +81,11 @@
  * by construction (no trigger → no nudge), and a user who engaged the Coach
  * in the last ~24 h is skipped.
  */
+import { ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { getAssistantFlags } from "@/lib/feature-flags";
 import { aiCapabilityForJob } from "@/lib/ai/capabilities/gate";
-import { annotate } from "@/lib/logging/context";
+import { annotate, getEvent } from "@/lib/logging/context";
 import {
   getEffectiveRange,
   type ThresholdOverridesJson,
@@ -101,7 +102,6 @@ import {
   type ComposeNudgeWithAI,
   type NudgeAiTickBudget,
 } from "@/lib/jobs/coach-nudge-ai";
-import { getEvent } from "@/lib/logging/context";
 import { resolveCanonicalRecovery } from "@/lib/insights/derived/recovery-resolve";
 import { resolveRestMode } from "@/lib/illness/rest-mode";
 import { reconstructSleepNights } from "@/lib/analytics/sleep-night";
@@ -120,11 +120,6 @@ const SELF_CONTEXT_AI_SECTIONS = [
   "ALLERGIES",
   "COACH_FOCUS",
 ] as const satisfies readonly HealthProfileAiSection[];
-
-/** Pg-boss queue + cron — imported by the reminder worker's bootstrap. */
-export const COACH_NUDGE_QUEUE = "coach-nudge";
-/** 05:15 Europe/Berlin — after the 04:45–04:55 score crons settled. */
-export const COACH_NUDGE_CRON = "15 5 * * *";
 
 /**
  * Frequency cap default: one nudge per user per rolling week. v1.16.5 —
@@ -200,7 +195,7 @@ export interface CoachNudgeSummary {
   candidatesScanned: number;
   dispatched: number;
   /**
-   * v1.18.6 (CCH-02) — nudges written into the conversation rail as an
+   * v1.18.6 — nudges written into the conversation rail as an
    * initial ASSISTANT message. Counted independently of `dispatched`:
    * the conversation lands even when no push channel is configured, so
    * `persisted` can exceed `dispatched`.
@@ -224,7 +219,7 @@ export interface CoachNudgeSummary {
   skippedNoTrigger: number;
   skippedNoChannel: number;
   /**
-   * v1.18.1 P4 — Rest Mode pause: a cadence-nudge ("weigh more often",
+   * v1.18.1 — Rest Mode pause: a cadence-nudge ("weigh more often",
    * "measure BP morning + evening") is the wrong message to a user who is
    * actively unwell. While an illness episode is active the nudge is paused,
    * not penalised: nothing is recorded against the user, the cadence simply
@@ -837,7 +832,7 @@ export async function runCoachNudgeTick(
 
   // Gate 2 — per-user Coach opt-out.
   const users = await prisma.user.findMany({
-    where: { disableCoach: false },
+    where: { disableCoach: false, ...ACTIVE_ACCOUNT },
     select: {
       id: true,
       locale: true,
@@ -1025,7 +1020,7 @@ export async function runCoachNudgeTick(
         }
       }
 
-      // v1.18.6 (CCH-02) — persist the nudge as a real conversation
+      // v1.18.6 — persist the nudge as a real conversation
       // BEFORE dispatching the notification. The proactive nudge used to
       // be notification-only, so a user with no push channel never saw
       // it anywhere; writing it as the initial ASSISTANT message means it
@@ -1040,7 +1035,7 @@ export async function runCoachNudgeTick(
           title,
           body,
         });
-        // v1.22 (W5) — keep the conversation id so the push deep-links
+        // v1.22 — keep the conversation id so the push deep-links
         // precisely into the proactive thread instead of the generic
         // `/coach`, closing the most-recent-heuristic gap on the web side.
         nudgeConversationId = recorded.conversationId;

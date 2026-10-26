@@ -37,6 +37,7 @@ import {
   type AssessmentStatus,
 } from "@/lib/insights/status-shared";
 import { runStatusCompletion } from "@/lib/insights/status-provider";
+import { persistTimeoutNegativeStub } from "@/lib/insights/timeout-fallback";
 import {
   readFreshStatusText,
   resolveReadOnlyStatusMiss,
@@ -76,7 +77,7 @@ export function parseDerivedScoreScope(scope: string): DerivedMetricId | null {
 }
 
 /**
- * v1.22 (W6) — the contributor source metrics every assessable score derives
+ * v1.22 — the contributor source metrics every assessable score derives
  * from. A conservative superset across READINESS / SLEEP_SCORE / RECOVERY /
  * STRESS / STRAIN so the input-hash gate regenerates whenever any driver moved
  * and only skips on a genuinely quiet day. Mood joins via `includeMood`.
@@ -130,7 +131,7 @@ function scoreUserPrompt(
   todayKey: string,
   locale: Locale,
   openerHint: string,
-  /** v1.30.3 (QA F5) — the user's own IANA tz; was hardcoded "Europe/Berlin". */
+  /** v1.30.3 — the user's own IANA tz; was hardcoded "Europe/Berlin". */
   tz: string,
 ): string {
   const snapshot = JSON.stringify({
@@ -192,7 +193,7 @@ export async function resolveDerivedAssessment(args: {
 
   const scope = derivedScoreScope(args.metric);
   const cacheAction = statusCacheAction(scope, locale);
-  // v1.30.3 (QA F5) — roll the cache over at the user's own midnight, not
+  // v1.30.3 — roll the cache over at the user's own midnight, not
   // Berlin's.
   const userTz = await resolveUserTimezone(args.userId);
   const todayKey = userDayKey(now, userTz);
@@ -222,6 +223,32 @@ export async function resolveDerivedAssessment(args: {
 }
 
 // ── generate (worker entry) ──────────────────────────────────────────────
+
+/**
+ * A generation that timed out or failed. #1279 — it opens the same negative
+ * window every other note opens, so the score is not asked about again on
+ * the next sync while it keeps failing.
+ */
+async function failedAssessment(
+  userId: string,
+  cacheAction: string,
+  todayKey: string,
+  kind: "timeout" | "error",
+): Promise<AssessmentStatus> {
+  await persistTimeoutNegativeStub({
+    userId,
+    cacheAction,
+    todayKey,
+    reason: kind,
+  });
+  return {
+    kind,
+    text: null,
+    hasProvider: true,
+    updatedAt: null,
+    retryable: true,
+  };
+}
 
 /**
  * Worker entry: build the signal-led prompt for one derived score, run the
@@ -263,19 +290,19 @@ export async function generateDerivedScoreAssessment(args: {
 
   const scope = derivedScoreScope(args.metric);
   const cacheAction = statusCacheAction(scope, locale);
-  // v1.30.3 (QA F5) — roll the cache over at the user's own midnight, not
+  // v1.30.3 — roll the cache over at the user's own midnight, not
   // Berlin's; also threads into the prompt's date label below (was
   // hardcoded "(Europe/Berlin)" regardless of the user's actual zone).
   const userTz = await resolveUserTimezone(args.userId);
   const todayKey = userDayKey(now, userTz);
 
-  // v1.22 (W6) — opener-archetype rotation + a day-rotated seed so a score
+  // v1.22 — opener-archetype rotation + a day-rotated seed so a score
   // assessment varies across scores and across days instead of riding the
   // fixed reference seed. The key is per (user, score, day).
   const seedKey = `${args.userId}:${scope}:${todayKey}`;
   const openerHint = openerArchetypeHint(seedKey, locale);
 
-  // v1.22 (W6) — score-warm input-hash gate. A score is re-warmed daily even on
+  // v1.22 — score-warm input-hash gate. A score is re-warmed daily even on
   // a day with no new wearable data; this skips the LLM and re-stamps the cached
   // text when none of the contributor sources (sleep / HRV / RHR / respiratory /
   // mood) changed. Conservative superset → never staler than the data; a genuine
@@ -320,7 +347,7 @@ export async function generateDerivedScoreAssessment(args: {
       openerHint,
       userTz,
     ),
-    // v1.22 (W6) — nudged up from 0.45 for variety; the grounding gate below
+    // v1.22 — nudged up from 0.45 for variety; the grounding gate below
     // catches any number the warmer sampling might drift onto.
     temperature: 0.55,
     seed: dayRotatedSeed(seedKey),
@@ -341,13 +368,7 @@ export async function generateDerivedScoreAssessment(args: {
         retryable: false,
       };
     }
-    return {
-      kind: outcome.kind,
-      text: null,
-      hasProvider: true,
-      updatedAt: null,
-      retryable: true,
-    };
+    return failedAssessment(args.userId, cacheAction, todayKey, outcome.kind);
   }
 
   // Parse and screen through the same fail-closed chokepoint as every other
@@ -380,7 +401,7 @@ export async function generateDerivedScoreAssessment(args: {
     };
   }
 
-  // v1.22 (W6) — score number-grounding gate. The only numbers the prose may
+  // v1.22 — score number-grounding gate. The only numbers the prose may
   // state are the score and its contributor values. On a miss we do NOT persist
   // the AI text — the route keeps serving the always-grounded deterministic
   // fallback, so the field stays non-empty and never carries a fabricated
@@ -410,7 +431,7 @@ export async function generateDerivedScoreAssessment(args: {
     cacheAction,
     todayKey,
     text,
-    // v1.22 (W6) — store the input fingerprint so the next day's gate can skip
+    // v1.22 — store the input fingerprint so the next day's gate can skip
     // the warm when no contributor source changed.
     inputHash,
   });

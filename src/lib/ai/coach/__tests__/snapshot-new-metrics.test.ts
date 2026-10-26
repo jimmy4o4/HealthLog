@@ -67,7 +67,7 @@ const allModulesEnabled = (): Record<ModuleKey, boolean> =>
   >;
 
 /**
- * v1.4.23 W4 F6 — pins the Apple Health timeline blocks the Coach
+ * v1.4.23 — pins the Apple Health timeline blocks the Coach
  * snapshot must ship when the user has HealthKit data and explicitly
  * scopes the new sources.
  *
@@ -98,7 +98,7 @@ describe("buildCoachSnapshot — Apple Health additive metrics (v1.4.23)", () =>
     prismaMock.medicationIntakeEvent.findMany.mockResolvedValue([]);
     prismaMock.medication.findMany.mockResolvedValue([]);
     prismaMock.workout.findMany.mockResolvedValue([]);
-    // v1.4.23 H4 — snapshot now reads `User.coachPrefsJson`. Default
+    // v1.4.23 — snapshot now reads `User.coachPrefsJson`. Default
     // null = legacy defaults so the existing test fixtures stay
     // representative of the v1.4.22 behaviour.
     prismaMock.user.findUnique.mockResolvedValue({ coachPrefsJson: null });
@@ -364,7 +364,7 @@ describe("buildCoachSnapshot — Apple Health additive metrics (v1.4.23)", () =>
     expect(out.provenance.metrics).toContain("workouts");
   });
 
-  // v1.30.4 (C1) — `GET /api/workouts` collapses a dual-source recording of
+  // v1.30.4 — `GET /api/workouts` collapses a dual-source recording of
   // the SAME session (e.g. Apple Watch + Withings both logging one run) with
   // `pickCanonicalWorkoutRows` before the UI ever counts it. The Coach
   // snapshot (and the `get_workouts` MCP tool, which re-exports this same
@@ -372,9 +372,12 @@ describe("buildCoachSnapshot — Apple Health additive metrics (v1.4.23)", () =>
   // collapse, so a dual-device user's Coach prompt double-counted the
   // session and inflated `perSport`/`totalInWindow` vs. the app. Pin the fix.
   it("collapses a same-session cross-source workout pair to one, matching the UI", async () => {
-    const sharedStart = new Date("2026-06-03T06:30:00Z");
+    // Inside the 30-day window: the block keeps only the sessions that
+    // start in it.
+    const sharedStart = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     const workouts = [
       {
+        id: "w-apple",
         sportType: "RUNNING",
         startedAt: sharedStart,
         durationSec: 1800,
@@ -385,6 +388,7 @@ describe("buildCoachSnapshot — Apple Health additive metrics (v1.4.23)", () =>
         source: "APPLE_HEALTH",
       },
       {
+        id: "w-withings",
         sportType: "RUNNING",
         // 90 s apart — same 5-minute bucket the picker uses.
         startedAt: new Date(sharedStart.getTime() + 90_000),

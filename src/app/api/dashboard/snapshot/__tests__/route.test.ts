@@ -1,5 +1,5 @@
 /**
- * v1.7.0 W6 — route tests for GET /api/dashboard/snapshot.
+ * v1.7.0 — route tests for GET /api/dashboard/snapshot.
  *
  *   - 401 envelope when unauthenticated;
  *   - 200 `{ data, error }` envelope with the snapshot body when
@@ -17,7 +17,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/db", () => ({
-  prisma: {},
+  // The cached briefing text is read off its own row, not the session user.
+  prisma: { user: { findUnique: async () => null } },
 }));
 vi.mock("@/lib/auth/session", () => ({
   getSession: vi.fn(),
@@ -71,7 +72,6 @@ const SESSION_OK = {
     glucoseUnit: "mg/dL",
     onboardingTourCompleted: true,
     disableCoach: false,
-    insightsCachedText: null,
     insightsCachedAt: null,
     dashboardWidgetsJson: null,
   },

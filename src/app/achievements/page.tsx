@@ -43,6 +43,7 @@ import {
   type AchievementCategory,
   type AchievementProgress,
 } from "@/lib/gamification/achievements";
+import { TrendTile } from "@/components/ui/trend-tile";
 
 const iconMap: Record<string, LucideIcon> = {
   Activity,
@@ -230,7 +231,7 @@ function AchievementCard({ achievement, t, tCount }: AchievementCardProps) {
               ),
             })}
           </p>
-          {/* v1.4.33 IW9 — aria-label so the bar carries an accessible name. */}
+          {/* v1.4.33 — aria-label so the bar carries an accessible name. */}
           <Progress
             value={achievement.progressPercent}
             className="h-1.5"
@@ -289,11 +290,11 @@ export default function AchievementsPage() {
   // hides on an explicit `false`.
   const achievementsEnabled = user?.modules?.achievements !== false;
 
-  // v1.4.34 IW-F-Perf — mother page rides the shared cache slot
+  // v1.4.34 — mother page rides the shared cache slot
   // alongside `<RecentAchievementsCard>` and
   // `<AchievementUnlockNotifier>` so the three consumers never trigger
   // more than one network call on a cold dashboard mount.
-  const { data, isLoading, isError, refetch } = useAchievementsQuery({
+  const { data, isLoading, isError, error, refetch } = useAchievementsQuery({
     enabled: isAuthenticated && achievementsEnabled,
   });
 
@@ -317,7 +318,7 @@ export default function AchievementsPage() {
   }
 
   // A failed load must never fall through to the zeroed summary tiles + the
-  // "none unlocked yet" empty grid (UI-STANDARDS §6). Surface an honest
+  // "none unlocked yet" empty grid (ui-standards.md §6). Surface an honest
   // retry instead.
   if (isError) {
     return (
@@ -326,7 +327,7 @@ export default function AchievementsPage() {
           title={t("achievements.title")}
           description={t("achievements.subtitle")}
         />
-        <QueryErrorCard onRetry={() => refetch()} />
+        <QueryErrorCard error={error} onRetry={() => refetch()} />
       </div>
     );
   }
@@ -351,7 +352,7 @@ export default function AchievementsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <div className="bg-card border-border flex min-h-34 flex-col justify-between rounded-xl border p-4 md:p-6">
+        <TrendTile className="min-h-34 justify-between">
           <p className="text-muted-foreground text-sm">
             {t("achievements.points")}
           </p>
@@ -370,8 +371,8 @@ export default function AchievementsPage() {
             className="h-1.5"
             aria-label={t("achievements.points")}
           />
-        </div>
-        <div className="bg-card border-border flex min-h-34 flex-col justify-between rounded-xl border p-4 md:p-6">
+        </TrendTile>
+        <TrendTile className="min-h-34 justify-between">
           <p className="text-muted-foreground text-sm">
             {t("achievements.unlocked")}
           </p>
@@ -384,8 +385,8 @@ export default function AchievementsPage() {
           <p className="text-muted-foreground text-xs">
             {t("achievements.remainingUnlocks", { count: remainingUnlocks })}
           </p>
-        </div>
-        <div className="bg-card border-border min-h-34 rounded-xl border p-4 sm:col-span-2 md:p-6 lg:col-span-1">
+        </TrendTile>
+        <TrendTile className="min-h-34 sm:col-span-2 lg:col-span-1">
           <p className="text-muted-foreground text-sm">
             {t("achievements.nextGoal")}
           </p>
@@ -428,11 +429,11 @@ export default function AchievementsPage() {
             className="mt-3 h-1.5"
             aria-label={t("achievements.nextProgressLabel")}
           />
-        </div>
+        </TrendTile>
       </div>
 
       {grouped.length === 0 ? (
-        // v1.4.15 phase-C5: upgrade to the EmptyState primitive so the
+        // v1.4.15: upgrade to the EmptyState primitive so the
         // surface matches the rest of the app. Trophy icon makes the
         // intent obvious before the user reads the copy. Reuses the
         // existing `noneUnlockedYet` string to avoid C4 i18n churn.

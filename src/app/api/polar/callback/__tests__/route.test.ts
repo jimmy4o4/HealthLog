@@ -22,10 +22,45 @@ const {
   bossMock: vi.fn(),
 }));
 
+// Single-use claiming is covered against Postgres in
+// tests/integration/oauth-callback-single-use.test.ts; here every callback
+// is the first and only one.
+const { claimSpy } = vi.hoisted(() => ({ claimSpy: vi.fn() }));
+vi.mock("@/lib/oauth/callback-claim", () => ({
+  runOAuthCallbackOnce: (
+    _p: string,
+    _s: string,
+    _o: unknown,
+    run: () => Promise<unknown>,
+  ) => {
+    claimSpy();
+    return run();
+  },
+  settleOAuthCallback: (_p: string, _s: string, run: () => Promise<unknown>) =>
+    run(),
+  consumeLedgerState: async (
+    _p: string,
+    _s: string,
+    consume: (tx: unknown) => Promise<unknown>,
+  ) => consume((await import("@/lib/db")).prisma),
+  duplicateOAuthCallback: async () => null,
+}));
+
+vi.mock("@/lib/integrations/oauth-kit/connect-target", () => ({
+  // The guardian arm is covered in its own test; here the record's own
+  // browser (or none) may finish, any other session may not.
+  verifyCallbackActor: async (record: string, session: string | null) =>
+    session === null || session === record
+      ? { ok: true, guardianUserId: null }
+      : { ok: false, reason: "cross_user" },
+}));
+
 vi.mock("@/lib/api-handler", () => ({
   apiHandler: <T extends (...args: unknown[]) => unknown>(fn: T) => fn,
 }));
-vi.mock("@/lib/db", () => ({ prisma: { user: { update: vi.fn() } } }));
+vi.mock("@/lib/db", () => ({
+  prisma: { user: { update: vi.fn(), findMany: vi.fn(async () => []) } },
+}));
 vi.mock("@/lib/logging/context", () => ({
   annotate: vi.fn(),
   getEvent: () => ({
@@ -35,11 +70,16 @@ vi.mock("@/lib/logging/context", () => ({
   }),
 }));
 vi.mock("@/lib/auth/audit", () => ({ auditLog: vi.fn() }));
-vi.mock("@/lib/crypto", () => ({ encrypt: (s: string) => `enc:${s}` }));
+vi.mock("@/lib/crypto", () => ({
+  encrypt: (s: string) => `enc:${s}`,
+  decrypt: (s: string) => s.replace(/^enc:/, ""),
+}));
 vi.mock("@/lib/auth/session", () => ({ getSession: getSessionMock }));
 vi.mock("@/lib/polar/client", () => ({
-  exchangeCode: exchangeCodeMock,
   registerUser: registerUserMock,
+}));
+vi.mock("@/lib/polar/oauth", () => ({
+  polarOAuth: { exchange: exchangeCodeMock },
 }));
 vi.mock("@/lib/polar/credentials", () => ({
   getPolarClientCredentials: getCredsMock,
@@ -58,9 +98,9 @@ import { GET } from "../route";
 
 process.env.NEXT_PUBLIC_APP_URL = "https://app.example";
 
-function makeReq(): Parameters<typeof GET>[0] {
+function makeReq(query = "code=abc&state=s"): Parameters<typeof GET>[0] {
   return {
-    url: "https://app.example/api/polar/callback?code=abc&state=s",
+    url: `https://app.example/api/polar/callback?${query}`,
     cookies: { get: () => ({ value: "s" }) },
   } as unknown as Parameters<typeof GET>[0];
 }
@@ -88,6 +128,17 @@ describe("GET /api/polar/callback", () => {
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("polar=connected");
     expect(markReconnectedMock).toHaveBeenCalledWith("u1", "polar");
+  });
+
+  it("refuses a Polar member another record already holds, before registering it", async () => {
+    const { prisma } = await import("@/lib/db");
+    vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+      { id: "guardian-1", polarUserIdEncrypted: "enc:42" },
+    ] as never);
+    const res = await run(makeReq());
+    expect(res.headers.get("location")).toContain("reason=already_linked");
+    expect(registerUserMock).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it("rejects a CSRF cookie/param mismatch before exchanging the code", async () => {
@@ -141,5 +192,16 @@ describe("GET /api/polar/callback — connect-time first sync", () => {
     const res = await run(makeReq());
 
     expect(res.headers.get("location")).toContain("polar=connected");
+  });
+});
+
+describe("GET /api/polar/callback — claim only what can be exchanged", () => {
+  it("does not claim the state for a callback without a code or for another user", async () => {
+    const denied = await run(makeReq("state=s&error=access_denied"));
+    expect(denied.headers.get("location")).toContain("reason=nocode");
+    getSessionMock.mockResolvedValue({ user: { id: "other" } });
+    await run(makeReq());
+    expect(claimSpy).not.toHaveBeenCalled();
+    expect(exchangeCodeMock).not.toHaveBeenCalled();
   });
 });

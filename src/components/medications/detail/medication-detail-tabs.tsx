@@ -50,7 +50,7 @@ import {
 } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useUrlSearch, writeUrlState } from "@/lib/url-state";
 import { ArrowLeft, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,7 @@ import {
 } from "@/components/medications/card-parts/medication-compliance-bars";
 import { DoseHistoryLedger } from "@/components/medications/dose-history-ledger";
 import { IntakeHistoryListV2 } from "@/components/medications/intake-history-list-v2";
-import { SegmentedToggle } from "@/components/medications/detail/segmented-toggle";
+import { Segmented } from "@/components/ui/segmented";
 import { ScheduleTimesEditor } from "@/components/medications/scheduling/schedule-times-editor";
 import { ScheduleHistoryTimeline } from "@/components/medications/scheduling/schedule-history-timeline";
 import type { DoseWindowEntry } from "@/components/medications/scheduling/dose-window";
@@ -88,7 +88,7 @@ import { PhaseConfigSheet } from "@/components/medications/sections/phase-config
 import { SideEffectsSection } from "@/components/medications/side-effects-section";
 import { ChartSkeleton } from "@/components/charts/chart-skeleton";
 import { TitrationTimeline } from "@/components/medications/titration-timeline";
-import { estimateRunwayDays } from "@/components/medications/detail/supply-runway";
+import { estimateRunwayDays } from "@/lib/medications/supply-runway";
 import type { SupplySummary } from "@/lib/medications/inventory/summary";
 import { MedicationWizardDialog } from "@/components/medications/wizard/medication-wizard-dialog";
 import { parseScheduleRecurrence } from "@/lib/medication-schedule";
@@ -104,6 +104,8 @@ import { AutoMarkTakenBody } from "@/components/medications/sections/auto-mark-t
 import { IntakeTrackingBody } from "@/components/medications/sections/intake-tracking-section";
 import { MedicationRelatedSection } from "@/components/medications/detail/medication-related-section";
 import type { RelatedLink } from "@/lib/links/related";
+import { InlineAction } from "@/components/ui/inline-action";
+import { EmptyState } from "@/components/ui/empty-state";
 
 // v1.15.20 — Recharts stays out of the detail page's initial bundle:
 // both chart bodies load through `next/dynamic` (client-only) with the
@@ -191,6 +193,7 @@ export interface MedicationDetailSnapshot {
   /** v1.40 (#1024) — the server-resolved courses. */
   courses?: MedicationCourseWire[];
   canStartCourse?: boolean;
+  canEndCourse?: boolean;
   recordedSchedules?: ScheduleSnapshot[];
   schedules: ScheduleSnapshot[];
   /** v1.43 — the composition per unit, as the server delivered it. */
@@ -307,8 +310,8 @@ export function MedicationDetailTabs({
   const fmt = useFormatters();
   const { canManageDomain, inSharedRecord } = useRecordCapabilities();
   const canManageMedications = canManageDomain("medications");
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  // Read live (`@/lib/url-state`): the tab is written here.
+  const searchParams = useUrlSearch();
 
   // v1.15.20 — the medications-list kebab's "Bearbeiten" arrives as
   // `?edit=1` and opens the wizard straight away (the same editOpen the
@@ -405,33 +408,17 @@ export function MedicationDetailTabs({
   useEffect(() => {
     if (shouldOpenEditFromUrl) {
       // Drop `?edit=1` (keep any `tab` param) so a refresh after closing
-      // the wizard does not keep reopening it.
-      const params = new URLSearchParams(
-        Array.from(searchParams?.entries() ?? []),
-      );
-      params.delete("edit");
-      const qs = params.toString();
-      router.replace(`/medications/${id}${qs ? `?${qs}` : ""}`, {
-        scroll: false,
-      });
+      // the wizard does not keep reopening it. Made while mounting, so it
+      // waits for the router's history integration (`afterPaint`).
+      writeUrlState((params) => params.delete("edit"), { afterPaint: true });
     }
-  }, [shouldOpenEditFromUrl, id, router, searchParams]);
+  }, [shouldOpenEditFromUrl]);
 
-  const onTabChange = useCallback(
-    (next: string) => {
-      const params = new URLSearchParams(
-        Array.from(searchParams?.entries() ?? []),
-      );
-      params.set("tab", next);
-      // Shallow URL swap so the tab is deep-linkable + survives reload
-      // without a full navigation. `scroll: false` keeps the viewport
-      // pinned to the tab strip on switch.
-      router.replace(`/medications/${id}?${params.toString()}`, {
-        scroll: false,
-      });
-    },
-    [id, router, searchParams],
-  );
+  const onTabChange = useCallback((next: string) => {
+    // The tab is deep-linkable and survives a reload; a shallow in-place
+    // write keeps the viewport pinned to the tab strip on switch.
+    writeUrlState((params) => params.set("tab", next));
+  }, []);
 
   const { data: compliance } = useQuery({
     queryKey: queryKeys.medicationCompliance(id),
@@ -676,9 +663,11 @@ export function MedicationDetailTabs({
                   longDays={longDays}
                 />
               ) : (
-                <p className="text-muted-foreground text-sm">
-                  {t("medications.detail.uebersicht.complianceEmpty")}
-                </p>
+                <EmptyState
+                  variant="plain"
+                  size="compact"
+                  title={t("medications.detail.uebersicht.complianceEmpty")}
+                />
               )}
             </MedicationDetailSection>
           )}
@@ -854,7 +843,8 @@ export function MedicationDetailTabs({
             Daten (the DataPortabilityRow), not in this header. */}
         <TabsContent value="verlauf" className="space-y-6 pt-2">
           <div className="flex justify-end">
-            <SegmentedToggle
+            <Segmented
+              mode="toggle"
               value={historyView}
               options={[
                 {
@@ -867,8 +857,8 @@ export function MedicationDetailTabs({
                 },
               ]}
               onChange={setHistoryView}
-              ariaLabel={t("medications.detail.intake.viewToggleLabel")}
-              dataSlot="medication-verlauf-view-toggle"
+              label={t("medications.detail.intake.viewToggleLabel")}
+              slot="medication-verlauf-view-toggle"
             />
           </div>
           {historyView === "recent" ? (
@@ -934,11 +924,7 @@ export function MedicationDetailTabs({
             defaultOpen={false}
           >
             <div className="py-3">
-              <LifecycleManageBody
-                medicationId={id}
-                medicationName={medication.name}
-                active={medication.active}
-              />
+              <LifecycleManageBody medication={medication} />
             </div>
             {/* v1.40 (#1024) — the courses: when it was taken, and a new
                 course once the last one has ended. */}
@@ -1097,14 +1083,13 @@ function StatusRow({
         <p className="text-muted-foreground text-xs font-medium">{label}</p>
         <p className="text-foreground text-sm">{value}</p>
       </div>
-      <button
-        type="button"
+      <InlineAction
         onClick={onJump}
-        className="text-primary focus-visible:ring-ring shrink-0 rounded-sm text-xs underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+        className="shrink-0"
         data-slot={`${dataSlot}-jump`}
       >
         {jumpLabel}
-      </button>
+      </InlineAction>
     </li>
   );
 }

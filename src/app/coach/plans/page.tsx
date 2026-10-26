@@ -191,6 +191,7 @@ function CoachPlansBody({ readOnly }: { readOnly: boolean }) {
           {(readOnly || group === "past") && (
             <ConfirmButton
               slot="coach-plan-delete"
+              destructive
               variant="ghost"
               size="sm"
               className="min-h-9"
@@ -240,7 +241,7 @@ function CoachPlansBody({ readOnly }: { readOnly: boolean }) {
         )}
       >
         {query.isError ? (
-          <QueryErrorCard onRetry={() => query.refetch()} />
+          <QueryErrorCard error={query.error} onRetry={() => query.refetch()} />
         ) : query.isLoading ? (
           <div
             data-slot="coach-plans-loading"

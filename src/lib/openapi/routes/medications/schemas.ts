@@ -13,6 +13,8 @@ import {
   MEDICATION_CATEGORY_VALUES,
   MEDICATION_CONTAINER_TYPE_VALUES,
   MEDICATION_TREATMENT_CLASS_VALUES,
+  doseWindowEntrySchema,
+  injectionSiteEnum,
 } from "@/lib/validations/medication";
 import { medicationExtractionSchema } from "@/lib/ai/coach/medication-extract-prompt";
 import {
@@ -22,6 +24,7 @@ import {
 } from "@/lib/medication-list-layout";
 import { MEDICATION_IMPORT_SKIP_REASONS } from "@/lib/jobs/medication-intake-import";
 import { isoDateTime } from "@/lib/validations/datetime";
+import { locales } from "@/lib/i18n/config";
 
 // ── Medications (v1.5 scheduling) ────────────────────────────────────
 //
@@ -63,9 +66,16 @@ export const medicationCourseResource = z
       .date()
       .nullable()
       .describe("Last day, inclusive. NULL = open (only the latest course)."),
+    endedAt: isoDateTime()
+      .nullable()
+      .describe(
+        "#1280 — the instant `POST /api/medications/{id}/courses/end` ended this course, on its `endsOn` day. No dose slot at or after it is due, reminded or expected, and the course is ENDED from it on. NULL when the whole `endsOn` day counts (an end date set in the editor). Any edit that moves `endsOn` clears it.",
+      ),
     status: z
       .enum(["UPCOMING", "CURRENT", "ENDED"])
-      .describe("Where today, on the person's clock, sits in this course."),
+      .describe(
+        "Where today, on the person's clock, sits in this course. A course with `endedAt` is ENDED on its `endsOn` day already.",
+      ),
     takenDoses: z
       .number()
       .int()
@@ -100,7 +110,7 @@ const medicationCourseFields = {
   canStartCourse: z
     .boolean()
     .describe(
-      "v1.40 — whether `POST /api/medications/{id}/courses` may start a new course now: the medication is active, not one-time, has a course and every course has ended.",
+      "v1.40 — whether `POST /api/medications/{id}/courses` may start a new course now: the medication is active, not one-time, has a course and every course's last day is before today (a course ended today with `POST /api/medications/{id}/courses/end` is over, but a course starting today would share its last day, so the start is offered from the next day), and the caller is the record's owner (starting a course is not delegable, so a delegate always reads false).",
     ),
 };
 
@@ -223,6 +233,13 @@ export const medicationScheduleResource = z
       .describe(
         'v1.7.0 cyclic "off" weeks. Only meaningful when `scheduleType` is CYCLIC; null otherwise.',
       ),
+    doseWindows: z
+      .array(doseWindowEntrySchema)
+      .nullable()
+      .optional()
+      .describe(
+        "Per-dose on-time windows as stored. Null when every dose time keeps the default derivation.",
+      ),
   })
   .meta({
     id: "MedicationSchedule",
@@ -233,9 +250,54 @@ export const medicationScheduleResource = z
 export const medicationResource = z
   .object({
     id: z.string(),
+    userId: z.string().optional().describe("The record the row belongs to."),
     name: z.string(),
     dose: z.string(),
     treatmentClass: medicationTreatmentClassEnum,
+    deliveryForm: z
+      .enum(["ORAL", "INJECTION", "OTHER"])
+      .optional()
+      .describe(
+        "How the medication is taken. A one-time injection is `oneShot` with `INJECTION`.",
+      ),
+    trackInjectionSites: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether intakes record an injection site. Only offered for `INJECTION`.",
+      ),
+    allowedInjectionSites: z
+      .array(injectionSiteEnum)
+      .optional()
+      .describe("The sites the rotation offers; empty means every site."),
+    externalSource: z
+      .literal("APPLE_HEALTH")
+      .nullable()
+      .optional()
+      .describe(
+        "v1.32.25 — provenance of the medication. `APPLE_HEALTH` marks the row a read-only mirror of the iOS 26+ HealthKit Medications sync; NULL is a native HealthLog medication.",
+      ),
+    externalId: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "The source's own identifier for a mirrored medication, paired with `externalSource`; null for a native one.",
+      ),
+    lowStockNotifiedAt: isoDateTime()
+      .nullable()
+      .optional()
+      .describe(
+        "When the low-stock alert last fired for this medication; null when it has not since the stock was last topped up. Server-written.",
+      ),
+    lowStockNotifiedThresholdDays: z
+      .number()
+      .int()
+      .nullable()
+      .optional()
+      .describe(
+        "The runway threshold, in days, that alert fired at. Server-written.",
+      ),
     dosesPerUnit: z
       .number()
       .int()
@@ -309,6 +371,12 @@ export const medicationResource = z
       .describe(
         "v1.5 course end (ISO date). NULL means chronic. Equals `startsOn` when `oneShot` is true.",
       ),
+    endedAt: isoDateTime()
+      .nullable()
+      .optional()
+      .describe(
+        "#1280 — the instant the latest course was ended with `POST /api/medications/{id}/courses/end` (the course's own `endedAt`). From it on no dose is due or reminded and `courseStatus` is ENDED; NULL when the course runs to the end of `endsOn`. Read-only — written by the course writer only.",
+      ),
     oneShot: z
       .boolean()
       .describe(
@@ -371,20 +439,31 @@ export const medicationListEntry = medicationResource
     // even though the shared base leaves them optional for the write paths.
     nextDueAt: isoDateTime().nullable(),
     nextDueOverdue: z.boolean(),
+    nextDueScheduleId: z
+      .string()
+      .nullable()
+      .describe(
+        "The schedule `nextDueAt` belongs to; null when nothing is due.",
+      ),
     remindersActive: z
       .boolean()
       .describe(
-        "v1.42.2 — whether the server sends dose reminders for this medication: true only when `notificationsEnabled` is on, the medication is `active`, its course has not ended (`endsOn` is today or later on the person's clock, or unset), its intake is tracked (`trackIntake`), it is not `asNeeded`, and `autoMarkTaken` is off. The same decision gates every server-side reminder send. A client that arms local reminders arms them from this, not from `notificationsEnabled`. Read-only — computed, not stored.",
+        "v1.42.2 — whether the server sends dose reminders for this medication: true only when `notificationsEnabled` is on, the medication is `active`, its course has not ended (`endsOn` is today or later on the person's clock, or unset, and no `endedAt` has passed), its intake is tracked (`trackIntake`), it is not `asNeeded`, and `autoMarkTaken` is off. The same decision gates every server-side reminder send. A client that arms local reminders arms them from this, not from `notificationsEnabled`. Read-only — computed, not stored.",
       ),
     courseStatus: z
       .enum(["UPCOMING", "CURRENT", "ENDED"])
       .describe(
-        "v1.39.4 — where today (on the user's clock) sits in the course: UPCOMING before `startsOn`, ENDED after `endsOn`, CURRENT otherwise. Calendar days, both ends inclusive, so a course that ends today is CURRENT all day. Read-only — computed, not stored.",
+        "v1.39.4 — where today (on the user's clock) sits in the course: UPCOMING before `startsOn`, ENDED after `endsOn`, CURRENT otherwise. Calendar days, both ends inclusive, so a course that ends today is CURRENT all day, unless it was ended with `POST /api/medications/{id}/courses/end`: then it is ENDED from that instant (`endedAt`). Read-only — computed, not stored.",
       ),
     intakeActionable: z
       .boolean()
       .describe(
         "v1.39.4 — whether the medication offers taken / skip today: true only when it is `active`, its intake is tracked (`trackIntake`) and `courseStatus` is CURRENT. Clients render the dose actions from this and do not re-derive it. Logging a past dose from the history is not gated by it. Read-only — computed, not stored.",
+      ),
+    canEndCourse: z
+      .boolean()
+      .describe(
+        '#1280 — whether `POST /api/medications/{id}/courses/end` may end the course now: true exactly while a course is running (`courseStatus` CURRENT; a medication with no dates is running) and the caller may end it: the owner of the record, or a delegate whose grant manages its medications. False to every other caller. Clients offer "End course" from this and do not re-derive it; the action refuses with 409 `medications.course.notRunning` when it is false. Read-only — computed, not stored.',
       ),
     lastTakenAt: isoDateTime()
       .nullable()
@@ -445,12 +524,17 @@ export const medicationDetailEntry = medicationResource
     courseStatus: z
       .enum(["UPCOMING", "CURRENT", "ENDED"])
       .describe(
-        "v1.39.4 — where today (on the user's clock) sits in the course: UPCOMING before `startsOn`, ENDED after `endsOn`, CURRENT otherwise. Calendar days, both ends inclusive, so a course that ends today is CURRENT all day. Read-only — computed, not stored.",
+        "v1.39.4 — where today (on the user's clock) sits in the course: UPCOMING before `startsOn`, ENDED after `endsOn`, CURRENT otherwise. Calendar days, both ends inclusive, so a course that ends today is CURRENT all day, unless it was ended with `POST /api/medications/{id}/courses/end`: then it is ENDED from that instant (`endedAt`). Read-only — computed, not stored.",
       ),
     intakeActionable: z
       .boolean()
       .describe(
         "v1.39.4 — whether the medication offers taken / skip today: true only when it is `active`, its intake is tracked (`trackIntake`) and `courseStatus` is CURRENT. Clients render the dose actions from this and do not re-derive it. Logging a past dose from the history is not gated by it. Read-only — computed, not stored.",
+      ),
+    canEndCourse: z
+      .boolean()
+      .describe(
+        '#1280 — whether `POST /api/medications/{id}/courses/end` may end the course now: true exactly while a course is running (`courseStatus` CURRENT; a medication with no dates is running) and the caller may end it: the owner of the record, or a delegate whose grant manages its medications. False to every other caller. Clients offer "End course" from this and do not re-derive it; the action refuses with 409 `medications.course.notRunning` when it is false. Read-only — computed, not stored.',
       ),
     stockUnitsRemaining: z
       .number()
@@ -1064,7 +1148,7 @@ export const medicationExtractRequest = z
         "Free-text medication description (any locale). Up to 2 000 characters. The model never echoes the text back into another tenant — it is only used to produce the structured fields.",
       ),
     locale: z
-      .enum(["en", "de", "es", "fr", "it", "pl", "ko"])
+      .enum(locales)
       .optional()
       .describe("Optional UI locale hint for the model."),
     today: z
@@ -1220,7 +1304,7 @@ export const medicationListLayoutSchema = z
       "Per-user /medications presentation: the card/table view choice plus the manual medication order shared by both views. Mirrors the dashboard-widgets / insights-layout contract.",
   });
 
-// v1.32.21 (R5a) — the PUT body additionally carries the optional
+// v1.32.21 — the PUT body additionally carries the optional
 // optimistic-concurrency base token (stripped pre-Zod at runtime by
 // `takeBaseToken`); GET / PUT responses echo the fresh `updatedAt` token.
 export const medicationListLayoutPutBody = medicationListLayoutSchema
@@ -1355,13 +1439,15 @@ export const medicationImportProgress = z
     touchedDays: z
       .array(z.string())
       .describe(
-        "Local calendar days (YYYY-MM-DD) touched so far, driving the chunked rollup recompute behind the write.",
+        "Deprecated and inert: always `[]` on a job admitted from v1.43.8, when the per-day compliance rollup it drove was removed. A job admitted earlier keeps the days it recorded. Kept for clients that decode it; do not read it.",
       ),
     rollupProcessed: z
       .number()
       .int()
       .min(0)
-      .describe("Of `touchedDays`, how many have had their rollup recomputed."),
+      .describe(
+        "Deprecated and inert: always `0` on a job admitted from v1.43.8. Kept for clients that decode it; do not read it.",
+      ),
   })
   .meta({
     id: "MedicationImportProgress",

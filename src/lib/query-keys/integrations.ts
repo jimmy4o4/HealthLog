@@ -5,6 +5,9 @@
  */
 export const integrationKeys = {
   tokens: () => ["tokens"] as const,
+  // How many EXTERNAL readings belong to no measurement token (#1272). Under
+  // the `["tokens"]` prefix, so a mint or a revoke refreshes it too.
+  measurementTokenSummary: () => ["tokens", "measurements", "summary"] as const,
   // v1.22.0 — MCP connector tokens (the dedicated `health:read` scope minted
   // for the remote MCP endpoint). Distinct key from `tokens()` so the MCP
   // settings card's mint / revoke mutations invalidate only this list.
@@ -17,7 +20,7 @@ export const integrationKeys = {
   telegramSettings: () => ["telegram", "settings"] as const,
   withings: () => ["withings"] as const,
   /**
-   * v1.4.42 W3-QUERYKEY-LONGTAIL — the per-card Withings status read.
+   * v1.4.42 — the per-card Withings status read.
    * Shares the `["withings"]` prefix with `withings()` so a disconnect
    * mutation invalidates both at once.
    */
@@ -48,7 +51,7 @@ export const integrationKeys = {
   // key stays for the card's other reads and invalidations.
   nightscout: () => ["nightscout"] as const,
 
-  // v1.17.0 (F4) — Polar + Oura OAuth integration cards. Self-contained status
+  // v1.17.0 — Polar + Oura OAuth integration cards. Self-contained status
   // reads (not the consolidated /api/integrations/status envelope), so the
   // connect/disconnect mutations invalidate these single keys.
   polar: () => ["polar"] as const,

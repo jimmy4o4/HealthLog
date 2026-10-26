@@ -38,6 +38,12 @@ import {
   getSourceLadder,
   parseSourcePriority,
 } from "@/lib/validations/source-priority";
+import { fitFromSums } from "@/lib/stats/linear-fit";
+import {
+  isTrendWindowSufficient,
+  trendEvidenceOf,
+} from "@/lib/analytics/window-confidence";
+import { toTrendSlope, type TrendSlope } from "@/lib/analytics/trends";
 
 /**
  * v1.11.1 — load a user's source-priority blob for the rollup collapse.
@@ -90,7 +96,7 @@ export const REGRESSION_X_ORIGIN_DAYS = Math.floor(
 ); // 18262
 
 /**
- * v1.20.0 F6 — per-bucket OLS regression accumulators (epoch-day x-axis).
+ * v1.20.0 — per-bucket OLS regression accumulators (epoch-day x-axis).
  * Mirrors the four columns migration 0190 added to `measurement_rollups`
  * plus the `n` / `Σy` the existing `count` / `mean` already carry. A bucket
  * whose accumulators predate the migration (or whose write missed the
@@ -127,7 +133,7 @@ export interface ComposedRegression {
 }
 
 /**
- * v1.20.0 F6 — compose a windowed OLS slope / r² / population-sd from the
+ * v1.20.0 — compose a windowed OLS slope / r² / population-sd from the
  * summed regression accumulators of a set of DAY buckets.
  *
  * The six terms (`n = Σcount`, `Σx`, `Σy`, `Σxy`, `Σxx`, `Σyy`) are ADDITIVE
@@ -217,18 +223,12 @@ export function composeRegression(
 
   if (n < 2) return MISS;
 
-  // Mean-centered (corrected-sum) identities. Sxx/Sxy/Syy are the determinant
-  // terms divided by n — algebraically identical to `n·Σxx − Σx²` etc., but
-  // they subtract `Σx²/n` from `Σxx` at matched scale, avoiding the
-  // catastrophic cancellation the determinant form suffers on the ~1e10
-  // epoch-day x-axis. See the function header for the full rationale.
-  const sxx = sumXx - (sumX * sumX) / n;
+  // The centred fit over the accumulators (`fitFromSums`), the same
+  // arithmetic every point fit uses. No x variance: no slope, no r².
+  const fit = fitFromSums({ n, sumX, sumY, sumXx, sumXy, sumYy });
+  const slope = fit ? fit.slope : null;
+  const r2 = fit ? fit.r2 : null;
   const syy = sumYy - (sumY * sumY) / n;
-  const sxy = sumXy - (sumX * sumY) / n;
-
-  const slope = sxx === 0 ? null : sxy / sxx;
-  // REGR_R2 is null when either variance is zero (matches Postgres).
-  const r2 = sxx === 0 || syy === 0 ? null : (sxy * sxy) / (sxx * syy);
 
   // Population variance: Syy/n = Σyy/n − (Σy/n)². Clamp tiny negative values
   // float rounding can produce when the variance is effectively zero.
@@ -315,7 +315,7 @@ export function collapseRollupRowsBySource<T extends SourcedBucketRow>(
 }
 
 /**
- * v1.20.0 F6 — a DAY bucket carrying its `bucketStart` plus the
+ * v1.20.0 — a DAY bucket carrying its `bucketStart` plus the
  * regression accumulators. The windowed-regression readers consume an
  * array of these (one canonical-source row per day) and slice them into
  * the 7/30/90-day sub-windows before composing.
@@ -325,13 +325,13 @@ export interface AccumulatorBucketRow extends RegressionAccumulators {
 }
 
 /**
- * v1.20.0 F6 — compose a windowed slope / r² / population-sd over the DAY
+ * v1.20.0 — compose a windowed slope / r² / population-sd over the DAY
  * buckets whose `bucketStart` falls on or after `since`.
  *
  * The window is DAY-aligned (a bucket is in-window iff its `bucketStart`
  * is `>= since`), matching the DAY-rollup grain. Callers anchor `since` on
  * a UTC-day boundary (`startOfUtcDay(now − N days)`) so the window is the
- * day-aligned equivalent of the live `measured_at >= NOW() - INTERVAL 'N
+ * day-aligned equivalent of the live `measured_at >= now - INTERVAL 'N
  * days'` filter. The accumulator-composed result over a given bucket set
  * is bit-identical to live REGR_* / STDDEV_POP over the same buckets' raw
  * rows — the parity test pins this.
@@ -350,7 +350,29 @@ export function composeWindowedRegression(
 }
 
 /**
- * v1.20.0 P3 M-1 — true iff any in-window DAY bucket carries a NULL
+ * The published trend over the DAY buckets on or after `since`: the
+ * regression `composeWindowedRegression` composes, withheld by `toTrendSlope`
+ * when the window's days with a reading are too few or span too little of
+ * `windowDays` (`isTrendWindowSufficient`). Days are the buckets' UTC days,
+ * the same days the live path counts with `liveTrendSql`.
+ */
+export function composeWindowedTrend(
+  rows: ReadonlyArray<AccumulatorBucketRow>,
+  since: Date,
+  windowDays: number,
+): TrendSlope | null {
+  const cutoff = since.getTime();
+  const evidence = trendEvidenceOf(
+    rows
+      .filter((r) => r.count > 0 && r.bucketStart.getTime() >= cutoff)
+      .map((r) => r.bucketStart.getTime()),
+  );
+  const { slope, r2 } = composeWindowedRegression(rows, since);
+  return toTrendSlope(slope, r2, evidence, windowDays);
+}
+
+/**
+ * v1.20.0 — true iff any in-window DAY bucket carries a NULL
  * regression accumulator (a row that predates migration 0190, or whose
  * boot re-fold has not yet refilled it). `composeWindowedRegression`
  * collapses both that case AND the legitimate "< 2 readings" / degenerate
@@ -521,6 +543,9 @@ interface FoldedBucketRow {
   sum_xy: number | null;
   sum_xx: number | null;
   sum_yy: number | null;
+  /** The bucket's first and last canonical day: the span of its trend evidence. */
+  first_day: Date;
+  last_day: Date;
   computed_at: Date;
 }
 
@@ -535,10 +560,14 @@ const COARSE_TRUNC_UNIT: Record<Exclude<RollupGranularity, "DAY">, string> = {
  * Compose one coarse bucket from the summed stats of its canonical days.
  * `count`, `min`, `max`, `sum` and the count-weighted `mean` are exact;
  * `sd`, `slope` and `r2` come from the summed regression accumulators
- * (`composeRegression`) and are `null` when a day lacks them.
+ * (`composeRegression`) and are `null` when a day lacks them. The bucket is
+ * the slope's window, so `slope` and `r2` are also `null` when its days do
+ * not cover enough of it for a trend (`isTrendWindowSufficient`): a year
+ * whose readings are one afternoon's has no slope per day worth reporting.
  */
 function composeFoldedBucket(
   row: FoldedBucketRow,
+  granularity: Exclude<RollupGranularity, "DAY">,
   weighting: WindowWeighting = "count",
 ): CanonicalRollupBucket {
   const count = Number(row.count);
@@ -563,8 +592,23 @@ function composeFoldedBucket(
         { count, mean: sampleMean, sumValue: sumY, sumX, sumXy, sumXx, sumYy },
       ])
     : { slope: null, r2: null, sdPop: null };
+  const bucketStart = new Date(row.bucket_start);
+  const bucketDays = Math.round(
+    (utcBucketEnd(bucketStart, granularity).getTime() - bucketStart.getTime()) /
+      DAY_MS,
+  );
+  const hasTrend = isTrendWindowSufficient(
+    {
+      days: Number(row.days),
+      spanDays: Math.round(
+        (new Date(row.last_day).getTime() - new Date(row.first_day).getTime()) /
+          DAY_MS,
+      ),
+    },
+    bucketDays,
+  );
   return {
-    bucketStart: new Date(row.bucket_start),
+    bucketStart,
     count,
     days: Number(row.days),
     dayMean,
@@ -574,8 +618,8 @@ function composeFoldedBucket(
     sumValue: sumY,
     // A single reading has no spread; STDDEV_POP of one value is 0.
     sd: count === 1 && accumulatorsComplete ? 0 : regression.sdPop,
-    slope: regression.slope,
-    r2: regression.r2,
+    slope: hasTrend ? regression.slope : null,
+    r2: hasTrend ? regression.r2 : null,
     sumX,
     sumXy,
     sumXx,
@@ -711,6 +755,8 @@ export async function readCanonicalRollupBuckets(opts: {
       CASE WHEN COUNT(c."sum_x") = COUNT(*) AND COUNT(c."sum_xy") = COUNT(*)
             AND COUNT(c."sum_xx") = COUNT(*) AND COUNT(c."sum_yy") = COUNT(*)
         THEN SUM(c."sum_yy") END::double precision           AS sum_yy,
+      MIN(c."bucket_start")                                  AS first_day,
+      MAX(c."bucket_start")                                  AS last_day,
       MAX(c."computed_at")                                   AS computed_at
     FROM canon c
     GROUP BY 1
@@ -720,7 +766,7 @@ export async function readCanonicalRollupBuckets(opts: {
   const toMs = to?.getTime() ?? null;
   const weighting = windowWeighting(type);
   return rows
-    .map((r) => composeFoldedBucket(r, weighting))
+    .map((r) => composeFoldedBucket(r, granularity, weighting))
     .filter((b) => {
       const start = b.bucketStart.getTime();
       if (start < fromMs) return false;

@@ -15,10 +15,11 @@
  * an equality on the leading type column, which turns a full pass over
  * the account into one bounded lookup per type.
  */
-import type { PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import type { MeasurementType } from "@/generated/prisma/client";
+import { ROLLUP_FOLD_WINDOW_MS } from "@/lib/rollups/measurement-rollups";
 
-/** v1.4.38 W-F — the single most recent reading per measurement
+/** v1.4.38 — the single most recent reading per measurement
  *  type, irrespective of age. One row per metric the user has ever
  *  touched; replaces the legacy unbounded `prisma.measurement.findMany`.
  *
@@ -29,19 +30,20 @@ import type { MeasurementType } from "@/generated/prisma/client";
  *  was still in the database. The all-time aggregate (`groupBy` on
  *  `measurements`) already proves the row exists; the row count is
  *  still bounded by `|measurementTypes|`, now because the query is
- *  driven FROM that list (v1.38.5) rather than grouped down to it. */
+ *  driven FROM that list (v1.38.5) rather than grouped down to it.
+ *  `since` drops a type whose latest reading is older than it. */
 export interface LatestEverRow {
   type: MeasurementType;
   value: number;
   measured_at: Date;
 }
 
-/** v1.4.38 W-F — per-day measurement_rollup bucket feeding the dashboard
+/** v1.4.38 — per-day measurement_rollup bucket feeding the dashboard
  *  sparkline. At most `sparkDays` buckets per metric × N metrics —
  *  bounded by `sparkDays * |measurementTypes|` rather than the raw row
  *  count.
  *
- *  v1.4.39 W-SUM — `sum_value` rides along so the cumulative tile
+ *  v1.4.39 — `sum_value` rides along so the cumulative tile
  *  (ACTIVITY_STEPS) renders the daily SUM rather than the per-bucket
  *  MEAN. Spot metrics ignore the column; cumulative tiles fall back to
  *  `mean * count` when the legacy NULL hits (boot-backfill convergence
@@ -90,7 +92,11 @@ export function readLatestEver(
   db: PrismaClient,
   userId: string,
   measurementTypes: readonly MeasurementType[],
+  since: Date | null = null,
 ): Promise<LatestEverRow[]> {
+  const floor = since
+    ? Prisma.sql`AND m."measured_at" >= ${since}`
+    : Prisma.empty;
   return db.$queryRaw<LatestEverRow[]>`
     SELECT
       mt."type"                                  AS type,
@@ -105,6 +111,7 @@ export function readLatestEver(
       WHERE m."user_id" = ${userId}
         AND m."type" = mt."type"
         AND m."deleted_at" IS NULL
+        ${floor}
       ORDER BY m."measured_at" DESC
       LIMIT 1
     ) l
@@ -158,4 +165,129 @@ export function readSparkBuckets(
     WHERE rn <= ${sparkDays}
     ORDER BY type, bucket_start ASC
   `;
+}
+
+/** One metric's all-time reading count, for a type that has any. */
+export interface AllTimeCountRow {
+  type: MeasurementType;
+  count: number;
+}
+
+/**
+ * The first UTC day the DAY rollups are trusted to hold in full: one day
+ * inside the fold window. Every fold that ever ran for the account began at
+ * or before it (its window was anchored on an earlier `now`), and the write
+ * hooks keep every later day current.
+ */
+export function allTimeRollupBoundary(now: Date): Date {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const start = now.getTime() - ROLLUP_FOLD_WINDOW_MS;
+  return new Date(Math.floor(start / DAY_MS) * DAY_MS + DAY_MS);
+}
+
+/**
+ * Total live readings per measurement type, all time.
+ *
+ * Counting them on `measurements` reads one index entry per reading: on an
+ * account with a watch that is millions of entries per request, two to four
+ * seconds whenever they are not in memory, which is the dashboard's slowest
+ * read by far. The DAY rollups already carry a count per (type, day, source)
+ * — every live reading of the day, every source — so the sum of a type's DAY
+ * buckets is its count over the days they cover. Readings before the fold
+ * window, which the fold never buckets, are counted live; that range is a
+ * small, bounded index slice. A type with no DAY bucket at all (not folded
+ * yet) is counted live in full, exactly as before. Types with no readings
+ * are absent.
+ */
+export async function readAllTimeCounts(
+  db: PrismaClient,
+  userId: string,
+  measurementTypes: readonly MeasurementType[],
+  now: Date = new Date(),
+): Promise<AllTimeCountRow[]> {
+  const boundary = allTimeRollupBoundary(now);
+  const rows = await db.$queryRaw<
+    Array<{ type: MeasurementType; count: number }>
+  >`
+    SELECT wanted."type" AS type,
+      (CASE
+        WHEN EXISTS (
+          SELECT 1 FROM measurement_rollups r
+          WHERE r."user_id" = ${userId}
+            AND r."type" = wanted."type"
+            AND r."granularity" = 'DAY'
+        )
+        THEN COALESCE((
+          SELECT SUM(r."count") FROM measurement_rollups r
+          WHERE r."user_id" = ${userId}
+            AND r."type" = wanted."type"
+            AND r."granularity" = 'DAY'
+            AND r."bucket_start" >= ${boundary}
+        ), 0) + (
+          SELECT COUNT(*) FROM measurements m
+          WHERE m."user_id" = ${userId}
+            AND m."type" = wanted."type"
+            AND m."deleted_at" IS NULL
+            AND m."measured_at" < ${boundary}
+        )
+        ELSE (
+          SELECT COUNT(*) FROM measurements m
+          WHERE m."user_id" = ${userId}
+            AND m."type" = wanted."type"
+            AND m."deleted_at" IS NULL
+        )
+      END)::int AS count
+    FROM unnest(${[...measurementTypes]}::"measurement_type"[]) AS wanted("type")
+    ORDER BY wanted."type"
+  `;
+  return rows.filter((row) => row.count > 0);
+}
+
+/**
+ * The local days in `[since, now]` that hold at least one live reading, as
+ * `YYYY-MM-DD` keys in `timeZone`: the measurement half of the streak.
+ *
+ * One existence probe per local day against `(user_id, measured_at)`, each
+ * stopping at its first row, instead of a `DISTINCT` over a year of readings
+ * (tens of thousands of rows on an account with a watch). The DAY rollups
+ * cannot answer this: their buckets are UTC days, and the streak counts the
+ * person's own days.
+ *
+ * `measured_at` is a naive UTC timestamp, so a local day's bounds are its
+ * local midnights read in `timeZone` and taken back to UTC. The read this
+ * replaced shifted the column with a single `AT TIME ZONE`, which treats the
+ * UTC value as local time and moves it the wrong way: in Berlin a reading at
+ * 23:30 UTC landed on the day before instead of the day after.
+ *
+ * `since` and `now` arrive the same way, as offset-free UTC strings, so they
+ * are read as UTC (`::timestamp AT TIME ZONE 'UTC'`) before they move into
+ * `timeZone`. A bare `::timestamptz` read them in the session zone: outside
+ * a UTC session the series ended a day early and today's reading fell out of
+ * the streak.
+ */
+export async function readActivityDayKeys(
+  db: PrismaClient,
+  userId: string,
+  timeZone: string,
+  since: Date,
+  now: Date,
+): Promise<string[]> {
+  const rows = await db.$queryRaw<Array<{ day_key: string }>>`
+    SELECT to_char(d, 'YYYY-MM-DD') AS day_key
+    FROM generate_series(
+      ((${since}::timestamp AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone})::date,
+      ((${now}::timestamp AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone})::date,
+      INTERVAL '1 day'
+    ) AS d
+    WHERE EXISTS (
+      SELECT 1
+      FROM measurements m
+      WHERE m."user_id" = ${userId}
+        AND m."deleted_at" IS NULL
+        AND m."measured_at" >= (d::timestamp AT TIME ZONE ${timeZone}) AT TIME ZONE 'UTC'
+        AND m."measured_at" <  ((d + INTERVAL '1 day')::timestamp AT TIME ZONE ${timeZone}) AT TIME ZONE 'UTC'
+    )
+    ORDER BY d
+  `;
+  return rows.map((row) => row.day_key);
 }

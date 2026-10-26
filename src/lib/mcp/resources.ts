@@ -45,6 +45,7 @@ import { getNutrients, NUTRIENT_LABELS } from "@/lib/mcp/nutrients-read";
 import { metricStatusDiscoveryRows } from "@/lib/mcp/rich-reads";
 import { summariseForVisit } from "./doctor-visit-summary";
 import type { McpAuthContext } from "./auth";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 export interface McpResourceDefinition {
   name: string;
@@ -195,13 +196,13 @@ export const MCP_RESOURCES: McpResourceDefinition[] = [
       const medications = await prisma.medication.findMany({
         where: { userId: ctx.userId },
         include: {
-          schedules: true,
+          schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
           courses: {
             select: { startsOn: true, endsOn: true },
-            orderBy: { startsOn: "asc" },
+            orderBy: [{ startsOn: "asc" }, { id: "asc" }],
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
       annotate({
         action: { name: "mcp.resource.read" },
@@ -523,7 +524,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResourceTemplateDefinition[] = [
     uriTemplate: "healthlog://lab/{analyte}",
     title: "Lab analyte readings",
     description:
-      'The user\'s recent readings for one named lab analyte (e.g. healthlog://lab/LDL) over the last 12 months — value, unit, reference range, and in-range/below/above status per reading. Same read get_labs serves. Returns { present: false } when no readings exist for that analyte. Returns { present: false, reason: "module_disabled" } when its module is switched off.',
+      'The user\'s recent readings for one named lab analyte (e.g. healthlog://lab/LDL) over the whole record — the latest value, unit, reference range, and in-range/below/above status, with a summarised history of the earlier readings. Same read get_labs serves. Returns { present: false } when no readings exist for that analyte. Returns { present: false, reason: "module_disabled" } when its module is switched off.',
     mimeType: "application/json",
     complete: { analyte: completeAnalyte },
     async list(ctx) {
@@ -567,7 +568,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResourceTemplateDefinition[] = [
       const meds = await prisma.medication.findMany({
         where: { userId: ctx.userId },
         select: { id: true, name: true, dose: true },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: 200,
       });
       return meds.map((m) => ({
@@ -585,7 +586,7 @@ export const MCP_RESOURCE_TEMPLATES: McpResourceTemplateDefinition[] = [
       // never another tenant's row.
       const med = await prisma.medication.findFirst({
         where: { id, userId: ctx.userId },
-        include: { schedules: true },
+        include: { schedules: { orderBy: MEDICATION_SCHEDULE_ORDER } },
       });
       annotate({
         action: { name: "mcp.resource.read" },

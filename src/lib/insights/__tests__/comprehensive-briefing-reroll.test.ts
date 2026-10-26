@@ -1,5 +1,5 @@
 /**
- * v1.18.7 (MEDIUM-3) — daily-briefing phrasing re-roll on unchanged data.
+ * v1.18.7 — daily-briefing phrasing re-roll on unchanged data.
  *
  * The content-hash gate keeps the FINDINGS byte-stable when the snapshot is
  * unchanged, but the daily-briefing PARAGRAPH is re-rolled at most once per
@@ -29,7 +29,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -98,6 +98,13 @@ import { hashInsightSnapshot } from "../snapshot-hash";
 import { compactSections } from "@/lib/ai/prompts/compact-sections";
 import { featuresInReaderUnits } from "../features-units";
 import { DEFAULT_UNIT_PREFERENCES } from "@/lib/measurements/display-transform";
+import {
+  openInsightsCachedText,
+  sealInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
+
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
 
 const FEATURES = { weight: { count: 12, latest: 81.4, mean30: 82.1 } };
 // Hashed as the prompt reads it: in the reader's units (defaults here).
@@ -139,7 +146,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: CACHED,
+      insightsCachedTextEncrypted: sealInsightsCachedText(CACHED),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
       insightsBriefingRerollDate: null, // never re-rolled today
@@ -155,6 +162,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", { locale: "de" });
@@ -171,12 +179,12 @@ describe("daily-briefing re-roll on unchanged data", () => {
     // The cache write swaps only the paragraph; findings + summary preserved.
     const write = userUpdate.mock.calls.find(
       (c) =>
-        (c[0] as { data: Record<string, unknown> }).data.insightsCachedText !==
-        undefined,
+        (c[0] as { data: Record<string, unknown> }).data
+          .insightsCachedTextEncrypted !== undefined,
     );
     expect(write).toBeTruthy();
     const data = (write![0] as { data: Record<string, unknown> }).data;
-    const stored = JSON.parse(data.insightsCachedText as string);
+    const stored = JSON.parse(openInsightsCachedText(data) as string);
     expect(stored.dailyBriefing.paragraph).toBe("Today's fresh phrasing.");
     expect(stored.dailyBriefing.keyFindings).toEqual([
       { headline: "BP steady", tone: "good" },
@@ -194,7 +202,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: CACHED,
+      insightsCachedTextEncrypted: sealInsightsCachedText(CACHED),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
       insightsBriefingRerollDate: todayKey, // already re-rolled today
@@ -210,7 +218,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: CACHED,
+      insightsCachedTextEncrypted: sealInsightsCachedText(CACHED),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
       insightsBriefingRerollDate: null,
@@ -219,6 +227,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
       result: { content: "not json at all", tokensUsed: 5, model: "m" },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", { locale: "de" });
@@ -237,7 +246,7 @@ describe("daily-briefing re-roll on unchanged data", () => {
       userUpdate.mock.calls.some(
         (c) =>
           (c[0] as { data: Record<string, unknown> }).data
-            .insightsCachedText !== undefined,
+            .insightsCachedTextEncrypted !== undefined,
       ),
     ).toBe(false);
   });

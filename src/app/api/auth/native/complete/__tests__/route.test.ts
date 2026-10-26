@@ -20,7 +20,6 @@ vi.mock("@/lib/rate-limit", () => ({
 const validateSessionWithCreatedAt = vi.fn();
 vi.mock("@/lib/auth/session", () => ({
   validateSessionWithCreatedAt: (v: unknown) => validateSessionWithCreatedAt(v),
-  SESSION_COOKIE_NAME: "healthlog_session",
 }));
 
 // Keep the real shared core (buildHandoffCallbackUrl is used by
@@ -45,6 +44,7 @@ import { GET } from "../route";
 import { checkAuthSurfaceRateLimit } from "@/lib/rate-limit";
 import { mintNativeHandoff } from "@/lib/auth/native-handoff";
 import { prisma } from "@/lib/db";
+import { fixtureSessionSecret } from "@/__tests__/helpers/session-secret";
 import {
   NATIVE_HANDOFF_STATE_COOKIE,
   encodeNativeHandoffState,
@@ -71,7 +71,7 @@ function makeRequest(opts: {
     );
   }
   if (opts.withSession !== false) {
-    r.cookies.set("healthlog_session", "hls_sessionsecret");
+    r.cookies.set("healthlog_session", fixtureSessionSecret());
   }
   return r;
 }

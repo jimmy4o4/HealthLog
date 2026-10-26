@@ -23,9 +23,10 @@ import { Button } from "@/components/ui/button";
 import { reorderById } from "@/lib/insights-layout-reorder";
 import { prefersReducedMotion } from "@/lib/charts/reduced-motion";
 import { useTranslations } from "@/lib/i18n/context";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
- * v1.18.6 (W8 / MOD-03) — generic, controlled reorder list shared by the
+ * v1.18.6 — generic, controlled reorder list shared by the
  * Vorsorge / Illness / Labs settings pages.
  *
  * A single section (no active/inactive split — the secondary modules have a
@@ -97,9 +98,11 @@ export function ModuleOrderEditor({ items, onChange }: ModuleOrderEditorProps) {
 
   if (items.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
-        {t("moduleList.reorder.empty")}
-      </p>
+      <EmptyState
+        variant="plain"
+        size="compact"
+        title={t("moduleList.reorder.empty")}
+      />
     );
   }
 
@@ -107,7 +110,7 @@ export function ModuleOrderEditor({ items, onChange }: ModuleOrderEditorProps) {
     // `relative` anchors the sr-only drag-hint paragraph: `sr-only` is
     // absolutely positioned, and without a positioned ancestor its 1px box
     // lands below the list in DOCUMENT coordinates and makes the document
-    // itself scrollable (second scrollbar — UI-STANDARDS §9 one-scroll-floor).
+    // itself scrollable (second scrollbar — ui-standards.md §9 one-scroll-floor).
     <div className="relative space-y-2" data-slot="module-order-editor">
       <DndContext
         sensors={sensors}

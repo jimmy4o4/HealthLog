@@ -101,7 +101,7 @@ const batchEntrySchema = z
           "The id MUST be stable across app restarts. An object description or memory address (`<Class: 0x…>`, `0x12ab34cd`) is a new value on every launch, so it can never match its own earlier row; such an entry is `skipped` with reason `unstable_external_id` while the rest of the batch still lands.",
       ),
     externalSourceVersion: z.string().min(1).max(120).optional(),
-    // v1.8.6 W6 — optional per-entry source tag. Defaults to
+    // v1.8.6 — optional per-entry source tag. Defaults to
     // `APPLE_HEALTH` server-side when omitted, so legacy clients are
     // unchanged. Restricted to the `{APPLE_HEALTH, MANUAL}` subset of
     // `MeasurementSource`: `WITHINGS` / `IMPORT` are server-owned and
@@ -112,7 +112,7 @@ const batchEntrySchema = z
       .describe(
         "Source attribution for the row. Defaults to `APPLE_HEALTH` when omitted. Send `MANUAL` to tag rows the user entered by hand on-device (e.g. the standalone adopt-on-pair backfill). Part of the `(userId, type, source, externalId)` dedup key, so the same externalId under a different source is a distinct row. `WITHINGS` / `IMPORT` are not accepted here.",
       ),
-    // v1.4.25 W8c — optional device-type tag fed into the canonical
+    // v1.4.25 — optional device-type tag fed into the canonical
     // source picker's second axis. NULL is treated as `unknown`;
     // legacy iOS builds that don't ship the field continue to work.
     deviceType: deviceTypeEnum
@@ -137,7 +137,7 @@ const batchPayloadSchema = z
       .enum(["foreground", "background", "push", "manual", "backfill"])
       .optional()
       .describe(
-        'Diagnostic-only. Names what triggered this sync (foreground app open, background refresh, a push wake, or a user-initiated `manual` "Sync all" run, since v1.42). `backfill` (v1.43, ios #77; send it only when `GET /api/auth/me` reports `features.syncTriggerBackfill: true`, an older server refuses the whole batch with 422) names a history catch-up: it moves only `syncProgress` and the per-type `lastBackfillAt` in `GET /api/integrations/healthkit`, never `lastReceivedAt`, `lastTrigger`, `lastBackgroundAt`, `lastSyncTrigger`, `lastBackgroundSyncAt` or the sync checkpoint. Recorded on the ingest wide event and kept on the account as `lastSyncTrigger` — plus `lastBackgroundSyncAt` for a `background` or `push` trigger — both readable from `GET /api/integrations/healthkit`. Since v1.42 it is also recorded per measurement type the batch carried (Apple Health rows only), served as `lastReceivedAt` / `lastTrigger` / `lastNewSampleAt` on each `metricFreshness` entry of that read, plus `lastBackgroundAt` (since v1.42.4) for a `background` trigger. It does not affect dedup, attribution, or how any sample is stored. Optional and backward-compatible: pre-#66 clients omit it.',
+        'Diagnostic-only. Names what triggered this sync (foreground app open, background refresh, a push wake, or a user-initiated `manual` "Sync all" run, since v1.42). `backfill` (v1.43, ios #77; send it only when `GET /api/auth/me` reports `features.syncTriggerBackfill: true`, an older server refuses the whole batch with 422) names a history catch-up: it moves only `syncProgress` and the per-type `lastBackfillAt` in `GET /api/integrations/healthkit`, never `lastReceivedAt`, `lastTrigger`, `lastBackgroundAt`, `lastSyncTrigger`, `lastBackgroundSyncAt` or the sync checkpoint. Recorded on the ingest wide event and kept on the account as `lastSyncTrigger` — plus `lastBackgroundSyncAt` for a `background` or `push` trigger — both readable from `GET /api/integrations/healthkit`. Since v1.42 it is also recorded per measurement type the batch brought something new or changed for (Apple Health rows only), served as `lastReceivedAt` / `lastTrigger` / `lastNewSampleAt` on each `metricFreshness` entry of that read, plus `lastBackgroundAt` (since v1.42.4) for a `background` trigger. Since v1.45 a type the batch carried with duplicates only (an unchanged `stats:` re-post included) moves only its `lastSeenDuplicateAt`. It does not affect dedup, attribution, or how any sample is stored. Optional and backward-compatible: pre-#66 clients omit it.',
       ),
   })
   .meta({
@@ -290,6 +290,13 @@ export const measurementResource = z
       .optional()
       .describe("External-system dedup key; null for manual entries."),
     externalSourceVersion: z.string().nullable().optional(),
+    aggregationProvenance: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "Authority of an aggregate stored under a `stats:` identity: `HEALTHKIT_STATISTICS`, `EXPORT_XML_SOURCE_MAX` or `LEGACY_UNKNOWN`. Null on an ordinary sample row. Decode unknown values leniently.",
+      ),
     glucoseContext: z
       .string()
       .nullable()
@@ -325,14 +332,65 @@ export const measurementResource = z
       .describe("Soft-delete tombstone; null on a live row."),
     createdAt: isoDateTime().optional(),
     updatedAt: isoDateTime().optional(),
-    // Synthesised-row extras — present only on the collapsed day-sum mode.
-    dayKey: z.string().optional(),
-    sampleCount: z.number().int().optional(),
-    partial: z
+    appleHealthMirror: z
       .boolean()
       .optional()
       .describe(
-        "True on the one bucket whose day was cut off by the read cap, so its sum understates the real total.",
+        "Whether the HealthLog app writes this reading into Apple Health. Resolved by the server on every stored row: true for WITHINGS, IMPORT and MANUAL, for an EXTERNAL row whatever its account chose for the token that sent it, false otherwise. Absent on the synthesised list rows.",
+      ),
+    // Synthesised-row extras — present only on the collapsed day-sum mode.
+    dayKey: z.string().optional(),
+    sampleCount: z.number().int().optional(),
+    // Per-night extras — present only on `type=SLEEP_DURATION` list rows.
+    mainAsleepMinutes: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .optional()
+      .describe(
+        "The main night's own time asleep in minutes; null on a day of naps alone. On a sleep row `value` is the day's total, the main night plus its naps.",
+      ),
+    napCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Naps on the same wake day."),
+    napAsleepMinutes: z
+      .number()
+      .nonnegative()
+      .optional()
+      .describe("Time asleep across those naps, in minutes."),
+    sleepStages: z
+      .record(z.string(), z.number().nonnegative())
+      .optional()
+      .describe(
+        "The main night's minutes per stage (`IN_BED`, `ASLEEP`, `AWAKE`, `CORE`, `DEEP`, `REM`), each the union of that stage's spans; empty on a day of naps alone.",
+      ),
+    inBedMinutes: z
+      .number()
+      .nonnegative()
+      .nullable()
+      .optional()
+      .describe(
+        "The main night's time in bed in minutes, or null when no in-bed span was recorded.",
+      ),
+    awakeMinutes: z
+      .number()
+      .nonnegative()
+      .nullable()
+      .optional()
+      .describe(
+        "The main night's time awake in bed in minutes, or null when no awake span was recorded.",
+      ),
+    awakenings: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Awake spans between the main night's first and last time asleep.",
       ),
   })
   .meta({
@@ -366,6 +424,20 @@ const aggregatedMeasurementBucket = z
     value: z.number().describe("The bucket's aggregated value."),
     measuredAt: isoDateTime().describe("Bucket start."),
     count: z.number().int().nonnegative().optional(),
+    minValue: z
+      .number()
+      .nullable()
+      .optional()
+      .describe(
+        "The lowest reading in the bucket; absent on a summed (cumulative) type.",
+      ),
+    maxValue: z
+      .number()
+      .nullable()
+      .optional()
+      .describe(
+        "The highest reading in the bucket; absent on a summed (cumulative) type.",
+      ),
     unit: z.string().optional(),
   })
   .meta({
@@ -399,11 +471,6 @@ const listMeasurementsMeta = z
       .optional()
       .describe(
         "Rows discarded by the cross-source canonical picker on the day-collapse mode.",
-      ),
-    windowFrom: isoDateTime()
-      .optional()
-      .describe(
-        "Set on the per-night SLEEP_DURATION mode when the requested window was longer than 365 days: the instant the read started from. The window is a year ending at `to` (or now); page further back by moving `to`.",
       ),
   })
   .meta({ id: "ListMeasurementsMeta" });
@@ -440,7 +507,11 @@ const sleepSessionResource = z.object({
     .describe(
       "True when the source has no per-stage onset timestamps and the server synthesised a contiguous timeline in a fixed physiological order (WHOOP). The client renders the hypnogram but labels it an approximate layout and never recomputes. False for real-series sources (Apple Health / Withings / Fitbit).",
     ),
-  stages: z.record(sleepStageEnum, z.number().int().nonnegative()),
+  stages: z
+    .partialRecord(sleepStageEnum, z.number().int().nonnegative())
+    .describe(
+      "Minutes per stage. Only the stages the night recorded are present; an absent stage is not zero minutes, it was not measured.",
+    ),
   segments: z.array(sleepSegmentResource),
   sourceDiscrepancy: z
     .object({
@@ -476,7 +547,7 @@ const sleepNightResponse = z
   .meta({
     id: "SleepNightResource",
     description:
-      "One reconstructed sleep night: the main session's hypnogram segments + breakdown, plus same-wake-day naps surfaced separately.",
+      "One reconstructed sleep night: the main session's hypnogram segments + breakdown, plus same-wake-day naps surfaced separately. A session is a nap when it holds under three hours asleep centred between 10:00 and 20:00 local time; the main session is the longest session that is not a nap. A day whose only sleep is naps has `main: null` and its naps.",
   });
 
 // ── Sleep rhythm (sleep-debt + chronotype, v1.17.0) ──────────────────
@@ -747,8 +818,10 @@ const seriesBatchRowSchema = z.object({
 const seriesBatchResponse = z
   .object({
     series: z
-      .record(measurementTypeEnum, z.array(seriesBatchRowSchema))
-      .describe("Per-type daily series, keyed by MeasurementType."),
+      .partialRecord(measurementTypeEnum, z.array(seriesBatchRowSchema))
+      .describe(
+        "Per-type daily series, keyed by MeasurementType. Only the requested types are present.",
+      ),
   })
   .meta({
     id: "MeasurementsSeriesBatchResponse",
@@ -814,7 +887,8 @@ export const measurementPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Measurements"],
       summary: "List measurements",
       description:
-        "Filter by type + date range. Response is paged via offset/limit; default limit 100, hard cap 500.",
+        "Filter by type + date range. Response is paged via offset/limit; default limit 100.\n\n" +
+        "With `groupBy=day` on a cumulative type the rows are one sum per local day, and `limit` / `offset` page over those days; every returned day is complete, which is why `valueMin` / `valueMax` (a filter on single readings) are refused with 422 beside `groupBy=day`. `type=SLEEP_DURATION` returns one row per night, paged the same way over nights; every night of the page has a row, and `value` is the day's time asleep, the main night plus its naps (the same total `/api/measurements/series?kind=sleep` and the sleep score read), with the main night alone in `mainAsleepMinutes` and the naps in `napCount` / `napAsleepMinutes`; a day whose only sleep is daytime naps carries the naps' minutes and `mainAsleepMinutes: null`. Its `dayKey` is the same day `/api/sleep/night?date=` answers for. On both, `meta.total` counts the days or nights in the filtered window. A day-sum page takes `limit` as asked (up to the list's 5000); a sleep page holds at most 1000 nights, and `meta.limit` echoes the value applied.",
       requestParams: {
         query: listMeasurementsSchema,
       },
@@ -871,11 +945,15 @@ export const measurementPaths: NonNullable<ZodOpenApiObject["paths"]> = {
             "Created. A single resource for the object body; an array of resources, in request order, for the array body; for a named sleep-stage body, the stored row with `status: inserted`.",
           content: {
             "application/json": {
+              // The named-stage result first: it requires `status`, so a
+              // plain row falls through to `measurementResource`, while a
+              // union that tried the plain row first would read a named-stage
+              // answer as a plain row and drop its `status`.
               schema: dataEnvelope(
                 z.union([
+                  namedSleepStageResult,
                   measurementResource,
                   z.array(measurementResource),
-                  namedSleepStageResult,
                 ]),
                 "CreateMeasurementResponse",
               ),
@@ -1128,7 +1206,7 @@ export const measurementPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Measurements"],
       summary: "Reconstructed sleep night (hypnogram source, v1.11.5)",
       description:
-        "Returns one night's reconstructed sleep session for the phase-progression (hypnogram) view: the canonical source's stage segments (each with an absolute start/end), the per-stage breakdown, asleep/in-bed/awake totals, the mid-sleep awakenings count, and same-wake-day naps surfaced separately. Session-clustered, keyed by the local wake day, collapsed to one source via the sleep priority ladder so two sources never overlay. `date` omitted returns the most recent night. A read-only view over existing per-stage SLEEP_DURATION rows — no schema, no new measurement type.",
+        "Returns one night's reconstructed sleep session for the phase-progression (hypnogram) view: the canonical source's stage segments (each with an absolute start/end), the per-stage breakdown, asleep/in-bed/awake totals, the mid-sleep awakenings count, and same-wake-day naps surfaced separately. Session-clustered, keyed by the local wake day, collapsed to one source via the sleep priority ladder so two sources never overlay. `date` omitted returns the most recent night with a main sleep, however old; later days of naps alone are stepped over and stay reachable by `date`. An account that has only ever napped gets its latest day of naps. Any past date is answered, with no window cut. A read-only view over existing per-stage SLEEP_DURATION rows — no schema, no new measurement type.",
       requestParams: {
         query: z.object({
           date: z
@@ -1136,7 +1214,7 @@ export const measurementPaths: NonNullable<ZodOpenApiObject["paths"]> = {
             .regex(/^\d{4}-\d{2}-\d{2}$/)
             .optional()
             .describe(
-              "Wake-day key (YYYY-MM-DD). Omit for the most recent night.",
+              "Wake-day key (YYYY-MM-DD). Omit for the most recent night with a main sleep.",
             ),
         }),
       },

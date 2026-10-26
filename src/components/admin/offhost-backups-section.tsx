@@ -84,7 +84,7 @@ function freshnessLabel(
 }
 
 function AccountRow({ row }: { row: OffhostAccountRow }) {
-  const { t } = useTranslations();
+  const { t, locale } = useTranslations();
   const fmt = useFormatters();
 
   return (
@@ -128,7 +128,7 @@ function AccountRow({ row }: { row: OffhostAccountRow }) {
                 })
               : `${fmt.dateTime(row.lastSuccessAt)} · ${formatBytes(
                   row.sizeBytes,
-                  fmt,
+                  locale,
                 )} · ${t("admin.section.backups.offhost.age", {
                   hours: row.ageHours ?? 0,
                 })}`}
@@ -141,7 +141,7 @@ function AccountRow({ row }: { row: OffhostAccountRow }) {
 export function OffhostBackupsSection() {
   const { t } = useTranslations();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.adminBackups(),
     queryFn: async () => apiGet<BackupsList>("/api/admin/backups"),
   });
@@ -170,6 +170,8 @@ export function OffhostBackupsSection() {
         </div>
       ) : isError ? (
         <QueryErrorRow
+          inset
+          error={error}
           message={t("admin.section.backups.offhost.loadError")}
           onRetry={() => void refetch()}
         />

@@ -1,5 +1,5 @@
 /**
- * WH-1 — pins the dead-token verdict for WHOOP, the parity mirror of
+ * Pins the dead-token verdict for WHOOP, the parity mirror of
  * `fitbit/__tests__/sync-dead-token.test.ts`.
  *
  * `getValidToken`'s three null-return paths (credentials missing, refresh
@@ -32,6 +32,7 @@ const {
     whoopConnection: {
       findUnique: vi.fn(),
       update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     $transaction: vi.fn(),
   },
@@ -70,7 +71,7 @@ vi.mock("@/lib/rollups/measurement-rollups", () => ({
   collapseToTypeDayKeys: vi.fn(() => []),
   recomputeBucketsForMeasurement: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/insights/comprehensive-generate", () => ({
+vi.mock("@/lib/insights/status-invalidation", () => ({
   invalidateStatusInsightsForTypes: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/arrivals/measurement-emit", () => ({
@@ -83,9 +84,12 @@ vi.mock("@/lib/logging/context", () => ({
 vi.mock("../credentials", () => ({
   getUserWhoopCredentials: getUserWhoopCredentialsMock,
 }));
-vi.mock("../client", async (orig) => {
-  const actual = await orig<typeof import("../client")>();
-  return { ...actual, refreshAccessToken: refreshAccessTokenMock };
+vi.mock("../oauth", async (orig) => {
+  const actual = await orig<typeof import("../oauth")>();
+  return {
+    ...actual,
+    whoopOAuth: { ...actual.whoopOAuth, refresh: refreshAccessTokenMock },
+  };
 });
 
 // Each resource resolves the token first (the ledger-registration seam).
@@ -131,6 +135,9 @@ beforeEach(() => {
   isReauthRequiredMock.mockResolvedValue(false);
   prismaMock.whoopConnection.findUnique.mockReset();
   prismaMock.whoopConnection.update.mockReset().mockResolvedValue({});
+  prismaMock.whoopConnection.updateMany
+    .mockReset()
+    .mockResolvedValue({ count: 1 });
   getUserWhoopCredentialsMock.mockReset().mockResolvedValue(null);
   refreshAccessTokenMock.mockReset();
   // The advisory-lock transaction runs its callback against the same mock.

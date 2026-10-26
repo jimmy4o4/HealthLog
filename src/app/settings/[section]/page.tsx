@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import {
   SETTINGS_SECTION_SLUGS,
   isSettingsSectionSlug,
-} from "@/components/settings/section-slugs";
+} from "@/lib/settings/section-slugs";
 import { SettingsShell } from "@/components/settings/settings-shell";
 import {
   SettingsSectionLoader,
@@ -44,7 +44,7 @@ export default async function SettingsSectionPage({ params }: PageProps) {
   }
 
   // Each section is its own chunk (see `SettingsSectionLoader`), so the route
-  // ships the one it shows rather than all twenty-one. Integrations is the
+  // ships the one it shows rather than all of them. Integrations is the
   // one section that needs a server-resolved value: the OAuth callback URL
   // each provider registers, read from the runtime env here, per request,
   // because a `NEXT_PUBLIC_*` read inside a client module is inlined at build

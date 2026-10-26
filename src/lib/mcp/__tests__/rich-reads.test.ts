@@ -42,7 +42,7 @@ import {
   getLabHistory,
   resolveRichMetric,
   MCP_METRIC_STATUS_DISCOVERY,
-  LOCALISED_METRIC_NAME_COLLISIONS,
+  localisedMetricNameCollisions,
   metricStatusDiscoveryRows,
 } from "../rich-reads";
 import { locales } from "@/lib/i18n/config";
@@ -145,7 +145,7 @@ describe("resolveRichMetric", () => {
     }
   });
 
-  // v1.30.4 (C2) — the signal registry's `surfaces.mcp` flag is documented as
+  // v1.30.4 — the signal registry's `surfaces.mcp` flag is documented as
   // the SINGLE source of truth for MCP exposure, but `resolveRichMetric`'s
   // metric-status-registry path (exact id / display-name match) used to
   // resolve an id regardless of that flag. `AVERAGE_HEART_RATE` /
@@ -292,7 +292,7 @@ describe("resolveRichMetric — localised metric names", () => {
   // the set is empty and pinned empty: a NEW collision fails here instead of
   // silently resolving to whichever entry happened to be built first.
   it("refuses a word two different metrics claim, and only those words", () => {
-    expect([...LOCALISED_METRIC_NAME_COLLISIONS].sort()).toEqual([]);
+    expect([...localisedMetricNameCollisions()].sort()).toEqual([]);
   });
 
   // The property, not a sample: over every metric and every shipped locale,
@@ -652,6 +652,58 @@ describe("detect_changepoints", () => {
     expect(res.present).toBe(false);
     expect(res.reason).toBe("no_changepoint");
     expect(res.bucketsAnalysed).toBe(12);
+  });
+
+  it("applies the metric floors and rejects a drift, as the insights scan does", async () => {
+    const days = (n: number) =>
+      Array.from(
+        { length: n },
+        (_, i) => `2026-03-${String(i + 1).padStart(2, "0")}`,
+      );
+    // A clean 0.6 kg step: many deviations of its own noise, but below the
+    // 1 kg a weight change has to reach.
+    vi.mocked(readBestGranularityRollups).mockResolvedValueOnce({
+      granularity: "DAY",
+      rows: days(12).map((d, i) =>
+        row(d, (i < 6 ? 80 : 80.6) + (i % 2) * 0.05),
+      ),
+    });
+    const small = await detectChangepoints(USER, { metric: "weight" });
+    expect(small.present).toBe(false);
+    expect(small.reason).toBe("no_changepoint");
+    // A steady climb of 1 kg a day: two halves with different means, but a
+    // straight line explains it, so it is a drift and not a dated shift.
+    vi.mocked(readBestGranularityRollups).mockResolvedValueOnce({
+      granularity: "DAY",
+      rows: days(20).map((d, i) => row(d, 80 + i)),
+    });
+    const drift = await detectChangepoints(USER, { metric: "weight" });
+    expect(drift.present).toBe(false);
+    expect(drift.reason).toBe("no_changepoint");
+  });
+
+  it("lists more than one shift with the same bar on each side", async () => {
+    const values = [
+      ...Array.from({ length: 10 }, (_, i) => 70 + (i % 2) * 0.2),
+      ...Array.from({ length: 10 }, (_, i) => 90 + (i % 2) * 0.2),
+      ...Array.from({ length: 10 }, (_, i) => 95 + (i % 2) * 0.2),
+    ];
+    vi.mocked(readBestGranularityRollups).mockResolvedValueOnce({
+      granularity: "DAY",
+      rows: values.map((v, i) =>
+        row(new Date(Date.UTC(2026, 2, 1 + i)).toISOString(), v),
+      ),
+    });
+    const res = await detectChangepoints(USER, { metric: "weight" });
+    expect(res.present).toBe(true);
+    expect(res.changepoints?.map((cp) => cp.at)).toEqual([
+      new Date(Date.UTC(2026, 2, 11)).toISOString(),
+      new Date(Date.UTC(2026, 2, 21)).toISOString(),
+    ]);
+    expect(res.changepoints?.map((cp) => cp.direction)).toEqual([
+      "increase",
+      "increase",
+    ]);
   });
 
   it("honest-null when too few buckets exist", async () => {

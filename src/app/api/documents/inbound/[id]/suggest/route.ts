@@ -30,6 +30,7 @@ import {
   getClientIp,
   safeJson,
   sanitiseZodIssues,
+  isJsonContentType,
 } from "@/lib/api-response";
 import { AI_BUDGETS } from "@/lib/ai/ai-budgets";
 import { requireAiCapability } from "@/lib/ai/capabilities/gate";
@@ -73,7 +74,9 @@ type RouteParams = { params: Promise<{ id: string }> };
 
 export const POST = apiHandler(
   async (request: NextRequest, { params }: RouteParams) => {
-    const { user } = await requireAuth();
+    // Writes nothing (the draft goes back to the edit form), so the shared
+    // write ceiling does not count it; the document-AI bucket meters it.
+    const { user } = await requireAuth(undefined, { readOverPost: true });
 
     const gate = await requireModuleEnabled(user.id, "inboundDocuments");
     if (!gate.enabled) return gate.response;
@@ -92,7 +95,7 @@ export const POST = apiHandler(
 
     const background = prefersRespondAsync(request);
     const contentType = request.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
+    if (isJsonContentType(contentType)) {
       return handleTextSuggest(request, user.id, document, background);
     }
     return handleVisionSuggest(request, user.id, document, background);

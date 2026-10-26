@@ -1,5 +1,5 @@
 /**
- * v1.4.48 M3 — unit-level coverage for the atomic nonce-consumption
+ * v1.4.48 — unit-level coverage for the atomic nonce-consumption
  * branch.
  *
  * The integration tests in `tests/integration/withings-oauth*.test.ts`
@@ -20,12 +20,29 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
+// Single-use claiming is covered against Postgres in
+// tests/integration/oauth-callback-single-use.test.ts. Here the state row is
+// consumed for real against the mocked client, the claim always wins, and
+// every callback is the first and only one.
+vi.mock("@/lib/oauth/callback-claim", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/oauth/callback-claim")>()),
+  settleOAuthCallback: (_p: string, _s: string, run: () => Promise<unknown>) =>
+    run(),
+  duplicateOAuthCallback: async () => null,
+}));
+
+vi.mock("@/lib/integrations/oauth-kit/connect-target", () => ({
+  // The guardian arm is covered in its own test; here the record's own
+  // browser (or none) may finish, any other session may not.
+  verifyCallbackActor: async (record: string, session: string | null) =>
+    session === null || session === record
+      ? { ok: true, guardianUserId: null }
+      : { ok: false, reason: "cross_user" },
+}));
+
 vi.mock("@/lib/api-handler", () => ({
   apiHandler: <T extends (...args: unknown[]) => unknown>(fn: T) => fn,
-  requireAuth: vi.fn(async () => ({
-    user: { id: "user-1" },
-    session: { id: "sess-1" },
-  })),
+  AUTH_ERROR_CODES: { missing: "auth.missing" },
   HttpError: class HttpError extends Error {
     constructor(
       public status: number,
@@ -36,16 +53,27 @@ vi.mock("@/lib/api-handler", () => ({
   },
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/auth/session", () => ({
+  getSession: vi.fn(async () => ({
+    user: { id: "user-1" },
+    session: { id: "sess-1" },
+  })),
+}));
+
+vi.mock("@/lib/db", () => {
+  const prisma = {
     withingsOAuthState: {
       delete: vi.fn(),
     },
     withingsConnection: {
       upsert: vi.fn(),
+      findMany: vi.fn(async () => []),
     },
-  },
-}));
+    oAuthCallbackClaim: { createMany: vi.fn(async () => ({ count: 1 })) },
+    $transaction: async (run: (tx: unknown) => unknown) => run(prisma),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/auth/audit", () => ({ auditLog: vi.fn() }));
 
@@ -53,8 +81,8 @@ vi.mock("@/lib/crypto", () => ({
   encrypt: vi.fn((s: string) => `enc(${s})`),
 }));
 
-vi.mock("@/lib/withings/client", () => ({
-  exchangeCode: vi.fn(),
+vi.mock("@/lib/withings/oauth", () => ({
+  withingsOAuth: { exchange: vi.fn() },
   WITHINGS_OAUTH_SCOPE: "user.metrics,user.activity",
 }));
 
@@ -129,8 +157,8 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
       clientId: "cid",
       clientSecret: "csec",
     } as never);
-    const { exchangeCode } = await import("@/lib/withings/client");
-    vi.mocked(exchangeCode).mockResolvedValue({
+    const { withingsOAuth } = await import("@/lib/withings/oauth");
+    vi.mocked(withingsOAuth.exchange).mockResolvedValue({
       userid: "wuid",
       access_token: "atok",
       refresh_token: "rtok",
@@ -180,11 +208,48 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
     expect(annotateMock).toHaveBeenCalledWith({ meta: { reason: "replay" } });
   });
 
+  it("a Withings account another record already holds is refused with reason=already_linked, nothing stored", async () => {
+    vi.mocked(prisma.withingsOAuthState.delete).mockResolvedValueOnce({
+      nonce: NONCE,
+      userId: "user-1",
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      createdAt: new Date(),
+    } as never);
+    const { getUserWithingsCredentials } =
+      await import("@/lib/withings/credentials");
+    vi.mocked(getUserWithingsCredentials).mockResolvedValue({
+      clientId: "cid",
+      clientSecret: "csec",
+    } as never);
+    const { withingsOAuth } = await import("@/lib/withings/oauth");
+    vi.mocked(withingsOAuth.exchange).mockResolvedValue({
+      userid: "wuid",
+      access_token: "atok",
+      refresh_token: "rtok",
+      expires_in: 3600,
+    } as never);
+    vi.mocked(prisma.withingsConnection.findMany).mockResolvedValueOnce([
+      { userId: "guardian-1" },
+    ] as never);
+
+    const res = await GET(callbackRequest(NONCE, NONCE));
+
+    expect(res.headers.get("location")).toBe(
+      `${APP_URL}/settings/integrations?withings=error&reason=already_linked`,
+    );
+    expect(prisma.withingsConnection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { withingsUserId: "wuid", userId: { not: "user-1" } },
+      }),
+    );
+    expect(prisma.withingsConnection.upsert).not.toHaveBeenCalled();
+  });
+
   it("non-P2025 delete failure (e.g. connection drop) surfaces a Wide-Event warning carrying err.name only, and bounces to the error page", async () => {
-    // M7 — a real infra failure on the consume-delete must not be
+    // A real infra failure on the consume-delete must not be
     // silently swallowed.
     //
-    // v1.4.49 QA-2 — the warning template now interpolates `err.name`
+    // v1.4.49 — the warning template now interpolates `err.name`
     // rather than `${err}`. A Prisma error whose `message` echoes the
     // offending value (e.g. the raw nonce) into the wide-event log
     // would otherwise leak it.
@@ -235,7 +300,7 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
       expiredRow as never,
     );
 
-    const { exchangeCode } = await import("@/lib/withings/client");
+    const { withingsOAuth } = await import("@/lib/withings/oauth");
 
     const req = callbackRequest(NONCE, NONCE);
     const res = await GET(req);
@@ -245,7 +310,7 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
       "withings=error&reason=expired",
     );
     // Single atomic round-trip consumed the row; no token exchange.
-    expect(exchangeCode).not.toHaveBeenCalled();
+    expect(withingsOAuth.exchange).not.toHaveBeenCalled();
     expect(annotateMock).toHaveBeenCalledWith({ meta: { reason: "expired" } });
   });
 
@@ -260,7 +325,7 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
       crossUserRow as never,
     );
 
-    const { exchangeCode } = await import("@/lib/withings/client");
+    const { withingsOAuth } = await import("@/lib/withings/oauth");
 
     const req = callbackRequest(NONCE, NONCE);
     const res = await GET(req);
@@ -269,7 +334,7 @@ describe("withings/callback atomic nonce consumption (M3)", () => {
     expect(res.headers.get("location")).toContain(
       "withings=error&reason=cross_user",
     );
-    expect(exchangeCode).not.toHaveBeenCalled();
+    expect(withingsOAuth.exchange).not.toHaveBeenCalled();
     expect(annotateMock).toHaveBeenCalledWith({
       meta: { reason: "cross_user" },
     });

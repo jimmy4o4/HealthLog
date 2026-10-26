@@ -8,12 +8,14 @@
  *        occurredAt?, note?, episodeId? }`). `occurredAt` defaults to now and
  *        may not lie in the future beyond the shared five-minute skew;
  *        `episodeId` must name one of the record's own episodes that is still
- *        open. The note is encrypted at rest.
+ *        open or that ran over `occurredAt`. The note is encrypted at rest.
  *
  * Module-gated on the record (`illness.disabled`). `userId` comes from auth
  * and is never a body field.
  */
 import { NextRequest } from "next/server";
+
+import { listPage } from "@/lib/http/list-query";
 
 import { prisma } from "@/lib/db";
 import {
@@ -21,8 +23,8 @@ import {
   apiError,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
 } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { withIdempotency } from "@/lib/idempotency";
@@ -65,16 +67,18 @@ export const GET = apiHandler(async (request: NextRequest) => {
   if (q.from) occurredAt.gte = new Date(q.from);
   if (q.to) occurredAt.lte = new Date(q.to);
 
-  const rows = await prisma.symptomEvent.findMany({
-    where: {
-      userId: user.id,
-      ...(q.from || q.to ? { occurredAt } : {}),
-      ...(q.definitionId ? { definitionId: q.definitionId } : {}),
-      ...(q.episodeId ? { episodeId: q.episodeId } : {}),
-    },
-    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
-    take: q.limit,
-  });
+  const { rows, cap } = await listPage(q.limit, (take) =>
+    prisma.symptomEvent.findMany({
+      where: {
+        userId: user.id,
+        ...(q.from || q.to ? { occurredAt } : {}),
+        ...(q.definitionId ? { definitionId: q.definitionId } : {}),
+        ...(q.episodeId ? { episodeId: q.episodeId } : {}),
+      },
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      take,
+    }),
+  );
 
   annotate({
     action: { name: "symptoms.event.list" },
@@ -84,7 +88,10 @@ export const GET = apiHandler(async (request: NextRequest) => {
   return apiSuccess({
     events: rows.map(toSymptomEventDTO),
     limit: q.limit,
-    hasMore: rows.length === q.limit,
+    // Exact: true only when a row past this page exists. `rows.length ===
+    // limit` said true on a page that was exactly full, and the client then
+    // asked for a page that held nothing.
+    hasMore: cap.truncated,
   });
 });
 
@@ -100,16 +107,11 @@ async function postEvent(request: NextRequest): Promise<Response> {
   const gate = await requireIllnessEnabled(user.id);
   if (!gate.enabled) return gate.response;
 
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, symptomEventCreateSchema, {
     maxBytes: 16 * 1024,
+    errorCode: "symptoms.invalid",
   });
-  if (jsonError) return jsonError;
-  const parsed = symptomEventCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "symptoms.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
   const entry = parsed.data;
 
   // A hidden definition stays loggable from an older client's cached list;
@@ -124,8 +126,12 @@ async function postEvent(request: NextRequest): Promise<Response> {
     });
   }
 
-  if (entry.episodeId && !(await isLinkableEpisode(user.id, entry.episodeId))) {
-    return apiError("Episode is not open", 422, {
+  const occurredAt = entry.occurredAt ?? new Date();
+  if (
+    entry.episodeId &&
+    !(await isLinkableEpisode(user.id, entry.episodeId, occurredAt))
+  ) {
+    return apiError("Episode did not run at that time", 422, {
       errorCode: "symptoms.episode.notOpen",
     });
   }
@@ -134,7 +140,7 @@ async function postEvent(request: NextRequest): Promise<Response> {
     data: {
       userId: user.id,
       definitionId: definition.id,
-      occurredAt: entry.occurredAt ?? new Date(),
+      occurredAt,
       intensity: entry.intensity,
       noteEncrypted: entry.note ? encryptSymptomText(entry.note) : null,
       episodeId: entry.episodeId ?? null,

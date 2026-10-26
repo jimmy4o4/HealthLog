@@ -3,7 +3,7 @@
 import { DayLinkAt } from "@/components/day/day-link";
 import { useRecordCapabilities } from "@/hooks/use-record-capabilities";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Loader2,
@@ -48,7 +48,7 @@ import {
 import { apiGet } from "@/lib/api/api-fetch";
 
 /**
- * v1.4.36 W4a — Lite intake-history surface.
+ * v1.4.36 — Lite intake-history surface.
  *
  * The 886-LoC v1 was retired in v1.4.28 (commit 8c81af10) with the
  * note "no other consumer". The standalone medication-history page
@@ -103,7 +103,7 @@ interface IntakeListResponse {
 }
 
 /**
- * v1.5.5 F-1 C-2 — optional selection contract. When the wrapper
+ * v1.5.5 — optional selection contract. When the wrapper
  * passes `selection`, each row renders a leading `<Checkbox>` that
  * mirrors the selected set. Single mode hides the bulk-toolbar; multi
  * mode wires through to `<BulkDeleteToolbar>`. The contract lives on
@@ -121,7 +121,7 @@ interface IntakeHistoryListV2Props {
   /** Override the default page size — primarily for tests. */
   pageSize?: number;
   /**
-   * v1.5.5 F-1 C-2 — per-row Bearbeiten callback. When provided the
+   * v1.5.5 — per-row Bearbeiten callback. When provided the
    * row renders a kebab `<DropdownMenu>` with an Edit action. v1.5.6
    * G-1 §9 Q1: threads the whole `IntakeEvent` (not just the id) so
    * the edit dialog seeds from the row's real `takenAt` / `skipped`
@@ -129,12 +129,12 @@ interface IntakeHistoryListV2Props {
    */
   onEditIntake?: (event: IntakeEvent) => void;
   /**
-   * v1.5.5 F-1 C-2 — per-row Löschen callback. When provided the row
+   * v1.5.5 — per-row Löschen callback. When provided the row
    * renders a kebab `<DropdownMenu>` with a Delete action.
    */
   onDeleteIntake?: (eventId: string) => void;
   /**
-   * v1.5.5 F-1 C-2 — selection contract; see `IntakeHistoryListV2Selection`.
+   * v1.5.5 — selection contract; see `IntakeHistoryListV2Selection`.
    */
   selection?: IntakeHistoryListV2Selection;
   /**
@@ -151,7 +151,7 @@ type SortKey = IntakeHistorySortKey;
 
 const DEFAULT_PAGE_SIZE = 25;
 /**
- * v1.4.37 W3 — pinned to "completed" for the detail-page surface so
+ * v1.4.37 — pinned to "completed" for the detail-page surface so
  * planned / missed rows never leak into the table. Lifted to a
  * module-level constant so the queryKey stays stable across renders
  * and `setQueryData` in tests can pre-seed the same shape.
@@ -189,7 +189,7 @@ export function IntakeHistoryListV2({
   // to the stacked list after hydration.
   const isMobile = useIsMobile("md");
 
-  // v1.5.5 F-1 C-2 — the kebab + checkbox columns are gated by the
+  // v1.5.5 — the kebab + checkbox columns are gated by the
   // caller-passed callbacks. The list never assumes a wrapper; it
   // renders the extra columns only when explicitly opted-in.
   const showRowActions = Boolean(onEditIntake || onDeleteIntake);
@@ -201,28 +201,29 @@ export function IntakeHistoryListV2({
 
   const offset = page * pageSize;
 
-  const { data, isLoading, isError, refetch } = useQuery<IntakeListResponse>({
-    queryKey: queryKeys.medicationIntakeList(medicationId, {
-      sortBy,
-      sortDir,
-      limit: pageSize,
-      offset,
-      status: STATUS_FILTER,
-    }),
-    queryFn: async () => {
-      const params = new URLSearchParams({
+  const { data, isLoading, isError, error, refetch } =
+    useQuery<IntakeListResponse>({
+      queryKey: queryKeys.medicationIntakeList(medicationId, {
         sortBy,
         sortDir,
-        limit: String(pageSize),
-        offset: String(offset),
+        limit: pageSize,
+        offset,
         status: STATUS_FILTER,
-      });
-      return apiGet<IntakeListResponse>(
-        `/api/medications/${medicationId}/intake?${params.toString()}`,
-      );
-    },
-    enabled: isAuthenticated,
-  });
+      }),
+      queryFn: async () => {
+        const params = new URLSearchParams({
+          sortBy,
+          sortDir,
+          limit: String(pageSize),
+          offset: String(offset),
+          status: STATUS_FILTER,
+        });
+        return apiGet<IntakeListResponse>(
+          `/api/medications/${medicationId}/intake?${params.toString()}`,
+        );
+      },
+      enabled: isAuthenticated,
+    });
 
   const sourceLabels: Record<IntakeSourceValue, string> = useMemo(
     () =>
@@ -274,6 +275,7 @@ export function IntakeHistoryListV2({
           </div>
         ) : isError ? (
           <QueryErrorCard
+            error={error}
             title={t("medications.loadFailed")}
             onRetry={() => void refetch()}
           />
@@ -311,28 +313,20 @@ export function IntakeHistoryListV2({
                       />
                     )}
                     <TableHead>
-                      <button
-                        type="button"
+                      <SortHeaderButton
+                        label={t("medications.intakeHistoryColTaken")}
+                        action={t("medications.intakeHistorySortByTaken")}
+                        indicator={sortIndicator("takenAt")}
                         onClick={() => toggleSort("takenAt")}
-                        className="focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md font-medium hover:underline focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:min-h-9"
-                        aria-label={t("medications.intakeHistorySortByTaken")}
-                      >
-                        {t("medications.intakeHistoryColTaken")}
-                        {sortIndicator("takenAt")}
-                      </button>
+                      />
                     </TableHead>
                     <TableHead>
-                      <button
-                        type="button"
+                      <SortHeaderButton
+                        label={t("medications.intakeHistoryColScheduled")}
+                        action={t("medications.intakeHistorySortByScheduled")}
+                        indicator={sortIndicator("scheduledFor")}
                         onClick={() => toggleSort("scheduledFor")}
-                        className="focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md font-medium hover:underline focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:min-h-9"
-                        aria-label={t(
-                          "medications.intakeHistorySortByScheduled",
-                        )}
-                      >
-                        {t("medications.intakeHistoryColScheduled")}
-                        {sortIndicator("scheduledFor")}
-                      </button>
+                      />
                     </TableHead>
                     <TableHead>
                       {t("medications.intakeHistoryColStatus")}
@@ -350,7 +344,7 @@ export function IntakeHistoryListV2({
                 </TableHeader>
                 <TableBody>
                   {events.map((event) => {
-                    // v1.4.37 W3 — `status=completed` server filter
+                    // v1.4.37 — `status=completed` server filter
                     // guarantees that every row is either a taken or a
                     // skipped event. We derive the branch from the data
                     // itself rather than trusting a single `skipped`
@@ -661,5 +655,34 @@ function IntakeRowActions({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * A sortable column header: named by the column it shows, with the sort
+ * action added for screen readers (WCAG 2.5.3, the accessible name contains
+ * the visible text).
+ */
+function SortHeaderButton({
+  label,
+  action,
+  indicator,
+  onClick,
+}: {
+  label: string;
+  action: string;
+  indicator: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md font-medium hover:underline focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none sm:min-h-9"
+    >
+      {label}
+      <span className="sr-only">, {action}</span>
+      {indicator}
+    </button>
   );
 }

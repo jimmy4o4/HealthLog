@@ -30,9 +30,15 @@ import { prisma } from "@/lib/db";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { getClientIp } from "@/lib/api-response";
 import { annotate, getEvent } from "@/lib/logging/context";
-import { getGlobalBoss } from "@/lib/jobs/boss-instance";
+import { enqueueWhenBossReady } from "@/lib/jobs/boss-ready";
 import { afterMeasurementMutation } from "@/lib/rollups/after-measurement-mutation";
-import type { MeasurementType } from "@/generated/prisma/client";
+import type { MeasurementType, Prisma } from "@/generated/prisma/client";
+import { WHOOP_RECOVERY_FIELD_TAGS } from "./map";
+import {
+  WHOOP_RECOVERY_SYNC_QUEUE,
+  WHOOP_SLEEP_SYNC_QUEUE,
+  WHOOP_WORKOUT_SYNC_QUEUE,
+} from "@/lib/jobs/integration-poll-queues";
 
 /**
  * Maximum age of a webhook timestamp before it is treated as a replay. Five
@@ -47,9 +53,9 @@ const WHOOP_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
  * webhook (poll-only) so it is intentionally absent.
  */
 const WHOOP_RESOURCE_QUEUE: Record<string, string> = {
-  recovery: "whoop-recovery-sync",
-  sleep: "whoop-sleep-sync",
-  workout: "whoop-workout-sync",
+  recovery: WHOOP_RECOVERY_SYNC_QUEUE,
+  sleep: WHOOP_SLEEP_SYNC_QUEUE,
+  workout: WHOOP_WORKOUT_SYNC_QUEUE,
 };
 
 /**
@@ -119,6 +125,31 @@ export function verifyWhoopSignature(args: {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * The `externalId` match for the rows a `<resource>.deleted` event removes.
+ *
+ * Rows are keyed `<resource-id>:<field-tag>`, but the v2 recovery webhook
+ * carries the id of the associated SLEEP, and a recovery's rows are keyed off
+ * that same sleep id (`<sleep_id>:hrv_rmssd`, ...). The sleep's own rows share
+ * the prefix (`<sleep_id>:sleep_eff`, `<sleep_id>:seg:REM`, ...). A prefix
+ * match on a recovery deletion therefore took the whole night's sleep with it,
+ * and a sleep deletion took the recovery. Recovery names its exact ids; sleep
+ * keeps the prefix minus those ids; every other resource keeps the prefix.
+ */
+export function deletedResourceExternalIdFilter(
+  resource: string | undefined,
+  resourceId: string,
+): Prisma.StringFilter {
+  const recoveryIds = WHOOP_RECOVERY_FIELD_TAGS.map(
+    (tag) => `${resourceId}:${tag}`,
+  );
+  if (resource === "recovery") return { in: recoveryIds };
+  if (resource === "sleep") {
+    return { startsWith: `${resourceId}:`, notIn: recoveryIds };
+  }
+  return { startsWith: `${resourceId}:` };
+}
+
 interface WhoopWebhookBody {
   user_id?: number | string;
   id?: number | string;
@@ -148,9 +179,11 @@ export async function processWhoopNotification(
 
   const connection = await prisma.whoopConnection.findUnique({
     where: { whoopUserId },
-    select: { userId: true },
+    select: { userId: true, user: { select: { deletionRequestedAt: true } } },
   });
-  if (!connection) {
+  // A record pending deletion is frozen: its notifications sync nothing, and
+  // the answer is the one an unknown account gets, so WHOOP stops retrying.
+  if (!connection || connection.user?.deletionRequestedAt != null) {
     // Unknown / disconnected user. Return 200 so WHOOP stops retrying.
     annotate({ action: { name: "whoop.webhook.unknown_user" } });
     return NextResponse.json({ status: "unknown_user" }, { status: 200 });
@@ -160,11 +193,11 @@ export async function processWhoopNotification(
   const queue = WHOOP_RESOURCE_QUEUE[resource ?? ""];
 
   if (verb === "deleted") {
-    // Soft-delete every matching row for this user + WHOOP resource id.
-    // `externalId` is `<whoop-resource-uuid>:<field-tag>` so a `startsWith`
-    // match catches every measurement derived from the deleted resource.
+    // Soft-delete every row derived from the deleted resource for this user.
+    // See `deletedResourceExternalIdFilter` for why the match is per resource.
     if (resourceId) {
       const now = new Date();
+      const externalId = deletedResourceExternalIdFilter(resource, resourceId);
       // Collect the affected `(type, measuredAt)` pairs BEFORE the
       // soft-delete — the rollup tail below needs to know which
       // `(type, day)` buckets lose rows, and after the updateMany the
@@ -173,7 +206,7 @@ export async function processWhoopNotification(
         where: {
           userId: connection.userId,
           source: "WHOOP",
-          externalId: { startsWith: `${resourceId}:` },
+          externalId,
           deletedAt: null,
         },
         select: { type: true, measuredAt: true },
@@ -182,7 +215,7 @@ export async function processWhoopNotification(
         where: {
           userId: connection.userId,
           source: "WHOOP",
-          externalId: { startsWith: `${resourceId}:` },
+          externalId,
           deletedAt: null,
         },
         data: { deletedAt: now, syncVersion: { increment: 1 } },
@@ -233,15 +266,17 @@ export async function processWhoopNotification(
   // resource sync. The payload carries the resource id so the worker can do a
   // targeted fetch-by-id refresh — landing the exact record immediately rather
   // than waiting for the next overlap window to re-walk the collection.
-  const boss = getGlobalBoss();
-  if (!boss) {
+  // A delivery during boot is sent once the boss is up rather than dropped.
+  const outcome = await enqueueWhenBossReady("whoop-webhook", (boss) =>
+    boss.send(queue, {
+      userId: connection.userId,
+      resourceId: resourceId ?? undefined,
+    }),
+  );
+  if (outcome === "skipped") {
     getEvent()?.addWarning("whoop-webhook: pg-boss not initialised");
     return NextResponse.json({ status: "ok" }, { status: 200 });
   }
-  await boss.send(queue, {
-    userId: connection.userId,
-    resourceId: resourceId ?? undefined,
-  });
 
   annotate({
     action: { name: "whoop.webhook.enqueued" },

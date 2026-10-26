@@ -24,7 +24,7 @@ import {
 } from "@/lib/analytics/compliance";
 import type { DoseHistoryRow } from "@/lib/medications/scheduling/dose-history";
 import { annotate } from "@/lib/logging/context";
-import { courseStatusOn } from "@/lib/medications/course-window";
+import { courseStatusAt } from "@/lib/medications/course-window";
 import { isoWeekKey, tzDayKey, tzWeekday } from "../snapshot-series";
 import type { RegisterBlock } from "../series-condense";
 import type { CoachProvenance, CoachProvenanceMetric } from "../types";
@@ -58,11 +58,12 @@ function courseSummary(
   now: Date,
   userTz: string,
 ): { courses?: { takenInCourses: number; noCourseRunning: number } } {
-  const todayKey = tzDayKey(now, userTz);
   const several = meds.filter((m) => (m.courses?.length ?? 0) >= 2);
   if (several.length === 0) return {};
   const idle = several.filter((m) =>
-    (m.courses ?? []).every((c) => courseStatusOn(c, todayKey) !== "CURRENT"),
+    (m.courses ?? []).every(
+      (c) => courseStatusAt(c, now, userTz) !== "CURRENT",
+    ),
   ).length;
   return {
     courses: { takenInCourses: several.length, noCourseRunning: idle },
@@ -84,7 +85,7 @@ export function buildComplianceBlock(
     registerBlock,
   } = ctx;
   const ledgerRows: DoseHistoryRow[] = [];
-  // v1.17 W1c — the coach's headline adherence figure routes through the
+  // v1.17 — the coach's headline adherence figure routes through the
   // SAME `calculateCompliance(...).rate` ledger authority the medication
   // card shows (the ledger path, `medicationContext` supplied), so the
   // coach can never quote a denominator the card doesn't use. Per
@@ -184,7 +185,7 @@ export function buildComplianceBlock(
       }))
       .sort((a, b) => a.weekISO.localeCompare(b.weekISO));
     snapshot.compliance = {
-      // v1.17 W1c — headline adherence % from the SAME ledger authority
+      // v1.17 — headline adherence % from the SAME ledger authority
       // (`calculateCompliance(...).rate`) the medication card shows: the
       // dose-weighted pool of taken / (taken + missed) across the user's
       // scheduled medications, so the coach quotes the card's figure

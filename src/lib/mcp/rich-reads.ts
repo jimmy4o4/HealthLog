@@ -1,5 +1,5 @@
 /**
- * Phase 4 — deep-value MCP read tools (engine glue).
+ * Deep-value MCP read tools (engine glue).
  *
  * Four "bring data into relation" reads, each a THIN re-export of an existing
  * server-authoritative engine — no new statistics, no new business logic
@@ -63,6 +63,11 @@ import { sanitizeValueText } from "@/lib/ai/coach/labs-snapshot";
 import { scrubFenceMarkers } from "@/lib/ai/coach/data-fence";
 import { encodeOffsetCursor } from "@/lib/mcp/pagination";
 import type { CoachScopeWindow } from "@/lib/ai/coach/types";
+import {
+  detectLevelShifts,
+  levelShiftFloors,
+  type DetectLevelShiftOptions,
+} from "@/lib/insights/derived/changepoint";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -156,9 +161,9 @@ export interface RichMetric {
   /**
    * v1.30.4 (G4/HRV union) — a secondary `MeasurementType` to read instead of
    * `measurementType` when the user has ZERO rows of the primary type. HRV is
-   * the only metric that carries one today: Apple Health / Fitbit write SDNN
-   * (`HEART_RATE_VARIABILITY`); Oura / Polar / WHOOP write nightly RMSSD
-   * (`HRV_RMSSD`) only. Mirrors the app's HRV sub-page fallback
+   * the only metric that carries one today: Apple Health writes SDNN
+   * (`HEART_RATE_VARIABILITY`); Oura / Polar / WHOOP / Fitbit / Google Health
+   * write nightly RMSSD (`HRV_RMSSD`) only. Mirrors the app's HRV sub-page fallback
    * (`HealthKitMetricPage`'s `fallbackMeasurementType` prop) so a ring/strap
    * -only account resolves over MCP the same data it sees in the app instead
    * of a false `{ present: false }`.
@@ -215,7 +220,7 @@ const ALIASES: Record<string, string> = {
 function fromRegistry(id: string): RichMetric | null {
   const meta = getMetricStatusMeta(id);
   if (!meta) return null;
-  // v1.30.4 (C2) — the signal registry's `surfaces.mcp` flag is documented as
+  // v1.30.4 — the signal registry's `surfaces.mcp` flag is documented as
   // the SINGLE source of truth for MCP exposure, but the metric-status
   // registry (this function's own source) carries no `surfaces` facet of its
   // own, so an id the signal registry marks `mcp:false` (e.g.
@@ -546,16 +551,14 @@ export async function metricStatusDiscoveryRows(userId: string): Promise<
 //
 // Every OTHER measurement type is still entered, value-less, because
 // ambiguity has to be judged over the whole label space rather than over the
-// exposed slice of it. French and Italian once called body fat and fat mass
-// by one phrase ("masse grasse" / "massa grassa") while only one of the two
-// was exposed, so an index that knew about the exposed one alone would have
-// seen no collision and answered kilograms to someone who asked for a
-// percentage. Those labels are distinct now; the whole-space check stays so a
-// future bundle cannot reintroduce the trap unseen.
-//
-// The alias tables stay as they are and stay English: `resting_hr`, `spo2`,
-// `vo2max` are protocol slugs, not translations of anything.
-const LOCALISED_METRIC_INDEX = (() => {
+// exposed slice of it: French and Italian once named body fat and fat mass
+// alike while only one was exposed, which answered kilograms to a question
+// about a percentage. The alias tables stay English (`resting_hr`, `spo2`
+// are protocol slugs). Built on first use: the index reads every catalog.
+let metricIndex: ReturnType<typeof buildLocalisedMetricIndex> | undefined;
+const localisedMetricIndex = () =>
+  (metricIndex ??= buildLocalisedMetricIndex());
+function buildLocalisedMetricIndex() {
   const exposed = new Map<MeasurementType, RichMetric>();
   const claim = (metric: RichMetric | null) => {
     if (metric && !exposed.has(metric.measurementType)) {
@@ -574,7 +577,7 @@ const LOCALISED_METRIC_INDEX = (() => {
     value: exposed.get(type as MeasurementType) ?? null,
   }));
   return buildLocalisedLabelIndex(entries);
-})();
+}
 
 /**
  * Words two different measurement types claim in some bundle, and which
@@ -582,8 +585,9 @@ const LOCALISED_METRIC_INDEX = (() => {
  * is empty: a NEW member is a regression to look at rather than something to
  * resolve by coin flip.
  */
-export const LOCALISED_METRIC_NAME_COLLISIONS: ReadonlySet<string> =
-  LOCALISED_METRIC_INDEX.ambiguous;
+export function localisedMetricNameCollisions(): ReadonlySet<string> {
+  return localisedMetricIndex().ambiguous;
+}
 
 /**
  * Resolve a free-text metric name to a single scalar series. Forgiving for an
@@ -627,7 +631,7 @@ export function resolveRichMetric(input: string): RichMetric | null {
   // on PULSE_WAVE_VELOCITY, because "pulse-wave velocity" contains "puls".
   // A value-less hit (a metric this surface does not expose) falls through
   // rather than short-circuiting, so the English behaviour below is untouched.
-  const localised = LOCALISED_METRIC_INDEX.index.get(foldLabel(raw));
+  const localised = localisedMetricIndex().index.get(foldLabel(raw));
   if (localised) return localised;
 
   // 5. English display-name substring match (e.g. "heart-rate variability").
@@ -1150,79 +1154,30 @@ export interface ChangepointsResult {
 }
 
 const MIN_SEGMENT = 5;
-/** Mean shift must clear this many series standard deviations to fire. */
-const SHIFT_SD_FLOOR = 1.5;
 const MAX_CHANGEPOINTS = 5;
 
-function mean(xs: number[]): number {
-  return xs.reduce((s, x) => s + x, 0) / xs.length;
-}
-
-function stdDev(xs: number[]): number {
-  if (xs.length < 2) return 0;
-  const m = mean(xs);
-  const variance = xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1);
-  return Math.sqrt(variance);
-}
-
 /**
- * Minimal CUSUM binary-segmentation changepoint detector over a 1-D series.
- *
- * For a segment, the cumulative sum of mean-centred deviations peaks at the most
- * likely split. The split fires ONLY when the resulting mean shift clears a
- * conservative effect-size floor (≥ SHIFT_SD_FLOOR · series SD) and both halves
- * are at least MIN_SEGMENT long — a deliberately high bar so noise does not
- * register (honest-null over false positives). Accepted splits recurse on each
- * half; the result is capped to the strongest MAX_CHANGEPOINTS shifts by the
- * caller.
- *
- * Indices are into the original series. Pure / dependency-free.
+ * The bar the tool's segmentation runs at: the insights level-shift detector
+ * with the metric's floors, sized for buckets rather than days. A bucket may
+ * be a week or a month, so a segment of five buckets is enough to persist.
  */
-function cusumSegment(
-  values: number[],
-  lo: number,
-  hi: number,
-  out: Array<{ index: number; beforeMean: number; afterMean: number }>,
-): void {
-  const n = hi - lo;
-  if (n < 2 * MIN_SEGMENT) return;
-
-  const segment = values.slice(lo, hi);
-  const segMean = mean(segment);
-  const sd = stdDev(segment);
-  if (sd <= 0) return;
-
-  // Cumulative sum of mean-centred deviations; track the extreme position.
-  let cusum = 0;
-  let maxAbs = 0;
-  let splitRel = -1;
-  for (let i = 0; i < n; i++) {
-    cusum += segment[i] - segMean;
-    if (Math.abs(cusum) > maxAbs) {
-      maxAbs = Math.abs(cusum);
-      // The new regime starts at the bucket AFTER the accumulation peak.
-      splitRel = i + 1;
-    }
-  }
-  if (splitRel < MIN_SEGMENT || n - splitRel < MIN_SEGMENT) return;
-
-  const before = segment.slice(0, splitRel);
-  const after = segment.slice(splitRel);
-  const beforeMean = mean(before);
-  const afterMean = mean(after);
-  if (Math.abs(afterMean - beforeMean) < SHIFT_SD_FLOOR * sd) return;
-
-  out.push({ index: lo + splitRel, beforeMean, afterMean });
-  cusumSegment(values, lo, lo + splitRel, out);
-  cusumSegment(values, lo + splitRel, hi, out);
+function changepointOptions(type: MeasurementType): DetectLevelShiftOptions {
+  return {
+    minSeriesLength: 2 * MIN_SEGMENT,
+    minSegmentLength: MIN_SEGMENT,
+    minPersistDays: MIN_SEGMENT,
+    ...levelShiftFloors(type),
+  };
 }
 
 /**
  * Surface level shifts in a metric over the rollup tier. Reads the trailing
  * window's rollup buckets (`readBestGranularityRollups` — DAY for ≤90 days,
  * coarser for longer windows; the resolved granularity is reported) and runs
- * the minimal CUSUM above over the bucket means. High firing bar — returns
- * `{ present: false }` when too few buckets exist or no shift clears the floor.
+ * the insights level-shift detector over the bucket means by binary
+ * segmentation (`detectLevelShifts`): the same robust bar, per-metric floors
+ * and drift rejection as the health-status scan. Returns `{ present: false }`
+ * when too few buckets exist or no shift clears the bar.
  * Re-uses the rollup tier's already-computed bucket means; adds no new
  * persisted analytics.
  */
@@ -1292,9 +1247,15 @@ export async function detectChangepoints(
 
   const rows = rangeRows;
   const values = rows.map((r) => r.mean);
-  const found: Array<{ index: number; beforeMean: number; afterMean: number }> =
-    [];
-  cusumSegment(values, 0, values.length, found);
+  const found = detectLevelShifts(
+    values,
+    changepointOptions(metric.measurementType),
+  ).map((shift) => ({
+    // The new regime starts at the bucket after the before segment.
+    index: shift.breakIndex + 1,
+    beforeMean: shift.beforeMean,
+    afterMean: shift.afterMean,
+  }));
 
   if (found.length === 0) {
     return {

@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { Input } from "@/components/ui/input";
 import { useTranslations } from "@/lib/i18n/context";
 import { ApiError, apiPost } from "@/lib/api/api-fetch";
@@ -56,6 +56,22 @@ const REAUTH_METHODS: readonly ReauthMethod[] = [
  * none. On an account with a second factor the server leaves the password out,
  * so the dialog does not offer a choice that can only be refused.
  */
+/**
+ * The refusal says the account holds nothing it could re-prove here: an
+ * account that signs in through an identity provider only, with no password,
+ * passkey or second factor. A dialog would only offer it a password it does
+ * not have, so the callers say "sign in again" instead — a fresh sign-in is
+ * the proof such an account can give (`Session.createdAt` within five
+ * minutes).
+ */
+export function nothingToReprove(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    Array.isArray(err.meta?.methods) &&
+    err.meta.methods.length === 0
+  );
+}
+
 export function offeredReauthMethods(err: unknown): ReauthMethod[] | null {
   if (!(err instanceof ApiError)) return null;
   const raw = err.meta?.methods;
@@ -164,28 +180,19 @@ export function ExistingFactorReauthDialog({
         </AlertDialogHeader>
 
         {methods.length > 1 && (
-          <div
-            className="grid grid-cols-2 gap-2"
-            role="group"
-            aria-label={t("settings.passkeyReauth.methodLabel")}
-          >
-            {methods.map((m) => (
-              <Button
-                key={m}
-                type="button"
-                variant={method === m ? "secondary" : "outline"}
-                aria-pressed={method === m}
-                disabled={busy}
-                onClick={() => {
-                  setMethod(m);
-                  setSecret("");
-                  setAssertionError(null);
-                }}
-              >
-                {labels[m]}
-              </Button>
-            ))}
-          </div>
+          <Segmented
+            mode="toggle"
+            stretch
+            label={t("settings.passkeyReauth.methodLabel")}
+            value={method}
+            disabled={busy}
+            onChange={(m) => {
+              setMethod(m);
+              setSecret("");
+              setAssertionError(null);
+            }}
+            options={methods.map((m) => ({ value: m, label: labels[m] }))}
+          />
         )}
 
         {method === "password" && (

@@ -1,4 +1,17 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, onTestFinished } from "vitest";
+
+// The labs module is on unless a test switches it off.
+const { labsModule } = vi.hoisted(() => ({ labsModule: { on: true } }));
+vi.mock("@/lib/modules/gate", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/modules/gate")>();
+  return {
+    ...actual,
+    isModuleEnabled: async (
+      userId: string,
+      key: Parameters<typeof actual.isModuleEnabled>[1],
+    ) => (key === "labs" ? labsModule.on : actual.isModuleEnabled(userId, key)),
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -410,6 +423,25 @@ describe("extractFeatures — weight target direction (#1006)", () => {
 });
 
 describe("extractFeatures — v1.22 labs briefing block", () => {
+  it("leaves the labs out of the briefing with the labs module off", async () => {
+    labsModule.on = false;
+    onTestFinished(() => {
+      labsModule.on = true;
+    });
+    prismaMock.labResult.findMany.mockResolvedValue([
+      labRow({
+        analyte: "LDL",
+        value: 200,
+        referenceLow: 0,
+        referenceHigh: 130,
+        daysAgo: 5,
+      }),
+    ]);
+    const f = await extractFeatures("user-1", false);
+    expect(f.labs).toBeUndefined();
+    expect(prismaMock.labResult.findMany).not.toHaveBeenCalled();
+  });
+
   it("surfaces an abnormal (out-of-range) biomarker", async () => {
     prismaMock.labResult.findMany.mockResolvedValue([
       labRow({
@@ -557,6 +589,42 @@ describe("extractFeatures — v1.22 workouts block", () => {
     expect(f.workouts?.last7.totalDistanceKm).toBe(5);
     expect(f.workouts?.latest?.sportType).toBe("running");
   });
+
+  it("counts a session synced by two services once", async () => {
+    // The cross-source picker groups sessions into fixed five-minute slots
+    // of the epoch (`pick-canonical-workout-rows.ts`). With a start taken
+    // from the real clock, the 30 s gap between the two copies crossed a
+    // slot edge whenever the test ran in the last 30 s of a slot, and the
+    // pair counted twice. The clock is pinned to an instant well inside a
+    // slot, so the case tests the collapse rather than the time of day.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-22T12:02:00Z"));
+    const startedAt = new Date(Date.now() - 1 * DAY_MS);
+    prismaMock.workout.findMany.mockResolvedValue([
+      {
+        source: "APPLE_HEALTH",
+        sportType: "running",
+        startedAt,
+        durationSec: 1800,
+        totalDistanceM: 5000,
+      },
+      {
+        source: "STRAVA",
+        sportType: "running",
+        startedAt: new Date(startedAt.getTime() + 30_000),
+        durationSec: 1795,
+        totalDistanceM: 5010,
+      },
+    ]);
+    try {
+      const f = await extractFeatures("user-1", false);
+      expect(f.workouts?.last7.count).toBe(1);
+      expect(f.workouts?.last7.totalDurationMin).toBe(30);
+      expect(f.workouts?.last7.totalDistanceKm).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("extractFeatures — v1.22 integration blocks are briefing-scoped", () => {
@@ -680,5 +748,45 @@ describe("extractFeatures — a day of pulse is the mean of its hours' means", (
     expect(f.pulse?.allTimeMin).toBe(60);
     expect(f.pulse?.allTimeMax).toBe(150);
     expect(f.historicalComparison?.pulse?.current7dAvg).toBe(71.25);
+  });
+});
+
+describe("extractFeatures — blood-pressure spread", () => {
+  it("reports the same population spread the series API shows", async () => {
+    // 120 / 130 / 140 over the last three days: population SD 8.165, the
+    // sample SD (the old rule here) would be 10.
+    const day = 24 * 60 * 60 * 1000;
+    const rows = [120, 130, 140].map((value, i) => ({
+      type: "BLOOD_PRESSURE_SYS",
+      value,
+      measuredAt: new Date(Date.now() - (i + 1) * day),
+      sleepStage: null,
+      source: "MANUAL",
+      deviceType: null,
+    }));
+    prismaMock.measurement.findMany.mockResolvedValue(rows);
+
+    const features = await extractFeatures("user-1", false);
+
+    expect(features.bloodPressure?.sdSys30).toBe(8.2);
+  });
+});
+
+describe("extractFeatures — mood fallback window", () => {
+  it("reads the raw fallback over the rollup's five years, not one", async () => {
+    // Empty rollup tier: the raw fallback answers.
+    prismaMock.moodEntryRollup.findMany.mockResolvedValue([]);
+    await extractFeatures("user-mood-window", false, {
+      only: new Set(["mood"]),
+    });
+    const call = prismaMock.moodEntry.findMany.mock.calls.find(
+      ([args]) =>
+        (args as { where?: { moodLoggedAt?: unknown } })?.where?.moodLoggedAt,
+    );
+    expect(call).toBeDefined();
+    const since = (call![0] as { where: { moodLoggedAt: { gte: Date } } }).where
+      .moodLoggedAt.gte;
+    const years = (Date.now() - since.getTime()) / (365 * dayMs);
+    expect(years).toBeGreaterThan(4.9);
   });
 });

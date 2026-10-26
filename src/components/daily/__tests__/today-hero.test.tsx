@@ -9,6 +9,9 @@ import type { PriorityItem } from "@/lib/daily/priority-item";
 import type { TodayFact } from "@/lib/daily/today-overview";
 import { SCORE_VERSION } from "@/lib/analytics/score/types";
 import { DIGEST_AI_AVAILABLE } from "@/__tests__/helpers/ai-capability-fixtures";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 // The hero now wires the coach check-in card's keep / let-go taps through
 // `useCoachCheckinAction`, so it needs a QueryClient in the tree.
@@ -318,7 +321,7 @@ describe("<TodayHero>", () => {
   });
 
   // v1.29.1 — the v1.29.0 selected-score-ring cluster was removed from the web
-  // hero (Marc, live-use: uneven, wasted tile space). Only the main
+  // hero (live use: uneven, wasted tile space). Only the main
   // health-score ring paints now; the cluster's data-slots are gone.
   it("renders no score-ring cluster — only the health-score ring", () => {
     const html = render(<TodayHero digest={digest()} />);

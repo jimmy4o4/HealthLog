@@ -66,7 +66,7 @@ vi.mock("@/lib/cache/invalidate", () => ({ invalidateUserData: vi.fn() }));
 vi.mock("@/lib/rollups/mood-rollups", () => ({
   recomputeUserMoodRollups: vi.fn(),
 }));
-vi.mock("@/lib/rollups/medication-compliance-rollups", () => ({
+vi.mock("@/lib/medications/dose-day-refresh", () => ({
   recomputeUserMedicationCompliance: vi.fn(),
   MEDICATION_COMPLIANCE_BACKFILL_DAYS: 30,
 }));
@@ -139,7 +139,12 @@ function sourceClient() {
           deletedAt: null,
           createdAt: new Date("2026-07-19T00:00:00.000Z"),
           updatedAt: new Date("2026-07-19T00:00:00.000Z"),
-          symptomLinks: [{ symptom: { key: "custom:jaw_tension" } }],
+          symptomLinks: [
+            {
+              symptom: { key: "custom:jaw_tension" },
+              createdAt: new Date("2026-07-19T08:00:00.000Z"),
+            },
+          ],
         },
       ]),
     },
@@ -317,6 +322,7 @@ function sourceClient() {
     // Empty for the same reason as the sections above.
     documentConditionLink: { findMany: vi.fn().mockResolvedValue([]) },
     extractedFact: { findMany: vi.fn().mockResolvedValue([]) },
+    documentImportKey: { findMany: vi.fn().mockResolvedValue([]) },
     ecgRecording: { findMany: vi.fn().mockResolvedValue([]) },
     symptomDefinition: { findMany: vi.fn().mockResolvedValue([]) },
     lifeEvent: { findMany: vi.fn().mockResolvedValue([]) },
@@ -534,6 +540,38 @@ describe("backup round trip — export, wire schema, restore", () => {
   it("completes without the restore reporting a failure", async () => {
     const { res } = await roundTrip();
     expect(res.status).toBe(200);
+  });
+
+  // Files written before v1.44.0 can name the readable insights cache the
+  // release dropped (migration 0430), at the top level or among the account
+  // settings. The column is gone, so the restore must neither fail on the name
+  // nor try to write it.
+  it("restores a file that still names the dropped readable insights cache", async () => {
+    const { payload } = await buildFullBackupPayload(
+      sourceClient() as never,
+      OWNER,
+      { purpose: "disaster-recovery" },
+    );
+    const legacy: Record<string, unknown> = {
+      ...payload,
+      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      accountSettings: {
+        ...((payload.accountSettings as Record<string, unknown> | null) ?? {}),
+        insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      },
+    };
+
+    const { res, written } = await roundTrip({}, legacy);
+
+    expect(res.status).toBe(200);
+    for (const w of written) {
+      expect(
+        Object.keys(w.data),
+        `${w.model}.${w.op} must not write the dropped column`,
+      ).not.toContain("insightsCachedText");
+    }
+    // The rest of the file still lands.
+    expect(written.some((w) => w.model === "userHealthProfile")).toBe(true);
   });
 
   it("writes the durable self-context back with its ciphertext intact", async () => {
@@ -785,7 +823,7 @@ describe("backup round trip — export, wire schema, restore", () => {
         (w) =>
           w.model === "user" &&
           w.op === "update" &&
-          "insightsCachedText" in w.data,
+          "insightsCachedTextEncrypted" in w.data,
       );
       expect(
         userUpdate,
@@ -794,7 +832,7 @@ describe("backup round trip — export, wire schema, restore", () => {
       // The language tag is cleared with the text: an empty slot carries
       // no language, and the next write tags it afresh.
       expect(userUpdate!.data).toEqual({
-        insightsCachedText: null,
+        insightsCachedTextEncrypted: null,
         insightsCachedAt: null,
         insightsCachedLocale: null,
       });
@@ -830,7 +868,7 @@ describe("backup round trip — export, wire schema, restore", () => {
         (w) =>
           w.model === "user" &&
           w.op === "update" &&
-          "insightsCachedText" in w.data,
+          "insightsCachedTextEncrypted" in w.data,
       );
       expect(
         userUpdate,

@@ -50,7 +50,8 @@ vi.mock("@/lib/auth/audit", () => ({
   auditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/logging/context", () => ({
+vi.mock("@/lib/logging/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/logging/context")>()),
   annotate: vi.fn(),
 }));
 
@@ -58,9 +59,19 @@ vi.mock("@/lib/rollups/measurement-rollups", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/rollups/measurement-rollups")
   >("@/lib/rollups/measurement-rollups");
+  const perKey = vi.fn().mockResolvedValue(undefined);
   return {
     ...actual,
-    recomputeBucketsForMeasurement: vi.fn().mockResolvedValue(undefined),
+    recomputeBucketsForMeasurement: perKey,
+    // The keyed refold, observed as the per-key recomputes it stands for.
+    recomputeBucketsForKeys: vi.fn(
+      async (
+        userId: string,
+        keys: Array<{ type: string; measuredAt: Date }>,
+      ) => {
+        for (const k of keys) await perKey(userId, k.type, k.measuredAt);
+      },
+    ),
   };
 });
 
@@ -153,6 +164,23 @@ const mMeasurement = () =>
     createManyAndReturn: ReturnType<typeof vi.fn>;
     updateMany: ReturnType<typeof vi.fn>;
   };
+
+describe("POST /api/import/csv — strict query", () => {
+  it("refuses a misspelt dry-run flag instead of importing", async () => {
+    for (const query of ["dryrun=1", "dry_run=1", "dryRun=yes"]) {
+      const res = await POST(
+        new NextRequest(`http://localhost/api/import/csv?${query}`, {
+          method: "POST",
+          body: [HEADER, "WEIGHT,80,kg,2026-05-01T08:00:00Z,,,"].join("\n"),
+          headers: { "content-type": "text/csv" },
+        }),
+      );
+      expect(res.status).toBe(422);
+    }
+    expect(mMeasurement().createManyAndReturn).not.toHaveBeenCalled();
+    expect(checkRateLimit).not.toHaveBeenCalled();
+  });
+});
 
 describe("POST /api/import/csv — fatal header error", () => {
   it("returns 422 when a required column is missing", async () => {

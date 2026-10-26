@@ -132,7 +132,8 @@ export function MoodInsightsSections({
 } = {}) {
   const { t } = useTranslations();
 
-  const { data, isLoading, isPending, isError, refetch } = useMoodInsights();
+  const { data, isLoading, isPending, isError, error, refetch } =
+    useMoodInsights();
 
   // `isPending`, not `isLoading`: before the session resolves the read is
   // disabled rather than loading, and the frame must already be there.
@@ -161,7 +162,7 @@ export function MoodInsightsSections({
     // "rest" region (mirroring the loading convention above), rather than
     // stacking an identical row in all three regions down the page.
     return region === "rest" ? (
-      <QueryErrorRow onRetry={() => refetch()} />
+      <QueryErrorRow error={error} onRetry={() => refetch()} />
     ) : null;
   }
 
@@ -204,7 +205,8 @@ export function MoodInsightsSections({
         // v1.13.1 — match the canonical `gap-2` + `pb-1` heading-to-body
         // rhythm the other assessment cards use, so the heading sits tight
         // above its body instead of floating ~16-24 px above it.
-        className="animate-insight-in gap-2 py-3 md:py-4"
+        density="compact"
+        className="animate-insight-in"
       >
         <CardHeader>
           <TileHeader

@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W17b — Withings Activity sync.
+ * v1.4.25 — Withings Activity sync.
  *
  * Pulls daily aggregates from `POST /v2/measure?action=getactivity`
  * and writes one Measurement row per (date, metric). The webhook
@@ -38,18 +38,16 @@ import type { MeasurementType } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { canonicalDailyTimestamp } from "@/lib/measurements/consolidation-tz";
 import { shiftDateKey, userDayKey } from "@/lib/tz/format";
+import { daysWithOtherStepSource } from "@/lib/withings/other-step-source-days";
 import { resolveUserTimezone } from "@/lib/tz/resolver";
 import { getEvent } from "@/lib/logging/context";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getUnitForType } from "@/lib/validations/measurement";
 import { dropImplausibleMeasurements } from "@/lib/measurements/plausibility-gate";
-import {
-  collapseToTypeDayKeys,
-  recomputeBucketsForMeasurement,
-} from "@/lib/rollups/measurement-rollups";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/comprehensive-generate";
+import { afterMeasurementMutation } from "@/lib/rollups/after-measurement-mutation";
 
-import { hasActivityScope } from "./client";
+import { WITHINGS_MAX_PAGES, withingsNextOffset } from "./client";
+import { hasActivityScope } from "./oauth";
 import {
   WithingsApiError,
   classifyWithingsResponse,
@@ -66,6 +64,7 @@ import {
   recordSyncFailure,
   recordSyncSuccess,
 } from "@/lib/integrations/status";
+import { walkPages } from "@/lib/integrations/page-walk";
 
 const WITHINGS_MEASURE_URL = "https://wbsapi.withings.net/v2/measure";
 
@@ -76,6 +75,9 @@ const WITHINGS_MEASURE_URL = "https://wbsapi.withings.net/v2/measure";
  * Withings ingest path.
  */
 const ACTIVITY_BACKFILL_DAYS = 30;
+
+/** `brand` of a Getactivity day that came from outside Withings. */
+const WITHINGS_EXTERNAL_BRAND = 18;
 
 /**
  * Withings `getactivity` response shape — one entry per calendar day.
@@ -90,6 +92,13 @@ export interface WithingsActivityEntry {
   steps?: number;
   distance?: number; // metres
   calories?: number; // active kcal (NOT totalcalories)
+  /**
+   * Where the day came from: 1 for a Withings device or the Health Mate
+   * app's own tracker, 18 for "an external way" (Getactivity: "Value is 1
+   * for Withings and 18 for external"), i.e. data another app wrote into
+   * Health Mate, such as an Apple Health or Google Fit day.
+   */
+  brand?: number;
   // The fields below are not ingested today (see file header):
   elevation?: number;
   totalcalories?: number;
@@ -145,57 +154,51 @@ export async function fetchWithingsActivity(
     data_fields: "steps,distance,calories",
   };
 
-  const results: WithingsActivityEntry[] = [];
-  let offset = 0;
-  let pageCount = 0;
-  while (true) {
-    const params = new URLSearchParams({
-      ...baseParams,
-      offset: String(offset),
-    });
-    const pageStart = performance.now();
-    const res = await safeFetch(WITHINGS_MEASURE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: params.toString(),
-    });
-    const json = await res.json();
-    const verdict = classifyWithingsResponse(res.status, json);
-    getEvent()?.addExternalCall({
-      service: "withings",
-      method: `fetchWithingsActivity(page=${pageCount})`,
-      duration_ms: Math.round(performance.now() - pageStart),
-      status: res.status,
-      error: verdict.classification === "success" ? undefined : verdict.reason,
-    });
-    if (verdict.classification !== "success") {
-      throw new WithingsApiError({
-        verb: "activity",
-        classification: verdict.classification,
-        withingsStatus: verdict.withingsStatus,
-        reason: verdict.reason,
-        upstreamError: typeof json?.error === "string" ? json.error : undefined,
+  const walk = await walkPages<number, WithingsActivityEntry>(
+    "withings.activity",
+    WITHINGS_MAX_PAGES,
+    async (cursor, page) => {
+      const offset = cursor ?? 0;
+      const params = new URLSearchParams({
+        ...baseParams,
+        offset: String(offset),
       });
-    }
-
-    const body = json.body ?? {};
-    const activities: WithingsActivityEntry[] = body.activities ?? [];
-    for (const entry of activities) {
-      results.push(entry);
-    }
-
-    const hasMore = body.more === true || body.more === 1;
-    if (!hasMore) break;
-    const nextOffset = Number(body.offset);
-    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-    offset = nextOffset;
-    pageCount += 1;
-    if (pageCount > 1000) break;
-  }
-  return results;
+      const pageStart = performance.now();
+      const res = await safeFetch(WITHINGS_MEASURE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: params.toString(),
+      });
+      const json = await res.json();
+      const verdict = classifyWithingsResponse(res.status, json);
+      getEvent()?.addExternalCall({
+        service: "withings",
+        method: `fetchWithingsActivity(page=${page})`,
+        duration_ms: Math.round(performance.now() - pageStart),
+        status: res.status,
+        error:
+          verdict.classification === "success" ? undefined : verdict.reason,
+      });
+      if (verdict.classification !== "success") {
+        throw new WithingsApiError({
+          verb: "activity",
+          classification: verdict.classification,
+          withingsStatus: verdict.withingsStatus,
+          reason: verdict.reason,
+          upstreamError:
+            typeof json?.error === "string" ? json.error : undefined,
+        });
+      }
+      const body = json.body ?? {};
+      const activities: WithingsActivityEntry[] = body.activities ?? [];
+      return { items: activities, next: withingsNextOffset(body, offset) };
+    },
+    0,
+  );
+  return walk.items;
 }
 
 /**
@@ -281,7 +284,7 @@ export async function syncUserActivity(
       today,
     );
   } catch (err) {
-    // v1.4.43 W7-B3 — typed-classification path. The thrown
+    // v1.4.43 — typed-classification path. The thrown
     // `WithingsApiError` from `fetchWithingsActivity` carries the
     // verdict + `withingsStatus` directly; `recordWithingsSyncFailure`
     // routes it through `classifyError`, which falls back to the regex
@@ -330,7 +333,7 @@ export async function syncUserActivity(
   }
 
   let imported = 0;
-  // W-2 — a swallowed batch-write must not read as a clean sync. The catch
+  // A swallowed batch-write must not read as a clean sync. The catch
   // below sets this so the tail stamps success ONLY when the write landed; a
   // persistent write bug then accrues strikes instead of being reset by its
   // own success stamp every tick.
@@ -341,7 +344,7 @@ export async function syncUserActivity(
   // `source=rollup` fast-path otherwise misses Withings activity days.
   const touched: Array<{ type: MeasurementType; measuredAt: Date }> = [];
 
-  // v1.20.2 F3 — flatten (entry × field) into the concrete rows the sync
+  // v1.20.2 — flatten (entry × field) into the concrete rows the sync
   // wants to land, then batch the reads + writes. The pre-v1.20.2 shape
   // ran a per-(entry, field) `findFirst` + `update`/`create`, i.e.
   // ~entries × 3 × 2 round-trips (≈ 2,190 on a 365-day backfill). The
@@ -358,8 +361,31 @@ export async function syncUserActivity(
     externalId: string;
   }
   const collected: PlannedRow[] = [];
+  // A day Health Mate holds from another app is that app's data. When the
+  // app reaches HealthLog through its own integration (Apple Health, Health
+  // Connect, Google Health, a wearable), the WITHINGS import was a second
+  // copy under the wrong name, and on a day that copy was the only Withings
+  // row it could outrank a native source further down the ladder. When
+  // nothing else delivered steps that day, Health Mate is the account's only
+  // way in for them, so the day is kept.
+  const externalDates = entries
+    .filter((e) => e.date && e.brand === WITHINGS_EXTERNAL_BRAND)
+    .map((e) => e.date);
+  const duplicateDays = await daysWithOtherStepSource(
+    userId,
+    externalDates,
+    timeZone,
+  );
+  let external = 0;
   for (const entry of entries) {
     if (!entry.date) continue;
+    if (
+      entry.brand === WITHINGS_EXTERNAL_BRAND &&
+      duplicateDays.has(entry.date)
+    ) {
+      external++;
+      continue;
+    }
     // Local noon of the date in the user's zone: the instant reads the same
     // calendar day there. Noon UTC read as the next day from UTC+13 on
     // (Auckland in summer, Tonga, Samoa), so every daily total landed a day
@@ -379,6 +405,12 @@ export async function syncUserActivity(
         externalId: `withings:activity:${userId}:${entry.date}:${field}`,
       });
     }
+  }
+
+  if (external > 0) {
+    getEvent()?.addWarning(
+      `withings activity: skipped ${external} day(s) Health Mate holds from another app that syncs its own steps`,
+    );
   }
 
   // A daily-activity total the app's own band calls impossible (a step count
@@ -539,30 +571,14 @@ export async function syncUserActivity(
   // v1.4.39.1 — refresh the persistent rollup table for every distinct
   // (type, day) the sync touched. Collapsed so a multi-day Withings
   // catch-up costs at most ~N (type, day) recomputes.
-  try {
-    const keys = collapseToTypeDayKeys(touched);
-    for (const k of keys) {
-      await recomputeBucketsForMeasurement(userId, k.type, k.measuredAt);
-    }
+  // The shared tail: the rollups, the measurement read caches back to the
+  // oldest touched reading, and the cached assessments of the types.
+  await afterMeasurementMutation(userId, touched, {
+    source: "sync",
+    label: "withings activity",
+  });
 
-    // v1.8.0 — drop the per-metric assessment caches the synced types
-    // dirty (steps feed the general overview). Fire-and-forget.
-    invalidateStatusInsightsForTypes(
-      userId,
-      keys.map((k) => k.type),
-      { source: "sync" },
-    ).catch((err) => {
-      getEvent()?.addWarning(
-        `withings activity: status-insight invalidate failed for ${userId}: ${err}`,
-      );
-    });
-  } catch (err) {
-    getEvent()?.addWarning(
-      `withings activity: rollup recompute failed for ${userId}: ${err}`,
-    );
-  }
-
-  // W-2 — only a clean write stamps success. A swallowed batch-write left the
+  // Only a clean write stamps success. A swallowed batch-write left the
   // ledger honest via the transient failure recorded above.
   if (!writeFailed) {
     await recordSyncSuccess(userId, "withings", {

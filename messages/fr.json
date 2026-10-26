@@ -1,5 +1,6 @@
 {
   "common": {
+    "listCapped": "Seuls les {count} derniers sont affichés ; les entrées plus anciennes ne figurent pas ici.",
     "save": "Enregistrer",
     "conflictReloaded": "Rechargé depuis le serveur. Refais ta modification.",
     "cancel": "Annuler",
@@ -54,7 +55,10 @@
     "durationClockHours": "{time} h",
     "errorIdLabel": "ID d'erreur",
     "errorIdCopy": "Copier l'ID d'erreur",
-    "errorIdCopied": "ID d'erreur copié"
+    "errorIdCopied": "ID d'erreur copié",
+    "readThrottled": "Il y a trop de requêtes pour le moment, réessayez plus tard.",
+    "sessionEnded": "Votre session a expiré, reconnectez-vous pour continuer.",
+    "signIn": "Se connecter"
   },
   "apiErrors": {
     "measurement": {
@@ -171,6 +175,9 @@
           "failed": "L’étiquette n’a pas pu être lue. Essayez une photo plus nette."
         }
       }
+    },
+    "aiRuns": {
+      "readerBusy": "Le lecteur de documents est occupé par d'autres tâches. Réessayez dans une minute."
     }
   },
   "doctorReport": {
@@ -397,7 +404,42 @@
     "lifeSittingValue": "{hours} heures, déclaré",
     "lifeWork": "Travail",
     "lifeNightWork": "travail de nuit",
-    "lifeExposures": "expositions : {list}"
+    "lifeExposures": "expositions : {list}",
+    "workouts": {
+      "title": "Entraînements",
+      "summary": "{sessions} séances, {hours} h au total ; en moyenne {perWeek} séances et {minutesPerWeek} minutes par semaine.",
+      "colSport": "Sport",
+      "colSessions": "Séances",
+      "colTime": "Durée",
+      "colDistance": "Distance",
+      "colEnergy": "Énergie",
+      "colHeartRate": "FC moyenne",
+      "moreSports": "{count} autres sports sont inclus dans les totaux, sans être listés."
+    },
+    "medicationEffect": {
+      "title": "Changement autour du démarrage des médicaments",
+      "colMedication": "Médicament / mesure",
+      "colStart": "Début",
+      "colLevel": "Changement de niveau (IC 95 %)",
+      "colSlope": "Changement de tendance (IC 95 %)",
+      "colDays": "Jours avant / après",
+      "to": "à",
+      "week": "semaine",
+      "reasonNoStart": "Aucune date de début enregistrée",
+      "reasonBefore": "Trop peu de valeurs avant le démarrage",
+      "reasonAfter": "Trop peu de valeurs depuis le démarrage",
+      "reasonFit": "Calcul impossible",
+      "excludedAdherence": "{count} jours après le démarrage écartés (moins de {floor} % des doses prises)",
+      "excludedNotTaking": "{count} jours écartés (en pause ou entre deux périodes de prise)",
+      "notTracked": "prises non suivies, aucun jour écarté pour des doses manquées",
+      "endDoseChange": "la période s'arrête le {date}, avant le premier changement de dose",
+      "days": "{before} jours avant, {after} jours après le démarrage, {excluded} jours écartés",
+      "method": "Régression segmentée sur les valeurs quotidiennes, de 90 jours avant à 180 jours au plus après le démarrage, intervalles de Newey-West. Les jours après le démarrage où moins de 80 % des doses des 14 jours précédents ont été prises sont écartés. Décrit une association dans le temps, pas un effet démontré du médicament.",
+      "autocorrelation": "forte dépendance à la veille, les plages peuvent donc rester trop étroites",
+      "window": "analysé du {from} au {to}, ce qui peut dépasser la période du rapport",
+      "windowLine": "Analysé du {from} au {to}. Cette fenêtre peut dépasser la période du rapport."
+    },
+    "screenerUnvalidated": "{label} : {count} résultat(s) sur {total} ont été obtenus avec une traduction non validée scientifiquement ; à considérer comme une indication."
   },
   "errorBoundary": {
     "title": "Une erreur est survenue",
@@ -590,7 +632,9 @@
       "title": "Invitation invalide",
       "description": "Ce lien d’invitation est incomplet ou a été mal copié. Demandez un nouveau lien à la personne qui vous a invité.",
       "toLogin": "Aller à la connexion"
-    }
+    },
+    "deletionPending": "Ce compte sera supprimé le {date} et reste verrouillé d’ici là. Un administrateur de ce serveur peut annuler la suppression avant cette date.",
+    "deletionPendingNoDate": "Ce compte est programmé pour suppression et il est verrouillé. Un administrateur de ce serveur peut annuler la suppression tant qu’elle n’est pas terminée."
   },
   "dashboard": {
     "title": "Tableau de bord",
@@ -739,13 +783,13 @@
         "bmi": "kg/m²"
       }
     },
-    "keyBackupBanner": {
-      "title": "Sauvegarde ta clé de chiffrement",
-      "body": "Sans copie de la clé, tes données ne peuvent pas être récupérées après une réinstallation. Ça prend une minute.",
-      "action": "Ouvrir l'étape"
-    },
     "quickAddSymptom": "Noter un symptôme",
-    "todayCardVisible": "Afficher la carte du haut"
+    "todayCardVisible": "Afficher la carte du haut",
+    "recoveryKitBanner": {
+      "title": "Sauvegardez votre kit de récupération",
+      "body": "Sans copies des clés utilisées par ce serveur, ses données ne peuvent pas être récupérées après une réinstallation. Ça prend quelques minutes.",
+      "action": "Ouvrir le kit"
+    }
   },
   "measurements": {
     "title": "Mesures",
@@ -842,7 +886,7 @@
     "nextPage": "Page suivante",
     "dailyTotalCaption": "({count} échantillons)",
     "openMetricInsights": "Ouvrir l'analyse {type}",
-    "sleepNapCaption": "+{count} sieste(s)",
+    "sleepNapCaption": "dont {count} sieste(s)",
     "sleepAwakeningsCaption": "{count} réveil(s)",
     "expandDay": "Afficher les échantillons de ce jour",
     "collapseDay": "Masquer les échantillons de ce jour",
@@ -907,6 +951,15 @@
     "unitRating": "niveau",
     "typeWho5Score": "Score WHO-5",
     "typeSciScore": "Score SCI",
+    "typeExerciseMinutes": "Minutes d’exercice",
+    "typeStandMinutes": "Minutes debout",
+    "typeStandHours": "Heures debout",
+    "typeMindfulMinutes": "Minutes de pleine conscience",
+    "typeStateOfMindValence": "État d’esprit",
+    "typeAfibBurden": "Charge de FA",
+    "typeIndoorCo2": "CO₂ intérieur",
+    "typeIndoorTemperature": "Température intérieure",
+    "typeIndoorHumidity": "Humidité intérieure",
     "durationReadAs": "Compris comme {duration}",
     "durationHoursMinutes": "{hours} h {minutes} min",
     "durationHoursOnly": "{hours} h",
@@ -1272,7 +1325,8 @@
       "bodyNotLogged": "Rien n'est consigné dans le journal de maladie pour cette journée",
       "openIllness": "Ouvrir"
     },
-    "sourceNotification": "Notification"
+    "sourceNotification": "Notification",
+    "tagCatalogLoadError": "Impossible de charger les étiquettes."
   },
   "medications": {
     "title": "Médicaments",
@@ -1508,11 +1562,11 @@
         "weekdays": {
           "label": "Jours de la semaine",
           "short": {
-            "mo": "Mo",
+            "mo": "Lu",
             "tu": "Ma",
             "we": "Me",
             "th": "Je",
-            "fr": "Fr",
+            "fr": "Ve",
             "sa": "Sa",
             "su": "Di"
           },
@@ -2345,7 +2399,31 @@
       },
       "scaleAbsolute": "Absolu",
       "scalePercentSinceStart": "% depuis le début",
-      "scaleToggleLabel": "Échelle du graphique"
+      "scaleToggleLabel": "Échelle du graphique",
+      "segmented": {
+        "title": "Changement au démarrage",
+        "level": "Dès le démarrage, le niveau s'est déplacé de {value} {unit} (intervalle à 95 % : {low} à {high}).",
+        "slope": "Après le démarrage, la tendance hebdomadaire a changé de {value} {unit} par semaine (intervalle à 95 % : {low} à {high}).",
+        "preSlope": "Avant le démarrage, la tendance était de {value} {unit} par semaine.",
+        "includesZero": "Lorsqu'un intervalle inclut zéro, ces valeurs sont aussi compatibles avec une absence de changement.",
+        "basis": "Sur la base de {before} jours avant et {after} jours après le démarrage ({from} au {to}).",
+        "excludedAdherence": "{count} jours après le démarrage ont été écartés, car moins de {floor} % des doses ont été prises dans les {lookback} jours précédents.",
+        "excludedNotTaking": "{count} jours ont été écartés, car le médicament était en pause ou entre deux périodes de prise.",
+        "notTracked": "Les prises de ce médicament ne sont pas suivies, aucun jour n'a donc été écarté pour des doses manquées.",
+        "endDoseChange": "La période s'arrête avant le premier changement de dose et décrit donc la dose de départ.",
+        "confoundersTitle": "Autres changements de médicaments sur cette période, que cette vue ne peut pas distinguer de celui-ci :",
+        "confounderStarted": "{name} commencé le {date}",
+        "confounderStopped": "{name} arrêté le {date}",
+        "confounderDoseChange": "{name} : dose modifiée le {date}",
+        "confounderPaused": "{name} mis en pause le {date}",
+        "confounderResumed": "{name} repris le {date}",
+        "method": "Méthode : une droite est ajustée aux valeurs quotidiennes avant le démarrage, une autre à celles d'après. Le saut entre les deux au démarrage est le changement de niveau, l'écart de leurs pentes le changement de tendance. Les intervalles tiennent compte du fait que les valeurs d'un jour influencent le lendemain.",
+        "needStart": "Indique une date de début pour voir le changement au démarrage.",
+        "needBefore": "Le changement au démarrage demande des valeurs sur au moins {days} jours répartis sur {span} jours avant le démarrage.",
+        "needAfter": "Le changement au démarrage demande des valeurs sur au moins {days} jours répartis sur {span} jours depuis le démarrage, les jours où les doses ont été prises.",
+        "fitFailed": "Ces valeurs n'ont pas pu être ajustées, aucun changement au démarrage n'est donc affiché.",
+        "autocorrelation": "Les valeurs quotidiennes dépendent fortement de la veille, donc même ces plages peuvent être trop étroites."
+      }
     },
     "import": {
       "resultSuccess": "{imported} prises importées",
@@ -2592,7 +2670,8 @@
       "complianceHeatmap": "Carte thermique d'observance des médicaments du {start} au {end}, {days} jours actifs.",
       "complianceHeatmapEmpty": "Carte thermique d'observance des médicaments, aucun jour actif pour l'instant."
     },
-    "medicationsEmptyAction": "Ajouter un médicament"
+    "medicationsEmptyAction": "Ajouter un médicament",
+    "rangeLabel": "Période"
   },
   "chart": {
     "overlay": {
@@ -2673,7 +2752,20 @@
         "ENV_PRESSURE_DELTA": "la variation de pression sur la journée",
         "ENV_PM25": "les particules fines (PM2,5)",
         "ENV_OZONE_8H": "l’ozone",
-        "ENV_POLLEN_MAX": "le pollen"
+        "ENV_POLLEN_MAX": "le pollen",
+        "HRV_RMSSD": "la variabilité de la fréquence cardiaque (RMSSD)",
+        "HYDRATION": "l'apport en eau",
+        "CAFFEINE": "l'apport en caféine",
+        "ALCOHOL": "la consommation d'alcool",
+        "WORKOUT_MINUTES": "les minutes d'entraînement",
+        "TRAINING_LOAD": "la charge d'entraînement",
+        "EXERCISE_MINUTES": "les minutes d'exercice",
+        "STAND_MINUTES": "les minutes debout",
+        "MINDFUL_MINUTES": "les minutes de pleine conscience",
+        "STATE_OF_MIND_VALENCE": "l'état d'esprit noté",
+        "INDOOR_CO2": "le CO2 intérieur",
+        "INDOOR_TEMPERATURE": "la température intérieure",
+        "INDOOR_HUMIDITY": "l'humidité intérieure"
       },
       "daily": {
         "high": "Quand {behaviour} monte, {outcome} du lendemain tend à {direction} dans tes données. C'est une tendance à surveiller, pas une cause.",
@@ -2701,6 +2793,12 @@
         "high": "Plus de {behaviour} le jour même et la veille va souvent de pair avec {direction} {outcome} dans tes données : un schéma à surveiller, pas une cause.",
         "moderate": "Plus de {behaviour} le jour même et la veille semble aller de pair avec {direction} {outcome} dans tes données, d’après ce qu’on voit jusqu’ici : un schéma à surveiller, pas une cause.",
         "faint": "Plus de {behaviour} le jour même et la veille ne montre, au mieux, qu’un faible indice de {direction} {outcome} dans tes données : trop peu pour s’y fier, jamais une cause."
+      },
+      "channelNutrient": "l'apport en {nutrient}",
+      "dailyOvernight": {
+        "high": "Plus de {behaviour} pendant la nuit va souvent de pair avec {direction} {outcome} cette nuit-là dans tes données : un schéma à surveiller, pas une cause.",
+        "moderate": "Plus de {behaviour} pendant la nuit semble aller de pair avec {direction} {outcome} cette nuit-là dans tes données, d’après ce qu’on voit jusqu’ici : un schéma à surveiller, pas une cause.",
+        "faint": "Plus de {behaviour} pendant la nuit ne montre, au mieux, qu’un faible indice de {direction} {outcome} cette nuit-là dans tes données : trop peu pour s’y fier, jamais une cause."
       }
     },
     "noAnalysisYet": "Pas encore d’évaluation.",
@@ -2927,6 +3025,7 @@
       "refusalInjection": "Ton message contient des instructions qui cherchent à remplacer mes consignes. Je suis le coach HealthLog et je ne résume que tes propres données de santé. Reformule ta question dans ce cadre.",
       "errorBudget": "Tu as atteint la limite quotidienne du coach. Le quota se réinitialise à minuit dans ton fuseau horaire.",
       "errorProvider": "Le coach n’a pas pu joindre un fournisseur d’analyse maintenant. Réessaie dans un instant.",
+      "errorReasoningOnly": "Le modèle a seulement réfléchi, sans écrire de réponse. Réessaie ou choisis un autre modèle dans les réglages IA.",
       "errorDemo": "Dans la démo, le Coach ne répond pas.",
       "errorNoProvider": "Le coach lit tes données de santé enregistrées et répond aux questions à leur sujet (pas un avis médical). HealthLog a besoin d'un fournisseur d'IA pour cela : connecte ta propre clé ou un modèle local.",
       "errorNoProviderAction": "Connecter un fournisseur d'IA",
@@ -3139,11 +3238,11 @@
           "last30days": "{days} jours",
           "last90days": "{days} jours",
           "lastYear": "{months} mois",
-          "allTime": "Tout"
+          "allTime": "{months} mois en détail, plus pour les analyses"
         },
         "detailDays": "Le Coach ne lit rien de plus ancien que {days} jours, dans aucune réponse.",
         "detailMonths": "Le Coach ne lit rien de plus ancien que {months} mois, dans aucune réponse.",
-        "detailAll": "Tout ce que vous avez enregistré : {dailyMonths} mois au jour près, les mesures plus anciennes en valeurs mensuelles jusqu’à {years} ans en arrière, les analyses des {labMonths} derniers mois.",
+        "detailAll": "Sans limite, le Coach lit {dailyMonths} mois de mesures au jour près et les mesures plus anciennes en valeurs mensuelles jusqu’à {years} ans en arrière. Pour les analyses, il lit la dernière valeur des marqueurs mesurés le plus récemment et, pour un marqueur sur lequel vous l’interrogez, ses {labRecent} résultats précédents ; les plus anciens sont résumés par année jusqu’à {labYears} ans en arrière, les années antérieures sont seulement comptées.",
         "note": "Votre profil, vos médicaments actuels, une maladie en cours et vos prochains rendez-vous restent visibles ; les synthèses qui demandent plus d’historique sont raccourcies ou omises. Les réponses données plus tôt par le Coach dans d’anciennes conversations peuvent encore citer des valeurs plus anciennes."
       },
       "showConversations": "Afficher les conversations",
@@ -3173,7 +3272,8 @@
         "steadyLatestAbove": "Tes valeurs sont habituellement à {low} {unit} ; ta dernière mesure, du {date}, était de {value}, au-dessus.",
         "steadyLatestBelow": "Tes valeurs sont habituellement à {low} {unit} ; ta dernière mesure, du {date}, était de {value}, en dessous.",
         "insufficient": "J'apprends encore ta plage habituelle. Continue à enregistrer quelques jours de plus.",
-        "driver": "{note}"
+        "driver": "{note}",
+        "loadError": "Impossible de charger ta plage habituelle."
       },
       "scope": {
         "prefix": "Le Coach est déjà sur {metric}"
@@ -3257,11 +3357,12 @@
         "provider": "Répond avec",
         "modelManaged": "Le modèle de ce fournisseur se règle dans les paramètres IA.",
         "noProvider": "Aucun fournisseur disponible",
+        "allSettings": "Tous les paramètres IA",
+        "operatorCodex": "ChatGPT (partagé par l'opérateur)",
+        "changeModel": "Modifier dans Réglages > IA",
         "saving": "Enregistrement…",
         "saveFailed": "Impossible d’enregistrer cette modification.",
-        "allSettings": "Tous les paramètres IA",
         "providerNotActive": "{provider} n'a pas pu prendre le relais : aucune connexion ni clé valide. Configurez-le dans les réglages IA.",
-        "operatorCodex": "ChatGPT (partagé par l'opérateur)",
         "operatorManaged": "L'opérateur de votre serveur gère cette connexion. Dès qu'un de vos propres fournisseurs est configuré, c'est lui qui répond en premier."
       },
       "answer": {
@@ -3505,7 +3606,7 @@
         "headphoneAudioBody": "Les niveaux audio au casque suivent, en décibels, le volume auquel vous écoutez avec des écouteurs ou un casque. Baisser le volume et faire des pauses protège votre audition sur le long terme.",
         "audioEventsBody": "Les événements sonores forts signalent les moments où le bruit autour de vous a atteint un niveau pouvant nuire à l'audition en cas d'exposition suffisante. Des événements fréquents invitent à rechercher un environnement plus calme ou une protection auditive.",
         "daylightBody": "Le temps à la lumière du jour correspond à la durée passée en lumière extérieure chaque jour. Une lumière naturelle régulière soutient un rythme veille-sommeil et une humeur sains (CDC 2024), et le temps passé dehors est lié à la santé oculaire.",
-        "bloodGlucoseBody": "La glycémie est la quantité de sucre dans votre sang, principale source d'énergie de l'organisme. Elle augmente après les repas et se stabilise entre eux ; des valeurs durablement élevées peuvent signaler un diabète ou un prédiabète.",
+        "bloodGlucoseBody": "La glycémie est la quantité de sucre dans votre sang, principale source d'énergie de l'organisme. Elle augmente après les repas et se stabilise entre eux. À titre indicatif pour les adultes sans diabète, une glycémie à jeun inférieure à {prediabetesFrom} {unit} est normale, de {prediabetesFrom} à {prediabetesTo} elle correspond au prédiabète, et à partir de {diabetesFrom} elle se situe dans la zone du diabète (ADA 2024). Une seule valeur élevée ne suffit pas à poser un diagnostic : un médecin la confirme par un nouveau test, et les personnes qui suivent un diabète ont d'autres objectifs, fixés avec leur médecin.",
         "skinTemperatureBody": "La température cutanée correspond ici à la petite variation nocturne de la température de votre poignet par rapport à votre propre référence, et non à une mesure absolue de fièvre. Les variations peuvent suivre le sommeil, l'environnement, une maladie ou la phase du cycle menstruel.",
         "cardioFitnessBody": "Le VO₂ max correspond à la quantité d'oxygène que votre corps peut utiliser à l'effort maximal. C'est le meilleur indice de laboratoire de la forme aérobie, que les wearables estiment de façon indirecte. Une tendance plus élevée ou en hausse est un fort signe de santé cardiovasculaire.",
         "cardioRecoveryBody": "La récupération cardiaque correspond au nombre de battements par minute dont votre fréquence cardiaque diminue dans la première minute après l'arrêt d'un effort intense. Une baisse plus forte signifie que votre cœur se calme plus vite, signe d'une bonne condition physique.",
@@ -3558,6 +3659,7 @@
       "falls": "chutes",
       "years": "ans",
       "breathingEvents": "événements",
+      "standHours": "heures",
       "respiratoryRate": "respirations/min"
     },
     "sleep": {
@@ -3800,6 +3902,16 @@
         "editTitle": "Modifier l’entraînement",
         "editAction": "Modifier",
         "updated": "Entraînement mis à jour"
+      },
+      "load": {
+        "title": "Charge d'entraînement",
+        "fitness": "Condition",
+        "fatigue": "Fatigue",
+        "form": "Fraîcheur",
+        "explainer": "La condition est ton impulsion d'entraînement par fréquence cardiaque moyennée sur environ six semaines, la fatigue sur environ une semaine, et la fraîcheur est la différence. Les chiffres se comparent à ton propre passé, pas à d'autres personnes ni à d'autres apps.",
+        "warmingUp": "Sur {days} jours pour l'instant : tant que six semaines ne sont pas couvertes, la condition paraît plus basse qu'elle ne l'est.",
+        "coverage": "{rated} des {days} derniers jours ont pu être évalués. Un jour sans données d'activité, ou avec un entraînement qui n'a pas pu être évalué, est écarté au lieu de compter comme repos.",
+        "asOf": "Au {date}, le dernier jour qui a pu être évalué."
       }
     },
     "bloodGlucose": {
@@ -4214,13 +4326,8 @@
         "metricNextDayRecovery": "Récupération le lendemain",
         "metricNextDayRestingHr": "Fréquence cardiaque au repos le lendemain",
         "metricNextDayHrv": "Variabilité de la fréquence cardiaque le lendemain",
-        "unitHours": "h",
-        "unitKcal": "kcal",
-        "unitScore": "pts",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "detailSameDay": "En moyenne {withAvg} {unit} les {withDays} jours avec ce tag contre {withoutAvg} {unit} sans.",
-        "detailNextDay": "En moyenne {withAvg} {unit} le lendemain des {withDays} jours avec ce tag contre {withoutAvg} {unit} sinon."
+        "detailSameDay": "En moyenne {withAvg} les {withDays} jours avec ce tag contre {withoutAvg} sans.",
+        "detailNextDay": "En moyenne {withAvg} le lendemain des {withDays} jours avec ce tag contre {withoutAvg} sinon."
       },
       "factorCrosstab": {
         "title": "Vos facteurs notés et vos constantes",
@@ -4232,15 +4339,8 @@
         "metricHrv": "Variabilité de la fréquence cardiaque",
         "metricWeight": "Poids",
         "metricBloodPressureSys": "Systolique",
-        "unitHours": "h",
-        "unitScore": "pts",
-        "unitSteps": "pas",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "unitKg": "kg",
-        "unitMmHg": "mmHg",
-        "detail": "En moyenne {lowAvg} {unit} les {lowDays} jours où vous avez noté {factor} bas contre {highAvg} {unit} les jours où vous l'avez noté haut.",
-        "detailInverse": "En moyenne {lowAvg} {unit} sur vos {lowDays} pires jours de {factor} contre {highAvg} {unit} sur les meilleurs."
+        "detail": "En moyenne {lowAvg} les {lowDays} jours où vous avez noté {factor} bas contre {highAvg} les jours où vous l'avez noté haut.",
+        "detailInverse": "En moyenne {lowAvg} sur vos {lowDays} pires jours de {factor} contre {highAvg} sur les meilleurs."
       },
       "discovery": {
         "title": "Ce qui ressort",
@@ -4253,7 +4353,12 @@
         "outcomeDown": "Une meilleure humeur tend à coïncider avec un {factor} plus bas le lendemain dans vos données.",
         "stat": "{n} jours appariés, r = {r}, q = {q}",
         "statLabel": "Comment ceci est calculé",
-        "explainerLabel": "Comment ceci est calculé"
+        "explainerLabel": "Comment ceci est calculé",
+        "channel": {
+          "ALCOHOL": "consommation d'alcool",
+          "WORKOUT_MINUTES": "minutes d'entraînement",
+          "TRAINING_LOAD": "charge d'entraînement"
+        }
       },
       "inTargetTitle": "Dans votre plage",
       "dimensions": {
@@ -4290,7 +4395,8 @@
         "caveat": "C'est une comparaison avec tes propres journées passées, pas une affirmation sur la manière dont une journée s'est déroulée.",
         "learning": "Phase d'apprentissage : {entries} journées sur {threshold} enregistrées. La comparaison apparaît une fois qu'il y en a assez.",
         "noPattern": "Dans les {entries} journées enregistrées jusqu'ici, rien n'est assez régulier pour comparer une journée. Quand tu notes aussi le contexte d'une journée, tu en rends davantage comparable.",
-        "featureValue": "{field} : {value}"
+        "featureValue": "{field} : {value}",
+        "loadError": "Impossible de charger la valeur attendue selon tes propres habitudes."
       },
       "patterns": {
         "title": "Tendances de votre humeur",
@@ -4389,6 +4495,10 @@
             "consistency": "Régularité",
             "timing": "Timing",
             "composition": "Composition"
+          },
+          "gap": {
+            "fewNights": "pas encore assez de nuits ({count} sur {needed})",
+            "noMainSleep": "le dernier jour n'a eu qu'une sieste"
           }
         },
         "READINESS": {
@@ -4656,7 +4766,10 @@
       "description": "À quel point votre corps a récupéré : les signaux de récupération, de charge et d'effort que votre wearable enregistre la nuit.",
       "scoreCrossLink": "Voir le score de récupération composite",
       "emptyTitle": "Pas encore de données de récupération",
-      "empty": "Rien à afficher ici pour l'instant. Cette page montre les mesures de recharge, d'effort et de charge qu'enregistrent WHOOP et Polar, ainsi que le niveau de résilience d'Oura. La disponibilité (readiness) d'Oura apparaît comme votre score de récupération, en lien ci-dessus.",
+      "empty": "Cette page se remplit avec les valeurs de récupération, d'effort et de charge de WHOOP ou Polar et avec le niveau de résilience d'Oura.",
+      "emptyOuraPermission": "Le niveau de résilience d'Oura demande l'autorisation d'accès aux données de stress : reconnectez Oura une fois dans Intégrations et autorisez-la.",
+      "emptyOuraNoResilience": "Oura est connecté, et son niveau de résilience apparaîtra ici dès qu'Oura en fournira un.",
+      "emptyAction": "Ouvrir les intégrations",
       "block": {
         "ansChargeExplainer": "À quel point votre système nerveux autonome est rechargé pour la journée : une mesure de recharge issue de vos signaux nocturnes de cœur et de respiration.",
         "dayStrainExplainer": "La charge cardiovasculaire de la journée sur l'échelle d'effort de votre appareil. Lisez-la au regard de votre récupération, pas comme un objectif en soi.",
@@ -4665,7 +4778,8 @@
         "averageHeartRateExplainer": "Votre fréquence cardiaque moyenne sur toute la journée ou le cycle, telle que rapportée par votre wearable.",
         "maxHeartRateExplainer": "Votre fréquence cardiaque maximale sur toute la journée ou le cycle, telle que rapportée par votre wearable.",
         "energyExpenditureKjExplainer": "L'énergie que votre corps a dépensée sur la journée, en kilojoules, telle que votre appareil la rapporte nativement."
-      }
+      },
+      "loadError": "Vos valeurs de récupération n'ont pas pu être chargées."
     },
     "bodyTempDeviation": {
       "title": "Écart de température corporelle",
@@ -4705,7 +4819,8 @@
       "shiftDown": "{vital} a diminué par rapport à votre normale récente.",
       "rangeContext": "Actuellement {value}, habituellement {low}–{high}.",
       "rangeContextTimeOfDay": "Actuellement {value}, habituellement {low}–{high} à ce moment de la journée.",
-      "shiftContext": "Environ {before} avant, {after} depuis."
+      "shiftContext": "Environ {before} avant, {after} depuis.",
+      "shiftDays": "Sur {before} jours avant et {after} depuis."
     },
     "breathingScreening": {
       "sectionTitle": "Respiration pendant le sommeil",
@@ -5160,7 +5275,7 @@
         "changeInSettings": "À modifier dans Réglages, Compte",
         "cta": "Confirmer et continuer",
         "managedTitle": "La personne dont vous vous occupez",
-        "managedBody": "Son dossier n'a pas d'identifiant propre ; vous le gérez depuis votre compte. Un second facteur sur votre compte est nécessaire pour le créer.",
+        "managedBody": "Son dossier n'a pas d'identifiant propre ; vous le gérez depuis votre compte. Un second facteur ou une clé d'accès sur votre compte est nécessaire pour le créer.",
         "managedCreate": "Créer le profil et terminer",
         "managedLater": "Vous pouvez aussi le créer plus tard dans Réglages, Accès partagé.",
         "finishWithoutProfile": "Terminer sans le profil"
@@ -5285,12 +5400,17 @@
       "groups": {
         "account": "Compte",
         "yourData": "Vos données",
-        "display": "Affichage",
         "healthProfile": "Profil de santé",
         "ai": "IA",
         "connectivity": "Connectivité",
-        "system": "Système"
-      }
+        "system": "Système",
+        "tracking": "Suivi",
+        "arrangement": "Disposition",
+        "notifications": "Notifications",
+        "connections": "Connexions",
+        "data": "Données"
+      },
+      "allSections": "Toutes les sections"
     },
     "sharedRecord": {
       "managedSettings": {
@@ -5402,8 +5522,15 @@
       "unavailableTitle": "Indisponible dans ce dossier partagé",
       "unavailableDescription": "Cette section des réglages est volontairement indisponible lorsque vous consultez le dossier d’une autre personne.",
       "integrationStatusDescription": "État de connexion pour ce dossier géré.",
-      "integrationStatusDetail": "Un profil géré affiche ses services connectés uniquement sous forme d’état. Les personnes qui le gèrent ne peuvent ni connecter, ni reconnecter, ni synchroniser, ni déconnecter.",
-      "integrationStatusDocs": "Comment fonctionne le partage"
+      "integrationStatusDetail": "Les services que vous connectez ici envoient leurs données dans le dossier de {name}, pas dans le vôtre. Sans application propre chez le fournisseur, le profil utilise la vôtre.",
+      "integrationStatusDocs": "Comment fonctionne le partage",
+      "integrationConnectsFor": "Connecte pour {name}",
+      "integrationConnectFor": "Connecter pour {name}",
+      "integrationDisconnect": "Déconnecter",
+      "integrationDisconnectTitle": "Déconnecter {provider} de {name} ?",
+      "integrationDisconnectBody": "Les nouvelles données n’arriveront plus. Tout ce qui a déjà été importé reste dans le dossier de {name}.",
+      "integrationNoClientApp": "Ni {name} ni votre propre compte n’ont encore d’application {provider}. Configurez-en d’abord une dans vos propres intégrations.",
+      "integrationConnectFailed": "Impossible de lancer la connexion à {provider}."
     },
     "sections": {
       "account": {
@@ -5424,7 +5551,21 @@
         "remindersHeading": "Rappels",
         "matrixLink": "Notifications par canal",
         "channelsLink": "Canaux de diffusion",
-        "displayHeading": "Sur ton téléphone"
+        "displayHeading": "Sur ton téléphone",
+        "elsewhere": {
+          "title": "Réglés là où ils se rattachent",
+          "description": "Ces rappels se règlent à côté de ce qu’ils concernent.",
+          "doses": {
+            "title": "Prises de médicaments",
+            "description": "Les heures de prise et les rappels se règlent sur chaque médicament.",
+            "link": "Ouvrir les médicaments"
+          },
+          "cycle": {
+            "title": "Cycle",
+            "description": "Les rappels de règles et de fenêtre fertile s’activent par canal dans la grille des notifications.",
+            "link": "Ouvrir la grille des notifications"
+          }
+        }
       },
       "layout": {
         "title": "Disposition",
@@ -5437,7 +5578,7 @@
           "title": "Analyses",
           "description": "Ordre de la vue d'ensemble et des onglets de navigation."
         },
-        "subtitle": "Choisissez ce qu'affichent le tableau de bord, les analyses et les modules de suivi, et dans quel ordre.",
+        "subtitle": "Choisissez l’ordre et l’affichage du tableau de bord, des analyses et des listes de suivi.",
         "medications": {
           "title": "Médicaments",
           "description": "Vue en liste et ordre manuel."
@@ -5453,10 +5594,6 @@
         "vorsorge": {
           "title": "Examens",
           "description": "Vue en liste et ordre des rappels."
-        },
-        "mood": {
-          "title": "Étiquettes d’humeur",
-          "description": "Groupes, étiquettes et étiquettes archivées du sélecteur d’humeur."
         },
         "documents": {
           "title": "Documents",
@@ -5601,7 +5738,7 @@
             "passphrasePlaceholder": "Phrase secrète (12 caractères min.)",
             "passphraseHelp": "Dérive la clé de l'archive avec Argon2id et la scelle avec AES-256-GCM. Enregistrez le fichier avec l'extension .hlx.",
             "noRecoveryWarning": "Aucune récupération possible : si vous perdez cette phrase secrète, l'archive ne pourra pas être ouverte. Conservez-la en lieu sûr.",
-            "detail": "Même format que la sauvegarde automatique hebdomadaire. Certains types d'enregistrement ne sont pas encore inclus : le manifeste du fichier indique ce qu'il contient.",
+            "detail": "Une copie portable de votre dossier, à conserver et à lire : valeurs en JSON simple, documents limités à leurs métadonnées. Ce n’est pas la copie hebdomadaire du compte que ce serveur garde pour restaurer un compte, et elle ne peut pas recréer un compte sur un autre serveur. Certains types de données ne sont pas encore inclus ; le manifeste du fichier indique ce qu’il contient.",
             "contents": "Vos mesures, médicaments, humeur, cycle, analyses, épisodes de maladie, allergies, antécédents familiaux, nutriments, séances, votre profil de santé et vos mesures personnalisées dans un seul fichier JSON."
           }
         },
@@ -5647,7 +5784,7 @@
             "cycleDaysFailed": "{count} jours de cycle n'ont pas pu être écrits : {reason}"
           },
           "json": {
-            "title": "Fichier JSON",
+            "title": "Mesures et humeur (JSON)",
             "description": "Collez du JSON ou importez un fichier .json contenant des mesures et des entrées d'humeur.",
             "pasteLabel": "Coller du JSON",
             "fileInputLabel": "Choisir un fichier JSON à importer",
@@ -5663,8 +5800,11 @@
             "readFailed": "Impossible de lire ce fichier.",
             "resultSummary": "{measurements} mesures et {moods} entrées d'humeur importées, {skipped} ignorées.",
             "resultSuccess": "{measurements} mesures et {moods} entrées d'humeur importées",
+            "droppedLinks": "Importé sans ces étiquettes, car ce compte n’en a aucune de ce nom : {keys}",
+            "keptLabels": "Ce compte a déjà des étiquettes ou des groupes avec ces clés sous son propre nom, ils ont été conservés : {keys}",
             "resultNothing": "Rien n'a été importé. Les {skipped} entrées ont toutes été ignorées.",
-            "resultEmpty": "Ce fichier ne contenait ni mesures ni entrées d'humeur."
+            "resultEmpty": "Ce fichier ne contenait ni mesures ni entrées d'humeur.",
+            "limitsHint": "Jusqu’à {mb} Mo et jusqu’à {rows} entrées par liste. Cela ajoute des entrées à votre dossier ; cela ne restaure pas une sauvegarde complète."
           },
           "csv": {
             "title": "Fichier CSV",
@@ -5810,7 +5950,7 @@
             }
           }
         },
-        "subtitle": "Exportez vos données ou importez depuis une sauvegarde."
+        "subtitle": "Exportez vos données, ou importez des mesures et des entrées depuis d’autres applis et fichiers."
       },
       "about": {
         "title": "À propos de cette app",
@@ -5848,7 +5988,28 @@
         },
         "manageIn": "Gérer dans {section}",
         "operatorDisabled": "Désactivé sur tout le serveur",
-        "subtitle": "Choisissez les domaines de suivi affichés par HealthLog."
+        "subtitle": "Choisissez les domaines de suivi affichés par HealthLog.",
+        "backToHub": "Retour à Modules",
+        "openModuleSettings": "Réglages du module",
+        "pages": {
+          "medications": {
+            "title": "Médicaments",
+            "description": "Sites d’injection que la rotation laisse de côté."
+          },
+          "mood": {
+            "title": "Étiquettes d’humeur",
+            "description": "Groupes, vos propres étiquettes et les étiquettes archivées."
+          },
+          "labs": {
+            "title": "Analyses",
+            "description": "Biomarqueurs et reconnaissance de texte sur l’appareil pour les comptes rendus d’analyses."
+          },
+          "arrangementTitle": "Ordre et affichage",
+          "arrangementDescription": "Le tri et l’affichage de cette liste se règlent dans Disposition.",
+          "openArrangement": "Ouvrir dans Disposition",
+          "moduleSettingsTitle": "Réglages du module",
+          "moduleSettingsDescription": "Tout le reste se trouve sur la page du module, dans Modules."
+        }
       },
       "gesundheitsakte": {
         "title": "Dossier médical",
@@ -6202,7 +6363,7 @@
         "resetConfirmBody": "La chaîne revient à Codex → OpenAI → Anthropic → Local → OpenAI administrateur. Vos identifiants enregistrés ne sont pas affectés."
       },
       "activeProviderHeading": "Fournisseur actif",
-      "activeProviderLabel": "Fournisseur principal",
+      "activeProviderLabel": "Configurer un fournisseur",
       "providerSelect": {
         "codex": "Compte ChatGPT (Codex)",
         "openai": "OpenAI (votre clé API)",
@@ -6407,9 +6568,10 @@
           "medium": "Moyen",
           "high": "Élevé"
         },
-        "coachNote": "Dans le Coach, c'est la profondeur de réflexion des réglages du Coach qui s'applique."
+        "coachNote": "Dans le Coach, c'est la profondeur de réflexion des réglages du Coach qui s'applique.",
+        "backgroundNote": "Les tâches de fond comme le briefing quotidien n'utilisent pas ce réglage : elles réfléchissent au plus en Moyen, moins si l'opérateur fixe une limite plus basse, et pas du tout au niveau Économe."
       },
-      "providerCardDescription": "Le fournisseur que HealthLog sollicite en premier, avec sa clé et son modèle.",
+      "providerCardDescription": "Configurez la clé et le modèle de chaque fournisseur ; l’ordre ci-dessous décide lequel HealthLog sollicite en premier.",
       "runtimeTitle": "Vérifier et actualiser",
       "usage": {
         "title": "Usage de l'IA",
@@ -6436,6 +6598,14 @@
         "followsDefault": "Vous suivez le réglage par défaut du serveur ({level}).",
         "useDefault": "Utiliser le réglage par défaut du serveur ({level})",
         "saveError": "Le niveau n'a pas pu être enregistré. Réessaie."
+      },
+      "removeKey": {
+        "label": "Supprimer la clé API",
+        "title": "Supprimer la clé API enregistrée ?",
+        "body": "HealthLog efface la clé enregistrée et ne peut pas la récupérer. Saisissez-la de nouveau pour continuer à l’utiliser.",
+        "confirm": "Supprimer la clé API",
+        "done": "Clé API supprimée.",
+        "failed": "Impossible de supprimer la clé API."
       }
     },
     "dashboard": {
@@ -6487,7 +6657,8 @@
       "nocode": "Withings n'a renvoyé aucun code d'autorisation. Réessayez et autorisez l'accès dans la fenêtre Withings.",
       "nocreds": "Aucun identifiant d'API Withings n'est enregistré. Enregistrez d'abord le Client ID et le Client Secret, puis reconnectez.",
       "token": "L'échange de jetons avec Withings a échoué. Vérifiez le Client ID et le Client Secret, puis réessayez.",
-      "generic": "Erreur inconnue lors de la connexion. Relancez la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Relancez la connexion.",
+      "already_linked": "Ce compte Withings est déjà connecté à un autre profil HealthLog. Connecte-toi à Withings avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "withingsSynchronize": "Synchroniser",
     "withingsDisconnect": "Déconnecter",
@@ -6526,7 +6697,8 @@
       "nocode": "WHOOP n'a pas renvoyé de code d'autorisation. Réessayez et autorisez l'accès dans la fenêtre WHOOP.",
       "nocreds": "WHOOP n'est pas configuré. Ajoutez vos identifiants OAuth WHOOP ci-dessus et réessayez.",
       "token": "L'échange de jeton avec WHOOP a échoué. Veuillez relancer la connexion.",
-      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion.",
+      "already_linked": "Ce compte WHOOP est déjà connecté à un autre profil HealthLog. Connecte-toi à WHOOP avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "fitbit": "Fitbit",
     "fitbitTag": "Fitbit et Pixel",
@@ -6605,7 +6777,8 @@
       "nocode": "Google n'a pas renvoyé de code d'autorisation. Réessaie et autorise l'accès dans la fenêtre Google.",
       "nocreds": "Google Health n'est pas configuré. Ajoute tes identifiants OAuth Google ci-dessus et réessaie.",
       "token": "L'échange de jeton avec Google a échoué. Relance la connexion.",
-      "generic": "Erreur inconnue lors de la connexion. Relance la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Relance la connexion.",
+      "already_linked": "Ce compte Google est déjà connecté à un autre profil HealthLog. Connecte-toi à Google avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "fitbitOauthError": {
       "csrf1": "La vérification de sécurité a échoué car le cookie du navigateur était absent. Veuillez relancer la connexion dans le même navigateur.",
@@ -6615,7 +6788,9 @@
       "nocode": "Fitbit n'a pas renvoyé de code d'autorisation. Réessayez et autorisez l'accès dans la fenêtre Fitbit.",
       "nocreds": "Fitbit n'est pas configuré. Ajoutez vos identifiants OAuth Fitbit ci-dessus et réessayez.",
       "token": "L'échange de jeton avec Fitbit a échoué. Veuillez relancer la connexion.",
-      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion.",
+      "retired": "Google a désactivé l'API Web Fitbit : il n'est plus possible de créer une nouvelle connexion Fitbit. Connectez plutôt Google Health, qui lit les mêmes appareils.",
+      "already_linked": "Ce compte Fitbit est déjà connecté à un autre profil HealthLog. Connecte-toi à Fitbit avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "integrations": {
       "withings": {
@@ -6652,27 +6827,20 @@
           "items": {
             "vo2max": "la VO2 max",
             "cardio_age": "l’âge cardiovasculaire",
-            "resilience": "la résilience"
+            "resilience": "la résilience",
+            "workout": "les entraînements",
+            "heartrate": "la fréquence cardiaque"
           }
         }
       }
     },
     "integrationPill": {
-      "connected": "Connecté",
-      "errorReconnect": "Erreur : reconnecter",
-      "warningServerError": "Échec de synchronisation",
-      "failureCount": "{count}/{threshold}",
-      "parkedReconnect": "En pause : reconnecter",
-      "notConnected": "Non connecté",
       "justNow": "à l’instant",
       "minutesAgo": "il y a {count} min",
       "hoursAgo": "il y a {count} h",
       "daysAgo": "il y a {count} j",
       "resumeSuccess": "Intégration reprise",
-      "resumeError": "Échec de la reconnexion",
-      "stale": "Connecté, aucune donnée récente",
-      "stalled": "Synchronisation arrêtée",
-      "pendingSetup": "En attente des premières données"
+      "resumeError": "Échec de la reconnexion"
     },
     "integrationFreshness": {
       "title": "Données reçues",
@@ -6696,7 +6864,14 @@
       "detail": "Le jeton n'est affiché qu'une fois.",
       "scopeNote": "Il peut uniquement ajouter de nouvelles mesures à votre propre dossier : il ne peut pas lire vos données, ni modifier ou supprimer quoi que ce soit, ni créer un autre jeton. Les mesures sont signalées comme provenant d'un appareil externe, ce qui vous permet de les reconnaître plus tard, et vous pouvez toujours les corriger.",
       "createFailed": "Le jeton n'a pas pu être créé. Veuillez réessayer.",
-      "namePlaceholder": "Nom, p. ex. Home Assistant"
+      "namePlaceholder": "Nom, p. ex. Home Assistant",
+      "appleHealth": {
+        "label": "Écrire les mesures dans Apple Health",
+        "createHint": "L'app HealthLog de votre iPhone ajoutera alors les mesures de ce jeton à Apple Health. Vous pourrez modifier ce choix plus tard dans la liste des jetons ci-dessous.",
+        "toggleAria": "Écrire les mesures de {name} dans Apple Health",
+        "updateFailed": "Le réglage Apple Health n'a pas pu être modifié. Veuillez réessayer.",
+        "unattributed": "Les mesures envoyées avant l'existence de ce réglage ne peuvent être rattachées à aucun jeton : elles restent donc hors d'Apple Health."
+      }
     },
     "workoutsToken": {
       "title": "Jetons d'entraînements",
@@ -6753,10 +6928,12 @@
     "deleteAccountCardDescription": "Supprime votre compte ainsi que les clés d’accès, le journal d’audit et les sessions.",
     "deleteAccountCta": "Supprimer le compte",
     "deleteAccountConfirmTitle": "Supprimer définitivement le compte ?",
-    "deleteAccountConfirmDescription": "Votre compte, toutes vos données de santé, vos clés d’accès, vos sessions et vos entrées d’audit seront définitivement supprimés. Vous serez déconnecté immédiatement après.",
+    "deleteAccountConfirmTitleGrace": "Supprimer votre compte ?",
+    "deleteAccountConfirmDescription": "Votre compte, toutes vos données de santé, vos clés d’accès, vos sessions et vos entrées d’audit seront définitivement supprimés. Vous serez déconnecté immédiatement après. Les copies dans les sauvegardes de ce serveur expirent à la fin de leur durée de conservation.",
     "deleteAccountSuccess": "Compte supprimé, déconnexion en cours.",
     "deleteAccountFailed": "Le compte n’a pas pu être supprimé",
     "deleteAccountFinal": "Supprimer définitivement",
+    "deleteAccountFinalGrace": "Supprimer le compte",
     "saved": "Enregistré",
     "savingError": "Erreur lors de l’enregistrement",
     "about": {
@@ -6856,7 +7033,7 @@
       "errorRateLimit": "Vous avez atteint la limite d'exports pour cette heure.",
       "errorModuleDisabled": "L'export du dossier est désactivé pour ce compte.",
       "visitOffer": "Un rendez-vous est prévu le {when} : {what}.",
-      "visitOfferApply": "Rapport jusque-là"
+      "visitOfferApplyWindow": "Utiliser cette période"
     },
     "globalExcludedInjectionSitesLabel": "Sites d'injection exclus globalement",
     "globalExcludedInjectionSitesHint": "Jamais proposés et refusés à l'enregistrement, même si un médicament les privilégie.",
@@ -6914,7 +7091,9 @@
       "reselectReason": "Ce lien diffusait un périmètre que personne n'avait choisi ; il a donc été fermé. Créez-en un nouveau et choisissez son contenu.",
       "reselectAction": "Créer un remplacement",
       "createDetail": "Le jeton n'est affiché qu'une fois à la création. Conservez-le alors ; il ne peut pas être récupéré.",
-      "activeDescription": "Les liens que vous avez partagés, leur expiration et le nombre d'ouvertures."
+      "activeDescription": "Les liens que vous avez partagés, leur expiration et le nombre d'ouvertures.",
+      "revokedToast": "Lien révoqué.",
+      "revokeFailed": "Impossible de révoquer le lien."
     },
     "genderOther": "Autre",
     "nightscout": "Nightscout",
@@ -6966,7 +7145,8 @@
       "nocreds": "Polar n'est pas configuré sur ce serveur. Demandez à votre administrateur d'ajouter les identifiants OAuth Polar.",
       "token": "L'échange de jeton avec Polar a échoué. Veuillez relancer la connexion.",
       "rate_limited": "Trop de tentatives de connexion. Patientez un instant et réessayez.",
-      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion.",
+      "already_linked": "Ce compte Polar est déjà connecté à un autre profil HealthLog. Connecte-toi à Polar avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "oura": "Oura",
     "ouraDescription": "Connecte ton compte Oura pour synchroniser readiness, phases de sommeil, variabilité cardiaque et activité quotidienne.",
@@ -6996,25 +7176,24 @@
       "token": "L'échange de jeton avec Oura a échoué. Veuillez relancer la connexion.",
       "rate_limited": "Trop de tentatives de connexion. Patientez un instant et réessayez.",
       "issuer": "La réponse de connexion ne provenait pas du serveur d'autorisation d'Oura, la connexion a donc été interrompue par sécurité. Veuillez relancer la connexion. Si cela se reproduit, prévenez votre administrateur.",
-      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Veuillez relancer la connexion.",
+      "already_linked": "Ce compte Oura est déjà connecté à un autre profil HealthLog. Connecte-toi à Oura avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "integrationSetupGuide": "Guide de configuration",
     "coach": {
-      "activate": {
-        "title": "Activer le Coach",
-        "description": "Affiche le bouton et le panneau du Coach.",
-        "toggleAria": "Activer le bouton et le panneau du Coach",
-        "savedOn": "Coach activé.",
-        "savedOff": "Coach masqué.",
-        "saveError": "Impossible d enregistrer la modification. Veuillez réessayer."
-      },
       "memory": {
         "edit": "Modifier",
         "source": {
           "user": "de toi",
           "coach": "du Coach"
         }
-      }
+      },
+      "state": {
+        "title": "Coach",
+        "description": "Si le bouton et le panneau du Coach s’affichent. L’interrupteur se trouve dans Modules."
+      },
+      "nudgesMoved": "Se règlent avec vos autres rappels dans Notifications.",
+      "openNudges": "Ouvrir dans Notifications"
     },
     "integrationRedirectGuide": {
       "intro": "Cette connexion passe par votre propre application développeur {provider}, environ 5 minutes de configuration :",
@@ -7101,7 +7280,9 @@
         "lastUsed": "Dernière utilisation le {date}",
         "neverUsed": "Jamais utilisée",
         "added": "ajoutée le {date}",
-        "nameLabel": "Nom de la clé de sécurité"
+        "nameLabel": "Nom de la clé de sécurité",
+        "addedToast": "Clé de sécurité ajoutée.",
+        "removedToast": "Clé de sécurité supprimée."
       },
       "passkeyNudge": {
         "title": "Ajoutez une clé d'accès pour une connexion plus rapide",
@@ -7147,36 +7328,43 @@
         "profile": "Votre profil, vos antécédents médicaux et les informations du dossier de santé",
         "modules": "Données de chaque module : {list}"
       },
+      "workoutRoutes": {
+        "title": "Parcours d’entraînement",
+        "description": "Conserver le tracé GPS des nouveaux entraînements de l’app iPhone et de l’export Apple Santé.",
+        "detail": "Désactivé pour les nouveaux comptes. Un parcours montre où vous habitez, travaillez et vous entraînez : il n’est donc conservé qu’une fois l’option activée. Les entraînements sont conservés dans tous les cas, et aucune fonction d’IA ne lit jamais un parcours. Désactiver l’option arrête les nouveaux parcours ; ceux déjà conservés restent jusqu’à la suppression de l’entraînement.",
+        "loadError": "Impossible de charger le réglage des parcours."
+      },
       "retention": {
         "title": "Conservation",
         "description": "Durée de conservation des enregistrements limités dans le temps avant le nettoyage automatique.",
         "coach": "Conversations avec le coach : {days} jours",
         "audit": "Journal de sécurité : {days} jours",
         "delivery": "Journal d'envoi des notifications : {days} jours",
-        "unavailable": "Les détails de conservation sont indisponibles pour le moment."
-      },
-      "export": {
-        "title": "Télécharger mes données",
-        "description": "Vos enregistrements en CSV ou JSON, ou un dossier complet pour votre médecin.",
-        "openExport": "Export et sauvegarde",
-        "openHealthRecord": "Dossier médical"
+        "unavailable": "Les détails de conservation sont indisponibles pour le moment.",
+        "accountDeletion": "Suppression de votre compte, d’un profil géré ou de toutes les données : effective au bout de {days} jours",
+        "accountDeletionImmediate": "Suppression de votre compte, d’un profil géré ou de toutes les données : effective immédiatement"
       },
       "delete": {
         "title": "Supprimer ou réinitialiser",
         "description": "Supprimez complètement votre compte, ou effacez vos données de santé tout en conservant le compte.",
-        "backupLag": "La suppression efface vos données immédiatement. Si ce serveur conserve des sauvegardes externes chiffrées, les copies de vos données sont supprimées de ce stockage juste après, ou lors du prochain passage nocturne s'il est injoignable.",
-        "openAdvanced": "Supprimer ou réinitialiser"
+        "openAdvanced": "Supprimer ou réinitialiser",
+        "immediateNotice": "La suppression efface vos données immédiatement. Si ce serveur conserve des sauvegardes externes chiffrées, les copies de vos données sont supprimées de ce stockage juste après, ou lors du prochain passage nocturne s'il est injoignable. Les copies dans les sauvegardes de ce serveur expirent à la fin de leur durée de conservation.",
+        "graceNotice": "Lorsque vous supprimez votre compte, il est verrouillé immédiatement et effacé au bout de {days} jours, avec chaque copie que ce serveur en conserve, y compris les copies chiffrées hors du serveur. D’ici là, un administrateur de ce serveur peut annuler la suppression. La suppression de toutes les données fonctionne de la même façon : une copie du dossier est conservée pendant {days} jours, afin qu’un administrateur puisse la restaurer. Les copies dans les sauvegardes de ce serveur expirent à la fin de leur durée de conservation."
       },
       "posture": {
         "title": "Posture de confidentialité",
         "description": "Contrôlez la quantité de données partagées avec les fonctions d'IA.",
         "openAi": "Mode confidentialité IA"
+      },
+      "sessions": {
+        "title": "Sessions et appareils",
+        "description": "Où tu es connecté, les appareils qui sautent le second facteur et l'activité de sécurité de ton compte.",
+        "open": "Ouvrir la sécurité"
       }
     },
     "mcp": {
       "enableTitle": "Point de terminaison MCP distant",
       "enableDescription": "Autorisez un assistant compatible MCP (Claude.ai, ChatGPT) à lire vos données de santé via un jeton restreint.",
-      "enableToggleLabel": "Activer le point de terminaison MCP",
       "endpointLabel": "URL du connecteur",
       "connectDescription": "Collez cette URL dans la configuration du connecteur personnalisé de votre assistant, puis autorisez avec le jeton ci-dessous ou connectez-vous lorsque vous y êtes invité.",
       "tokensTitle": "Jetons du connecteur",
@@ -7195,7 +7383,8 @@
       "connectionRevokeFailed": "Impossible de déconnecter l'assistant.",
       "tokensDetail": "Le jeton n'est affiché qu'une seule fois.",
       "connectionsDetail": "Révoquer une connexion met fin à son accès immédiatement, y compris sa capacité à se renouveler.",
-      "tokenNamePlaceholder": "Nom, p. ex. Claude Desktop"
+      "tokenNamePlaceholder": "Nom, p. ex. Claude Desktop",
+      "offKeepsTokens": "Le désactiver met le point d’accès en pause. Vos jetons et connexions restent et fonctionnent de nouveau dès sa réactivation."
     },
     "strava": "Strava",
     "stravaDescription": "Connecte ton compte Strava pour synchroniser tes activités avec ton historique d'entraînement.",
@@ -7224,7 +7413,8 @@
       "nocreds": "Strava n'est pas configuré sur ce serveur. Demande à ton administrateur d'ajouter les identifiants API Strava.",
       "token": "L'échange de jeton avec Strava a échoué. Relance la connexion.",
       "rate_limited": "Trop de tentatives de connexion. Attends un instant et réessaie.",
-      "generic": "Erreur inconnue lors de la connexion. Relance la connexion."
+      "generic": "Erreur inconnue lors de la connexion. Relance la connexion.",
+      "already_linked": "Ce compte Strava est déjà connecté à un autre profil HealthLog. Connecte-toi à Strava avec le compte de ce profil, ou déconnecte-le d'abord de l'autre profil."
     },
     "appleHealth": {
       "title": "Apple Health",
@@ -7263,8 +7453,10 @@
         "lastReceived": "Dernière réception {relative}",
         "lastNewValue": "Dernière nouvelle valeur {relative}",
         "lastBackground": "Dernière fois en arrière-plan {relative}",
+        "lastDuplicate": "Dernier renvoi sans nouvelle donnée {relative}",
         "never": "Pas encore reçu",
-        "lastBackfill": "Historique rattrapé {relative}"
+        "lastBackfill": "Historique rattrapé {relative}",
+        "lastEnteredHere": "Dernière saisie ici {relative}"
       }
     },
     "garminInfo": {
@@ -7323,6 +7515,7 @@
     "emailChangePassword": "Mot de passe actuel (nécessaire pour changer l'adresse e-mail)",
     "reproof": {
       "description": "Cette action partage ou exporte vos données de santé. Confirmez qu'il s'agit bien de vous pour continuer.",
+      "descriptionChange": "Cela modifie quelque chose que vous seul devriez pouvoir modifier. Confirmez qu'il s'agit bien de vous pour continuer.",
       "signInAgain": "Reconnectez-vous, puis réessayez. Votre compte n'a ni mot de passe ni clé d'accès à confirmer ici.",
       "failed": "Cela n'a pas fonctionné. Vérifiez votre saisie et réessayez."
     },
@@ -7397,6 +7590,10 @@
         "causePermission": "autorisation",
         "failureStreak": "Série d’échecs : {count} sur {threshold}",
         "copyFailed": "La copie a échoué. Sélectionnez le texte et copiez-le à la main."
+      },
+      "historyEnds": {
+        "horizon": "{type} : importé jusqu'au {date}. Les mesures plus anciennes dépassent la limite d'import.",
+        "noProgress": "{type} : importé jusqu'au {date}. Google ne renvoyait plus de mesures plus anciennes, l'import s'arrête donc là."
       }
     },
     "dawarich": "Dawarich",
@@ -7438,7 +7635,33 @@
       "homePlaceUnknown": "L’instance Dawarich ne connaît plus ce lieu.",
       "notConnected": "Dawarich n’est pas connecté.",
       "generic": "Ça n’a pas marché. Réessaie."
-    }
+    },
+    "fitbitRetirement": {
+      "ending": "Google désactive l'API Web Fitbit le {date}. Ensuite, cette connexion ne se synchronisera plus.",
+      "ended": "Google a désactivé l'API Web Fitbit le {date}. Cette connexion ne se synchronise plus.",
+      "move": "Google Health lit les mêmes appareils Fitbit et Pixel. Connectez-le ci-dessous pour continuer à recevoir vos données. Google vous demandera de nouveau votre consentement, car la connexion Fitbit ne peut pas être transférée. Tout ce qui a déjà été importé est conservé.",
+      "toCard": "Aller à Google Health",
+      "guide": "Comment connecter Google Health",
+      "badgeEnding": "Bientôt désactivé",
+      "badgeEnded": "Désactivé"
+    },
+    "passkeyAddedToast": "Passkey ajoutée.",
+    "passkeyRemovedToast": "Passkey supprimée.",
+    "integrationDisconnected": "{provider} déconnecté.",
+    "integrationDisconnectFailed": "Impossible de déconnecter {provider}.",
+    "timezoneSaved": "Fuseau horaire enregistré.",
+    "moduleState": {
+      "on": "Activé",
+      "off": "Désactivé",
+      "change": "Modifier dans Modules"
+    },
+    "timezoneUseDevice": "Utiliser le fuseau horaire de cet appareil ({zone})",
+    "dangerZoneConfirmDescriptionGrace": "Cette action supprime tout ce que contient votre dossier : mesures, médicaments, entrées d’humeur, résultats de laboratoire, entrées de cycle, documents, conversations avec l’IA et toutes les connexions d’intégration, ainsi que tout ce qui en découle et tout ce que vous aviez supprimé auparavant. Les liens de partage remis à un cabinet cessent aussitôt de fonctionner. Votre compte reste en place, de même que vos identifiants de connexion et vos réglages d’affichage comme la langue, le fuseau horaire et les unités. Une copie de votre dossier est conservée pendant {days} jours, afin qu’un administrateur de ce serveur puisse la restaurer d’ici là. Ensuite, la suppression est définitive.",
+    "deleteAccountCardDetailGrace": "Votre compte est verrouillé immédiatement et effacé au bout de {days} jours. D’ici là, un administrateur de ce serveur peut annuler la suppression.",
+    "deleteAccountConfirmDescriptionGrace": "Vous êtes déconnecté et votre compte est verrouillé immédiatement. Au bout de {days} jours, il est effacé définitivement, avec toutes vos données de santé, vos clés d’accès, vos sessions et vos entrées d’audit. D’ici là, un administrateur de ce serveur peut annuler la suppression. Les copies dans les sauvegardes de ce serveur expirent à la fin de leur durée de conservation.",
+    "deleteAccountScheduled": "Votre compte est verrouillé et sera effacé le {date}. Déconnexion en cours.",
+    "dangerZoneSuccessGrace": "Votre dossier de santé a été supprimé. Un administrateur de ce serveur peut le restaurer jusqu’au {date}.",
+    "dangerZoneRestoreLimits": "Les accès prennent fin aussi : ce que vous partagez avec d’autres, ce qu’ils partagent avec vous, et tout rôle de personne responsable. Une restauration remet le dossier tel qu’il est maintenant. Ce qui est ajouté après la suppression est remplacé, et les connexions d’intégration, les partages, les rôles de personne responsable et les liens de partage ne reviennent pas ; il faut les configurer à nouveau."
   },
   "admin": {
     "title": "Administration",
@@ -7570,6 +7793,10 @@
     "offlineGeoLabel": "Données géographiques",
     "offlineGeoEnabled": "Hors ligne (GeoLite2)",
     "offlineGeoFallback": "En ligne ({host}) : montez les bases GeoLite2 et définissez GEOLITE2_DIR",
+    "heapLimitLabel": "Limite du tas",
+    "heapLimitValue": "{mb} Mo",
+    "heapLimitLow": "{mb} Mo, trop juste : définissez APP_MEMORY_LIMIT=1536m dans .env",
+    "memoryBelowFloor": "Conteneur {mb} Mo, sous le minimum pris en charge de {floor} Mo : définissez APP_MEMORY_LIMIT={floor}m dans .env",
     "offlineGeoOff": "Désactivé",
     "offlineGeoChosen": "En ligne ({host})",
     "apiGlobal": "Autoriser les points de terminaison d'API et les jetons d'API.",
@@ -7732,6 +7959,7 @@
     "tokensEmptyTitle": "Aucun jeton d'API pour l'instant",
     "tokensEmptyDescription": "Les jetons sont émis lorsqu'un client natif se connecte ou via Paramètres → Compte.",
     "loginOverviewDescription": "Événements de connexion et d’authentification de tous les comptes, filtrables et exportables en CSV.",
+    "loginOverviewFilterLabel": "Filtrer les événements",
     "allAuthEvents": "Tous les événements d'authentification",
     "failedOnly": "Échecs uniquement",
     "loginEmptyDescription": "Les connexions, déconnexions et modifications de passkey apparaîtront ici.",
@@ -7860,6 +8088,7 @@
           "admin": "Administrateurs",
           "user": "Utilisateurs"
         },
+        "filterLabel": "Filtrer les utilisateurs",
         "forceLogout": "Forcer la déconnexion",
         "forceLogoutConfirmTitle": "Forcer la déconnexion de {name} ?",
         "forceLogoutConfirmBody": "Toutes les sessions actives de cet utilisateur seront révoquées. Il devra se reconnecter sur chaque appareil.",
@@ -7868,7 +8097,15 @@
         "cannotLogoutSelf": "Impossible de forcer votre propre déconnexion",
         "emptyTitle": "Aucun utilisateur dans cette vue",
         "emptyDescription": "Aucun utilisateur ne correspond au filtre actuel.",
-        "emptyResetFilter": "Afficher tous les utilisateurs"
+        "emptyResetFilter": "Afficher tous les utilisateurs",
+        "deletionPending": "Suppression le {date}",
+        "deletionPendingNoDate": "Suppression programmée",
+        "undoDeletion": "Annuler la suppression",
+        "undoDeletionTitle": "Annuler la suppression de {name} ?",
+        "undoDeletionBody": "{name} a demandé la suppression de ce compte, qui sera effacé à la fin du délai de grâce. Annuler conserve le compte et tout son contenu tels quels. {name} peut se reconnecter, mais les jetons d’API, les liens de partage et les appareils de confiance restent révoqués et doivent être configurés à nouveau.",
+        "undoDeletionBodyGuardian": "Une personne responsable a supprimé le profil géré {name}, qui sera effacé à la fin du délai de grâce. Annuler conserve le profil et tout son contenu tels quels, et les personnes responsables y ont de nouveau accès. Ses liens de partage et jetons restent révoqués et doivent être configurés à nouveau.",
+        "undoDeletionDone": "Suppression de {name} annulée",
+        "undoDeletionFailed": "Impossible d’annuler la suppression"
       },
       "invites": {
         "title": "Invitations",
@@ -7930,8 +8167,8 @@
       },
       "backups": {
         "title": "Sauvegardes",
-        "subtitle": "Instantanés de données hebdomadaires par utilisateur stockés dans PostgreSQL.",
-        "description": "Chaque utilisateur dispose d'un instantané glissant par type de sauvegarde. Les tailles indiquent le blob chiffré. Télécharger déchiffre l'instantané pour l'administrateur qui le demande ; le texte chiffré reste dans la base de données.",
+        "subtitle": "Copies de comptes dans la base de données de ce serveur, pour restaurer un compte ici.",
+        "description": "Chaque compte dispose d’une copie hebdomadaire, remplacée chaque dimanche, ainsi que des copies téléversées ici et de la copie prise avant « Supprimer toutes les données ». Une copie restaure un compte existant sur ce serveur. Elle ne peut pas reconstruire un serveur perdu : il faut pour cela une sauvegarde de la base de données et les clés de chiffrement. Les tailles indiquent la copie chiffrée. Le téléchargement la déchiffre pour l’administrateur qui la demande ; le texte chiffré reste dans la base de données.",
         "runNow": "Sauvegarder maintenant",
         "runEnqueued": "Tâche de sauvegarde mise en file d'attente",
         "runFailed": "Échec de la mise en file d'attente de la sauvegarde",
@@ -7941,12 +8178,11 @@
         "emptyDescription": "Les sauvegardes s'exécutent automatiquement chaque dimanche à 03:00, ou lancez-en une maintenant pour créer le premier instantané.",
         "colUser": "Utilisateur",
         "colType": "Type",
-        "typeWeeklyAuto": "Hebdomadaire (auto)",
+        "typeWeeklyAuto": "Copie hebdomadaire du compte",
         "typeManual": "Manuelle",
         "colSize": "Taille",
         "colCreatedAt": "Dernier instantané",
         "colActions": "Actions",
-        "retentionLabel": "Conservation : {days} jours",
         "scheduleStaleTitle": "La sauvegarde hebdomadaire s'est arrêtée",
         "scheduleStaleDescription": "La copie planifiée la plus récente date de {days} jours. Une exécution hebdomadaire qui fonctionne n'en laisse jamais une dépasser {threshold} jours.",
         "scheduleFailedTitle": "La dernière exécution planifiée de la sauvegarde a échoué",
@@ -7964,7 +8200,7 @@
         "downloadFailed": "Échec du téléchargement",
         "downloadStarted": "Téléchargement démarré",
         "uploadTitle": "Téléverser une sauvegarde",
-        "uploadDescription": "Validez un fichier de sauvegarde et stockez-le comme instantané manuel. La restauration est une étape distincte.",
+        "uploadDescription": "Vérifie une copie de compte et la stocke à côté des copies de ce serveur. Le compte auquel elle appartient doit exister sur ce serveur. La restauration est une étape distincte.",
         "uploadButton": "Téléverser un fichier",
         "uploadHelp": "Une sauvegarde HealthLog au format .json ou .json.gz. Le fichier est compressé avant l’envoi ; compressé, il peut atteindre 512 Mo.",
         "uploadSuccess": "Sauvegarde téléversée ({count} enregistrements)",
@@ -8024,7 +8260,7 @@
         "restoreSkippedAccountSetting": "Réglage du compte",
         "restoreMissingTitle": "Restauration refusée : le fichier est incomplet",
         "restoreMissingDescription": "Le manifeste du fichier indique qu'il contient la section ci-dessous, et il ne la contient pas. Rien n'a été modifié : une restauration remplace toute une classe d'enregistrements, une section absente l'aurait donc vidée.",
-        "restoreMissingRemedy": "Utilise une sauvegarde de reprise après sinistre, ou réexporte le compte et téléverse le nouveau fichier. Une section que le manifeste déclare omise est autre chose et se restaure normalement.",
+        "restoreMissingRemedy": "Utilisez l’une des copies de compte de ce serveur ou une copie hors du serveur, ou exportez à nouveau le compte et téléversez le nouveau fichier. Une section que le manifeste déclare omise est un autre cas et se restaure normalement.",
         "restoreMissingDocuments": "Documents",
         "restoreMissingWorkouts": "Séances",
         "restoreMissingMentalHealth": "Questionnaires de santé mentale",
@@ -8054,6 +8290,9 @@
         "restoreActive": "Une restauration de ce compte est déjà en cours. Attends qu'elle se termine.",
         "restoreJobQueuedTitle": "La restauration de {username} attend de démarrer",
         "restoreJobQueuedNote": "Elle démarre dès que le processus en arrière-plan la prend en charge.",
+        "restoreJobWaitingBackupNote": "En attente de la sauvegarde en cours sur le serveur. Une restauration ne tourne jamais en même temps qu’une sauvegarde, et elle démarre environ une minute après la fin de celle-ci.",
+        "restoreJobWaitingBusyNote": "En attente de la fin d’une tâche lourde sur le serveur, comme une importation ou un traitement nocturne. Elle démarre environ une minute après.",
+        "restoreJobQueuedSince": "En file d’attente depuis {when}.",
         "restoreJobRunningTitle": "Restauration de {username} en cours",
         "restoreJobRunningNote": "Le compte affiche ses données actuelles jusqu'à la fin de la restauration. Tu peux quitter cette page ; la restauration continue sur le serveur.",
         "restoreJobResumed": "Relancée après le redémarrage du serveur.",
@@ -8074,7 +8313,7 @@
         "restoreFailureOwnerMismatch": "Le fichier de la sauvegarde appartient à un autre compte que la ligne de sauvegarde.",
         "restoreFailureOwnerMissing": "Le compte auquel appartient cette sauvegarde n'existe plus.",
         "restoreFailureSectionMissing": "Le fichier est incomplet : son manifeste nomme une section qu'il ne contient pas.",
-        "restoreFailureDocument": "Le fichier contient des documents sans leur contenu, comme un export portable. Utilise une sauvegarde de reprise après sinistre.",
+        "restoreFailureDocument": "Le fichier contient des documents sans leur contenu, comme un export portable. Utilisez plutôt l’une des copies de compte de ce serveur ou une copie hors du serveur.",
         "restoreFailureTimeBudget": "Cette sauvegarde est trop volumineuse pour être restaurée dans le temps imparti au processus en arrière-plan.",
         "restoreFailureTransaction": "La base de données a refusé la restauration en cours de route, tout a donc été annulé. Le journal du serveur indique l'erreur.",
         "restoreFailureCauseTimeout": "La restauration a duré plus longtemps que la base de données ne l'autorise, tout a donc été annulé. Si l'hôte de la base était chargé, relancez-la quand il est plus calme. Le journal du serveur indique l'étape.",
@@ -8095,7 +8334,32 @@
         "restoreSkippedMoodLabelCiphertext": "Nom d’étiquette ou de groupe d’humeur chiffré avec une clé que ce serveur ne possède pas (conservé sans son nom)",
         "restoreSkippedVisitCiphertext": "Texte de consultation ou de praticien chiffré avec une clé que ce serveur ne possède pas (conservé sans)",
         "restoreSkippedVaccinationCiphertext": "Note de vaccination chiffrée avec une clé que ce serveur ne possède pas (dose conservée sans)",
-        "restoreSkippedEnvironmentLocationCiphertext": "Lieu d'une période ou d'un jour environnemental chiffré avec une clé que ce serveur ne possède pas (conservé chiffré, ces jours ne sont pas actualisés)"
+        "restoreSkippedEnvironmentLocationCiphertext": "Lieu d'une période ou d'un jour environnemental chiffré avec une clé que ce serveur ne possède pas (conservé chiffré, ces jours ne sont pas actualisés)",
+        "typePreWipe": "Avant la suppression de toutes les données",
+        "retentionNote": "La copie hebdomadaire est remplacée chaque dimanche. Une copie prise avant « Supprimer toutes les données » est supprimée au bout de {days} jours. Les copies téléversées restent jusqu’à l’effacement de leur compte.",
+        "retentionNoteNoGrace": "La copie hebdomadaire est remplacée chaque dimanche. Les copies téléversées restent jusqu’à l’effacement de leur compte.",
+        "database": {
+          "title": "Dump de la base de données",
+          "lastGood": "Dernier dump valide {when}, {size}, {where}.",
+          "whereBoth": "conservé sur ce serveur et hors site",
+          "whereLocal": "conservé sur ce serveur",
+          "whereOffhost": "hors site uniquement",
+          "none": "Aucun dump de la base de données pour l'instant. Le premier a lieu cette nuit.",
+          "failedTitle": "Le dernier dump de la base de données a échoué",
+          "failedDescription": "{when} : {reason}",
+          "disabled": "Les dumps de la base de données sont désactivés (DB_BACKUP_ENABLED=false). Sauvegardez la base de données autrement.",
+          "noDirectoryOffhost": "Ce serveur ne peut pas écrire dans {dir} : les dumps partent uniquement hors site et aucun n'est conservé ici. Montez le volume de sauvegarde.",
+          "noDirectory": "Ce serveur ne peut pas écrire dans {dir} et aucun stockage hors site n'est configuré : aucun dump ne peut être fait. Montez le volume de sauvegarde.",
+          "retentionLocal": "Les comptes supprimés restent dans les dumps jusqu'à leur expiration : ce serveur conserve les {nights} dumps nocturnes les plus récents, et le dump pris avant la dernière mise à jour reste jusqu'à la suivante.",
+          "retentionOffhost": "La règle de cycle de vie du bucket supprime les copies hors site après {days} jours.",
+          "retentionOffhostMissing": "Aucune règle de cycle de vie du bucket ne couvre database/ : les dumps qui s'y trouvent, et les comptes supprimés qu'ils contiennent, ne sont jamais effacés. Ajoutez une règle pour ce préfixe.",
+          "notPersistentOffhost": "{dir} n'est pas sur un stockage persistant (il se trouve dans le conteneur et non sur un volume monté, ou en mémoire) : un dump écrit là serait perdu à la prochaine mise à jour. Les dumps partent uniquement hors site : aucun n'est conservé ici et aucun n'est pris avant une migration. Montez le volume de sauvegarde.",
+          "notPersistent": "{dir} n'est pas sur un stockage persistant (il se trouve dans le conteneur et non sur un volume monté, ou en mémoire) et aucun bucket hors site n'est configuré : aucun dump de la base n'est conservé nulle part. Montez le volume de sauvegarde.",
+          "offhostFailedTitle": "Le dump le plus récent de la base de données n'est pas arrivé dans le bucket externe",
+          "offhostLastUpload": "Le dump le plus récent du bucket date du {when}.",
+          "offhostNeverUploaded": "Aucun dump de la base de données n'est encore arrivé dans le bucket."
+        },
+        "restorePreWipeLimits": "Cette copie a été prise avant la suppression des données du compte, et la restaurer annule cette suppression autant qu’une copie le peut : ce que le compte a ajouté depuis est remplacé, et les connexions d’intégration, les partages, l’accès des personnes responsables et les liens de partage ne reviennent pas."
       },
       "danger-zone": {
         "title": "Zone de danger",
@@ -8161,7 +8425,10 @@
         "columnsHide": "Masquer le tableau",
         "columnsShowAll": "Afficher les {count} colonnes",
         "columnsShowWithRows": "Seulement les colonnes avec des lignes",
-        "columnsNoneWithRows": "Aucune colonne chiffrée ne contient encore de lignes."
+        "columnsNoneWithRows": "Aucune colonne chiffrée ne contient encore de lignes.",
+        "backupsDumpLocalLine": "Clé {key} : {count} dumps de la base de données sur ce serveur ont été écrits avec elle ; elle est nécessaire jusqu'à ce que la rétention les supprime.",
+        "backupsDumpOffhostLine": "Clé {key} : le dump de la base de données le plus récent écrit avec elle est arrivé dans le bucket le {when} ; nécessaire jusqu'au {until}",
+        "backupsDumpOffhostLineUnknown": "Clé {key} : le dump de la base de données le plus récent écrit avec elle est arrivé dans le bucket le {when}. La durée de conservation de database/ dans le bucket est inconnue : gardez la clé jusqu'à être sûr que ce dump a disparu."
       },
       "maintenance": {
         "title": "Maintenance de la table des mesures",
@@ -8291,47 +8558,6 @@
       "title": "Cette partie de la page n’a pas pu s’afficher",
       "description": "Le reste de la page fonctionne ; réessayez ou rechargez si le problème persiste."
     },
-    "keyBackup": {
-      "title": "Sauvegarde ta clé de chiffrement",
-      "description": "Sans copie de cette clé, tes données chiffrées et les sauvegardes de ce serveur ne pourront plus être lues.",
-      "loading": "Chargement de l'état de la sauvegarde de la clé…",
-      "loadError": "Impossible de charger l'état de la sauvegarde de la clé.",
-      "badgeDue": "À faire",
-      "badgeDone": "Sauvegardée",
-      "keyId": "ID de la clé active",
-      "fingerprint": "Empreinte",
-      "whatIsLost": "Garde une copie de la clé en dehors de ce serveur, par exemple dans un gestionnaire de mots de passe. Si le serveur est réinstallé avec une autre clé, HealthLog ne sert plus rien tant que la clé d'origine n'est pas revenue.",
-      "fingerprintHint": "L'empreinte correspond aux 12 premiers caractères du hachage SHA-256 de la clé. Elle identifie la clé sans la révéler, pour que tu puisses la comparer à ta copie.",
-      "checkLabel": "Vérifier ma copie",
-      "checkButton": "Vérifier",
-      "checkNote": "La clé collée est comparée à la clé active puis oubliée. Elle n'est jamais stockée ni journalisée.",
-      "checkInsecureNote": "Cette page n'est pas servie en https://, donc la clé collée traverse le réseau en clair, comme ton mot de passe. Elle est comparée puis oubliée, jamais stockée ni journalisée.",
-      "checkMatches": "Ta copie correspond à la clé active.",
-      "checkNoMatch": "Ta copie ne correspond pas à la clé active. Vérifie que tu as copié toute la valeur.",
-      "checkFailed": "La vérification a échoué.",
-      "confirmButton": "J'ai sauvegardé cette clé",
-      "confirmed": "Sauvegarde de la clé confirmée.",
-      "confirmFailed": "Impossible d'enregistrer la confirmation.",
-      "stale": "La clé du serveur a changé depuis le chargement de cette page. Vérifie le nouvel ID et l'empreinte, puis confirme à nouveau.",
-      "confirmedAt": "Confirmée le {date}.",
-      "confirmedAtBy": "Confirmée le {date} par {who}.",
-      "dueAgain": "Une sauvegarde a été confirmée pour la clé {keyId}, mais le serveur utilise maintenant une autre clé. Sauvegarde la clé actuelle.",
-      "tileLabel": "Sauvegarde de la clé de chiffrement",
-      "tileDue": "Non confirmée",
-      "tileDone": "Confirmée",
-      "platform": {
-        "composeLabel": "Compose",
-        "composeWhere": "La clé est ENCRYPTION_KEY (ou ENCRYPTION_KEYS) dans le fichier .env à côté de docker-compose.yml.",
-        "truenasLabel": "TrueNAS",
-        "truenasWhere": "Ouvre Apps, sélectionne HealthLog, choisis Modifier et copie ENCRYPTION_KEY dans les variables d'environnement.",
-        "coolifyLabel": "Coolify",
-        "coolifyWhere": "Ouvre l'application dans Coolify et copie ENCRYPTION_KEY depuis ses Environment Variables.",
-        "unraidLabel": "Unraid",
-        "unraidWhere": "Dans l'onglet Docker, modifie le conteneur HealthLog et copie ENCRYPTION_KEY depuis le modèle, ou depuis le .env de ta pile Compose Manager.",
-        "portainerLabel": "Portainer",
-        "portainerWhere": "Ouvre la pile HealthLog dans Portainer et copie ENCRYPTION_KEY depuis ses variables d'environnement."
-      }
-    },
     "keyMismatch": {
       "title": "HealthLog ne peut pas ouvrir ses données",
       "body": "La clé de chiffrement avec laquelle ce serveur a démarré n'est pas celle avec laquelle sa base de données a été écrite. Pour protéger tes données, HealthLog ne sert rien tant que ce n'est pas corrigé.",
@@ -8362,6 +8588,185 @@
       "defaultAboveCeiling": "Le niveau par défaut ne peut pas dépasser le niveau le plus élevé.",
       "gapLabel": "Heures entre deux mises à jour des cartes après une synchronisation (Standard)",
       "gapHint": "Heures entières de 1 à 48. Laissez vide pour utiliser AI_SYNC_REGEN_GAP_HOURS, sinon 6. En vigueur : {hours} h."
+    },
+    "recoveryKit": {
+      "title": "Kit de récupération",
+      "description": "Chaque clé nécessaire à la restauration de ce serveur, avec son ID et son empreinte.",
+      "intro": "Gardez une copie de chaque clé ci-dessous en dehors de ce serveur, par exemple dans un gestionnaire de mots de passe. Sans elles, ni un dump de la base de données ni une copie de sauvegarde ne peuvent être relus, et HealthLog refuse de démarrer s'il manque une clé dont il a besoin.",
+      "loading": "Chargement du kit de récupération…",
+      "loadError": "Impossible de charger le kit de récupération.",
+      "badgeDue": "À faire",
+      "badgeDone": "Sauvegardé",
+      "keyId": "ID",
+      "fingerprint": "Empreinte",
+      "noFingerprint": "Absente de ce serveur",
+      "kind": {
+        "application": "Clé d'application {id}",
+        "backup": "Clé des sauvegardes hors hôte",
+        "backupPrevious": "Ancienne clé des sauvegardes hors hôte",
+        "token": "Clé des jetons"
+      },
+      "need": {
+        "active": "Chiffre les nouvelles données.",
+        "configured": "Présente sur ce serveur.",
+        "storedCopies": "Nécessaire à {count} copies stockées.",
+        "offhostUntil": "Nécessaire aux copies hors hôte jusqu'au {date}.",
+        "offhostUnknown": "Nécessaire aux copies hors hôte tant que le bucket les conserve.",
+        "backupActive": "Scelle chaque nouvelle copie hors hôte.",
+        "backupPrevious": "Ouvre les copies hors hôte écrites avant le dernier changement de clé.",
+        "token": "Signe les sessions, les jetons et les liens de partage. Sans elle, tout le monde est déconnecté, mais aucune donnée n'est perdue.",
+        "localDumps": "Nécessaire à {count} dumps de la base de données sur ce serveur.",
+        "offhostDumpsUntil": "Nécessaire aux dumps de la base de données hors hôte jusqu'au {date}.",
+        "offhostDumpsUnknown": "Nécessaire aux dumps de la base de données hors hôte tant que le bucket les conserve."
+      },
+      "source": "Définie dans {variable}.",
+      "status": {
+        "confirmed": "Sauvegardée",
+        "new": "Pas encore sauvegardée",
+        "notConfigured": "Absente de ce serveur",
+        "unreadable": "Clé non valide"
+      },
+      "notConfiguredHint": "Une sauvegarde a encore besoin de cette clé et ce serveur ne l'a pas. Seule une copie que vous conservez ailleurs peut lire ces sauvegardes. Confirmez le kit une fois que vous avez cette copie.",
+      "unreadableHint": "La variable est définie mais ne contient pas de clé valide. Corrigez-la avant de vous fier aux copies hors hôte.",
+      "fingerprintHint": "L'empreinte correspond aux 12 premiers caractères du hachage SHA-256 d'une clé. Elle identifie la clé sans la révéler, pour que vous puissiez la comparer à votre copie.",
+      "whereTitle": "Où les clés sont définies",
+      "platform": {
+        "composeLabel": "Compose",
+        "composeWhere": "Les clés se trouvent dans le fichier .env à côté de docker-compose.yml : ENCRYPTION_KEY ou ENCRYPTION_KEYS, API_TOKEN_HMAC_KEY et, avec les copies hors hôte, BACKUP_ENCRYPTION_KEY.",
+        "truenasLabel": "TrueNAS",
+        "truenasWhere": "Ouvrez Apps, sélectionnez HealthLog et choisissez Edit. Les clés se trouvent sous HealthLog Configuration ; pour une app installée via YAML, ce sont ENCRYPTION_KEY, API_TOKEN_HMAC_KEY et BACKUP_ENCRYPTION_KEY dans les paramètres d'environnement.",
+        "coolifyLabel": "Coolify",
+        "coolifyWhere": "Ouvrez l'application dans Coolify et copiez ENCRYPTION_KEY, API_TOKEN_HMAC_KEY et BACKUP_ENCRYPTION_KEY depuis ses Environment Variables.",
+        "unraidLabel": "Unraid",
+        "unraidWhere": "Dans l'onglet Docker, modifiez le conteneur HealthLog et copiez ENCRYPTION_KEY, API_TOKEN_HMAC_KEY et BACKUP_ENCRYPTION_KEY depuis le modèle, ou depuis le .env de votre pile Compose Manager.",
+        "portainerLabel": "Portainer",
+        "portainerWhere": "Ouvrez la pile HealthLog dans Portainer et copiez ENCRYPTION_KEY, API_TOKEN_HMAC_KEY et BACKUP_ENCRYPTION_KEY depuis ses variables d'environnement."
+      },
+      "restoreTitle": "Restaurer ce serveur",
+      "restoreBody": "Installez HealthLog avec les mêmes clés, restaurez le dump de la base de données le plus récent dans une base vide, puis démarrez l'app. Le guide détaille chaque étape.",
+      "restoreLink": "Guide de reprise après sinistre",
+      "checkLabel": "Vérifier ma copie",
+      "checkKeyLabel": "Clé à vérifier",
+      "checkValueLabel": "Votre copie de la clé",
+      "checkButton": "Vérifier",
+      "checkNote": "La clé collée est comparée à celle que détient ce serveur puis oubliée. Elle n'est jamais stockée ni journalisée.",
+      "checkInsecureNote": "Cette page n'est pas servie en https://, donc la clé collée traverse le réseau en clair, comme votre mot de passe. Elle est comparée puis oubliée, jamais stockée ni journalisée.",
+      "checkMatches": "Votre copie correspond à cette clé.",
+      "checkNoMatch": "Votre copie ne correspond pas à cette clé. Vérifiez que vous avez copié toute la valeur.",
+      "checkFailed": "La vérification a échoué.",
+      "confirmButton": "J'ai une copie de chaque clé",
+      "confirmed": "Kit de récupération confirmé.",
+      "confirmFailed": "Impossible d'enregistrer la confirmation.",
+      "stale": "Le kit a changé depuis le chargement de cette page. Vérifiez les clés qu'il liste maintenant, puis confirmez à nouveau.",
+      "confirmedAt": "Confirmé le {date}.",
+      "confirmedAtBy": "Confirmé le {date} par {who}.",
+      "dueAgain": "Le kit a été confirmé le {date}. Il liste désormais aussi {keys}, que cette confirmation ne couvrait pas. Sauvegardez une copie de chacune et confirmez à nouveau."
+    },
+    "recoveryReadiness": {
+      "title": "Capacité de restauration",
+      "description": "Indique si ce serveur pourrait être remis en route après une perte, d'après chaque sauvegarde qu'il réalise.",
+      "loading": "Vérification des sauvegardes…",
+      "loadError": "Impossible de charger la capacité de restauration.",
+      "state": {
+        "ok": "Prêt",
+        "attention": "Demande de l'attention",
+        "failing": "Menacé"
+      },
+      "signal": {
+        "database_dump": "Dump de la base de données",
+        "weekly_copy": "Copies hebdomadaires des comptes",
+        "offhost_copies": "Copies hors hôte",
+        "restore_drill": "Test de restauration",
+        "offhost_setup": "Sauvegarde hors hôte",
+        "recovery_kit": "Kit de récupération",
+        "dump_retention": "Dumps dans le bucket"
+      },
+      "at": {
+        "database_dump": "Dump le plus récent : {date}",
+        "weekly_copy": "Copie de compte la plus ancienne : {date}",
+        "offhost_copies": "Copie hors hôte la plus ancienne : {date}",
+        "restore_drill": "Dernier test : {date}",
+        "recovery_kit": "Confirmé : {date}"
+      },
+      "dueBy": "À faire avant le {date}",
+      "fix": {
+        "database_dump": "Ouvrir les sauvegardes",
+        "weekly_copy": "Ouvrir les sauvegardes",
+        "offhost_copies": "Ouvrir les sauvegardes",
+        "restore_drill": "Ouvrir les sauvegardes",
+        "offhost_setup": "Ouvrir les sauvegardes",
+        "recovery_kit": "Ouvrir le kit",
+        "dump_retention": "Ouvrir les sauvegardes"
+      },
+      "reason": {
+        "database_dump": {
+          "not_available": "Cette version ne planifie pas de dump de la base de données.",
+          "disabled": "Le dump planifié de la base de données est désactivé, donc aucune copie ne peut reconstruire ce serveur. Pour le réactiver, supprimez DB_BACKUP_ENABLED ou mettez-le à true, puis redémarrez HealthLog.",
+          "unreadable": "L'état du dump de la base de données n'a pas pu être lu.",
+          "never_succeeded": "Aucun dump de la base de données n'a encore réussi, et la dernière tentative a échoué.",
+          "never_ran": "Aucun dump de la base de données n'a été écrit dans les {hours} heures écoulées depuis l'activation des dumps.",
+          "first_pending": "Le premier dump de la base de données n'a pas encore été lancé.",
+          "stale": "Le dump de la base de données le plus récent date de {hours} heures.",
+          "last_failed": "Le dernier dump de la base de données a échoué. Le précédent est encore récent.",
+          "fresh": "Le dernier dump de la base de données est récent.",
+          "nowhere_to_write": "Le dossier des dumps {directory} n'est pas accessible en écriture et aucun bucket externe n'est configuré, donc aucun dump ne peut être conservé.",
+          "not_persistent": "Le répertoire des dumps {directory} n'est pas sur un stockage persistant et aucun bucket hors site n'est configuré : chaque dump serait perdu à la prochaine mise à jour. Montez le volume de sauvegarde.",
+          "fresh_offhost_only": "Le dump de base le plus récent est à jour et se trouve dans le bucket hors site. Aucun n'est conservé sur ce serveur, car {directory} n'est pas sur un stockage persistant, et aucun n'est pris avant une migration.",
+          "offhost_failed": "Le dump le plus récent de la base de données est conservé sur ce serveur, mais son envoi vers le bucket externe a échoué.",
+          "offhost_stale": "Aucun dump de la base de données n'est arrivé dans le bucket externe depuis {hours} heures : les envois échouent à chaque fois. Si ce serveur est perdu, aucun dump récent ne permet de le reconstruire.",
+          "offhost_never": "Aucun dump de la base de données n'est jamais arrivé dans le bucket externe : l'envoi échoue. Si ce serveur est perdu, aucun dump ne permet de le reconstruire."
+        },
+        "weekly_copy": {
+          "no_accounts": "Il n'y a pas encore de compte à copier.",
+          "stale": "La copie hebdomadaire la plus ancienne date de {days} jours. Comptes en retard : {accounts}.",
+          "never": "Un compte n'a pas eu de copie hebdomadaire depuis {days} jours. Comptes en retard : {accounts}.",
+          "first_pending": "La première copie hebdomadaire est faite tôt le dimanche matin.",
+          "fresh": "Chaque compte a une copie de la semaine dernière."
+        },
+        "offhost_copies": {
+          "not_configured": "Aucun bucket hors hôte n'est configuré.",
+          "stale": "Les copies hors hôte ont plus de deux nuits de retard. Comptes en retard : {accounts}.",
+          "first_pending": "L'envoi nocturne hors hôte n'a encore atteint aucun compte.",
+          "fresh": "Chaque compte a une copie récente dans le bucket hors hôte."
+        },
+        "restore_drill": {
+          "not_configured": "Le test lit le bucket hors hôte, qui n'est pas configuré.",
+          "not_run_yet": "Le test de restauration mensuel n'a pas encore été lancé.",
+          "failed": "Le dernier test de restauration a échoué : {failed} copies sur {checked} n'ont pas pu être relues.",
+          "failed_run": "Le dernier test de restauration n'a pas pu aller jusqu'au bout.",
+          "passed": "Le dernier test de restauration a relu {checked} copies.",
+          "nothing_checked": "Le dernier test de restauration s'est arrêté sur sa limite de temps avant de relire une seule copie : il n'a rien prouvé."
+        },
+        "offhost_setup": {
+          "configured": "Les copies quittent ce serveur chaque nuit.",
+          "no_admin": "Il n'y a pas encore de compte administrateur.",
+          "not_configured": "Aucun bucket hors hôte n'est configuré, donc chaque copie se trouve uniquement sur ce serveur.",
+          "not_configured_grace": "Aucun bucket hors hôte n'est encore configuré, donc chaque copie se trouve uniquement sur ce serveur."
+        },
+        "recovery_kit": {
+          "confirmed": "Une copie de chaque clé nécessaire à une restauration est conservée.",
+          "out_of_date": "Le kit de récupération liste désormais aussi {keys}, que la dernière confirmation ne couvrait pas. Rien n'est cassé : sauvegardez une copie et confirmez à nouveau le kit.",
+          "no_admin": "Il n'y a pas encore de compte administrateur.",
+          "not_confirmed": "Personne n'a confirmé de copie des clés nécessaires à une restauration : {keys}.",
+          "not_confirmed_grace": "Sauvegardez une copie des clés nécessaires à une restauration : {keys}."
+        },
+        "dump_retention": {
+          "not_configured": "Aucun bucket hors site n'est configuré.",
+          "no_offhost_dumps": "Aucun dump de la base ne part dans le bucket.",
+          "missing": "Aucune règle de cycle de vie du bucket ne couvre database/ : les dumps qui s'y trouvent, et les comptes supprimés qu'ils contiennent, ne sont jamais effacés. Ajoutez une règle pour ce préfixe.",
+          "configured": "Le bucket efface les dumps au bout de {days} jours.",
+          "unknown": "Le bucket n'indique pas si une règle efface les anciens dumps. Vérifiez qu'une règle de cycle de vie couvre database/."
+        }
+      },
+      "recovered": {
+        "database_dump": "Le dump de la base de données est de nouveau récent.",
+        "weekly_copy": "Chaque compte a de nouveau une copie hebdomadaire récente.",
+        "offhost_copies": "Chaque compte a de nouveau une copie hors hôte récente.",
+        "restore_drill": "Le test de restauration réussit de nouveau.",
+        "offhost_setup": "Les copies hors hôte sont maintenant configurées.",
+        "recovery_kit": "Le kit de récupération est de nouveau confirmé.",
+        "dump_retention": "Une règle de cycle de vie du bucket couvre désormais les dumps de la base."
+      }
     }
   },
   "achievements": {
@@ -8675,7 +9080,10 @@
       "offlineGeoUnavailableTitle": "Bases de géolocalisation hors ligne non chargées",
       "offlineGeoUnavailableBody": "HealthLog résout les localisations de connexion via la requête en ligne vers {host}, donc chaque adresse IP de connexion quitte ce serveur. Pour les résoudre localement, téléchargez les bases GeoLite2-City et GeoLite2-ASN avec un compte MaxMind gratuit, montez le répertoire dans le conteneur et faites-y pointer GEOLITE2_DIR. Étapes : {docsUrl}",
       "tlsPinChangedTitle": "Certificat feuille TLS modifié : {host}",
-      "tlsPinChangedBody": "La feuille TLS servie par {host} a maintenant le pin SPKI {servedPin}, qui ne figure pas dans l'ensemble de pins connus. Les clients épinglés (l'app native) ne pourront plus se connecter une fois l'ancien pin disparu. Réextrayez le nouveau pin de la feuille, ajoutez-le à TLS_LEAF_SPKI_PINS et à l'ensemble de pins du client natif, et publiez une version avant l'expiration de ce certificat le {validTo}. Voir docs/ops/tls-cert-pin.md."
+      "tlsPinChangedBody": "La feuille TLS servie par {host} a maintenant le pin SPKI {servedPin}, qui ne figure pas dans l'ensemble de pins connus. Les clients épinglés (l'app native) ne pourront plus se connecter une fois l'ancien pin disparu. Réextrayez le nouveau pin de la feuille, ajoutez-le à TLS_LEAF_SPKI_PINS et à l'ensemble de pins du client natif, et publiez une version avant l'expiration de ce certificat le {validTo}. Voir docs/ops/tls-cert-pin.md.",
+      "accountErasureRefusedTitle": "Le compte n’a pas pu être effacé : {username}",
+      "accountErasureRefusedBody": "Le délai de suppression de {username} est écoulé, mais ce compte est la dernière personne responsable active d’un profil géré : il n’a donc pas été effacé. Il reste verrouillé. Ajoutez une autre personne responsable au profil, supprimez le profil ou annulez la suppression dans Administration, Utilisateurs.",
+      "accountErasureFailedBody": "Le délai de suppression de {username} est écoulé, mais l’effacement du compte a échoué. Il reste verrouillé et une nouvelle tentative a lieu chaque heure, après les autres comptes en attente. L’erreur figure dans la carte des tâches en échec, dans Administration."
     },
     "user": {
       "telegramTestBody": "HealthLog: connexion réussie. Les notifications Telegram sont actives."
@@ -8823,6 +9231,18 @@
       "detailedToast": "Les notifications incluent désormais des valeurs de santé.",
       "genericToast": "Les notifications n'incluent plus de valeurs de santé.",
       "saveError": "Enregistrement impossible. Réessaie plus tard."
+    },
+    "checkupReminders": {
+      "title": "Rappels de bilans",
+      "description": "Activez ou désactivez chaque rappel de bilan."
+    },
+    "eventBackupHealth": "État des sauvegardes",
+    "eventBackupHealthDesc": "Quand une sauvegarde s'arrête, prend du retard ou repart. Envoyé uniquement aux administrateurs.",
+    "recoveryReadiness": {
+      "titleAttention": "Les sauvegardes demandent de l'attention",
+      "titleFailing": "Les sauvegardes sont menacées",
+      "titleReminder": "Les sauvegardes sont toujours menacées",
+      "titleRecovered": "Les sauvegardes sont revenues à la normale"
     }
   },
   "i18n": {
@@ -8885,6 +9305,7 @@
     "inTarget": "Dans la plage cible",
     "aboveTarget": "{delta} {unit} au-dessus de la plage",
     "belowTarget": "{delta} {unit} en dessous de la plage",
+    "systolic": "Systolique",
     "diastolic": "Diastolique",
     "glucoseFasting": "Glycémie (à jeun)",
     "glucosePostprandial": "Glycémie (postprandiale)",
@@ -9141,9 +9562,9 @@
     "insights": {
       "headline": {
         "title": "Ton cycle et ton corps",
-        "restingHeartRate": "Ta fréquence cardiaque au repos est d'environ {delta} {unit} {dir} en phase lutéale qu'en phase folliculaire.",
-        "heartRateVariability": "Ta variabilité de la fréquence cardiaque est d'environ {delta} {unit} {dir} en phase lutéale qu'en phase folliculaire.",
-        "generic": "Ton/ta {metric} est d'environ {delta} {unit} {dir} en phase lutéale qu'en phase folliculaire.",
+        "restingHeartRate": "Ta fréquence cardiaque au repos est d'environ {delta} {dir} en phase lutéale qu'en phase folliculaire.",
+        "heartRateVariability": "Ta variabilité de la fréquence cardiaque est d'environ {delta} {dir} en phase lutéale qu'en phase folliculaire.",
+        "generic": "Ton/ta {metric} est d'environ {delta} {dir} en phase lutéale qu'en phase folliculaire.",
         "dirHigher": "plus élevée",
         "dirLower": "plus basse",
         "empty": "Pas encore assez de cycles et de relevés pour faire ressortir un schéma de phase. Continue à enregistrer : cela se complétera à mesure que ton historique grandit."
@@ -9151,7 +9572,7 @@
       "crosstab": {
         "description": "Comment chaque mesure se compare entre tes phases lutéale et folliculaire, sur tes propres données.",
         "pairLabel": "{metric} : phase lutéale vs folliculaire",
-        "detail": "Lutéale {lutealAvg} {unit} ({lutealDays} jours) vs folliculaire {follicularAvg} {unit} ({follicularDays} jours).",
+        "detail": "Lutéale {lutealAvg} ({lutealDays} jours) vs folliculaire {follicularAvg} ({follicularDays} jours).",
         "metricRestingHeartRate": "Fréquence cardiaque au repos",
         "metricHrv": "Variabilité de la fréquence cardiaque",
         "metricSleepDuration": "Durée du sommeil",
@@ -9161,15 +9582,7 @@
         "metricWristTemperature": "Température du poignet la nuit",
         "metricSkinTemperature": "Température de la peau",
         "metricBloodGlucose": "Glycémie",
-        "metricMood": "Humeur",
-        "unitHours": "h",
-        "unitSteps": "pas",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "unitMood": "pts",
-        "confidenceLow": "Confiance faible",
-        "confidenceMedium": "Confiance moyenne",
-        "confidenceHigh": "Confiance élevée"
+        "metricMood": "Humeur"
       },
       "title": "Analyses du cycle",
       "symptomPatternsTitle": "Tendances des symptômes par phase",
@@ -9200,7 +9613,8 @@
       "viewDetails": "Voir les analyses du cycle"
     },
     "wellnessRing": {
-      "label": "Cycle"
+      "label": "Cycle",
+      "loadError": "Impossible de charger ton cycle."
     },
     "disclaimer": "Ces prévisions sont des estimations descriptives issues de vos données enregistrées, ni une méthode de contraception ni un avis médical. Elles n'indiquent jamais qu'il est sûr d'avoir des rapports non protégés. Pour la contraception ou toute décision médicale, consultez un professionnel de santé.",
     "title": "Ton cycle",
@@ -9605,8 +10019,6 @@
       "description": "Saisissez la valeur ; le rappel est marqué comme fait."
     },
     "manage": {
-      "title": "Gérer les rappels",
-      "description": "Activer ou désactiver des rappels individuels.",
       "empty": "Aucun rappel à personnaliser pour l'instant."
     },
     "dashboard": {
@@ -9878,6 +10290,17 @@
       "reviewHint": "Vérifiez chaque valeur, puis enregistrez celles à conserver.",
       "foundCount": "{count} valeurs trouvées",
       "pagesCapped": "Seules les {read} premières pages sur {total} ont été lues. Les valeurs des pages suivantes ne figurent pas dans cette liste.",
+      "stoppedBudget": "Votre budget d'IA du jour a été épuisé en cours de lecture, les pages restantes n'ont donc pas été lues.",
+      "stoppedUnavailable": "L'IA a été désactivée pendant la lecture du compte rendu, les pages restantes n'ont donc pas été lues.",
+      "stoppedError": "Le scan n'a pas pu continuer à cause d'une erreur du serveur, les pages restantes n'ont donc pas été lues. Réessayez plus tard.",
+      "tooLarge": "Ce texte est trop long pour un seul scan. Scannez le compte rendu page par page.",
+      "truncated": "Le fournisseur d'IA a atteint sa limite de sortie avant la fin du compte rendu. Des valeurs peuvent manquer après ce point : comparez la liste avec le compte rendu.",
+      "truncatedPages": "Le fournisseur d'IA a atteint sa limite de sortie sur ces pages : {pages}. Des valeurs plus bas sur ces pages peuvent manquer : comparez-les avec le compte rendu.",
+      "unreadPages": "Ces pages n'ont pas pu être lues et leurs valeurs ne figurent pas dans cette liste : {pages}.",
+      "unreadParts": "Une partie du compte rendu n'a pas pu être lue et ses valeurs ne figurent pas dans cette liste.",
+      "rowsCapped": "Le compte rendu contient {found} valeurs. Un scan en prend {kept}, seules les {kept} premières sont donc affichées.",
+      "outputLimit": "Le fournisseur d'IA a atteint sa limite de sortie avant de renvoyer la moindre valeur. Essayez une photo d'une seule page, ou un modèle qui accepte des réponses plus longues.",
+      "errorTooLong": "Raccourcissez à {max} caractères.",
       "confirmRow": "Inclure cette valeur",
       "analyteLabel": "Nom de l'analyse",
       "resultLabel": "Résultat",
@@ -9979,6 +10402,27 @@
       "doneToastFew": "Fusionné dans {name}, {count} mesures déplacées",
       "doneToastOther": "Fusionné dans {name}, {count} mesures déplacées",
       "error": "Les biomarqueurs n'ont pas pu être fusionnés. Réessaie."
+    },
+    "trend": {
+      "title": "Tendance",
+      "slope": {
+        "rising": "Augmente d'environ {amount} {unit} par an sur {n} valeurs depuis le {since}.",
+        "falling": "Diminue d'environ {amount} {unit} par an sur {n} valeurs depuis le {since}.",
+        "flat": "Aucune variation sur {n} valeurs depuis le {since}."
+      },
+      "projection": {
+        "exits": {
+          "high": "Si cette droite se prolongeait, elle atteindrait la limite haute de ta plage de référence vers le {date}. C'est une projection, pas une prévision.",
+          "low": "Si cette droite se prolongeait, elle atteindrait la limite basse de ta plage de référence vers le {date}. C'est une projection, pas une prévision."
+        },
+        "beyond_horizon": "À ce rythme, la droite reste dans ta plage de référence plus de {years} ans, la durée couverte par tes valeurs.",
+        "beyond_horizon_capped": "À ce rythme, la droite reste dans ta plage de référence plus de {years} ans, aussi loin que porte la projection.",
+        "no_exit": "La droite s'éloigne des limites de ta plage de référence.",
+        "already_outside": "La droite est déjà hors de ta plage de référence.",
+        "no_clear_trend": "Sur ces valeurs, la variation ne se distingue pas clairement d'une absence de variation, donc aucune projection n'est tracée.",
+        "stale": "La valeur la plus récente date du {date}, il y a plus d’un an. La droite est montrée à cette date, sans projection."
+      },
+      "interval": "Intervalle à 95 % de la variation annuelle : de {lo} à {hi} {unit}."
     }
   },
   "modules": {
@@ -10199,6 +10643,8 @@
       "yellow-fever": "Fièvre jaune",
       "japanese-encephalitis": "Encéphalite japonaise",
       "cholera": "Choléra",
+      "dengue": "Dengue",
+      "tuberculosis": "Tuberculose",
       "td": "dT (tétanos, diphtérie)",
       "tdap": "dTca (tétanos, diphtérie, coqueluche)",
       "tdap-ipv": "dTca-VPI (quadruple)",
@@ -10392,6 +10838,7 @@
     "vital": {
       "RESTING_HEART_RATE": "Fréquence cardiaque au repos",
       "HEART_RATE_VARIABILITY": "Variabilité de la fréquence cardiaque",
+      "HRV_RMSSD": "VFC (RMSSD)",
       "RECOVERY_SCORE": "Recovery",
       "OXYGEN_SATURATION": "Saturation en oxygène",
       "BODY_TEMPERATURE": "Température corporelle",
@@ -10715,25 +11162,15 @@
       "who5": "Test de bien-être, 5 questions",
       "sci": "Test de sommeil, 8 questions"
     },
-    "options": {
-      "0": "Jamais",
-      "1": "Plusieurs jours",
-      "2": "Plus de la moitié des jours",
-      "3": "Presque tous les jours"
-    },
-    "functionalTitle": "Si tu as coché des problèmes, à quel point t'ont-ils gêné(e) dans ton travail, à la maison ou dans tes relations avec les autres ?",
-    "functional": {
-      "0": "Pas du tout gênant",
-      "1": "Un peu gênant",
-      "2": "Très gênant",
-      "3": "Extrêmement gênant"
-    },
     "functionalOptionalHint": "Facultatif : tu peux envoyer sans répondre à cette question.",
     "result": {
       "title": "Ton résultat",
       "totalLabel": "Score total",
       "bandLabel": "Plage pour ce dépistage",
-      "takeAnother": "Faire un autre bilan"
+      "takeAnother": "Faire un autre bilan",
+      "scoreOf": "sur {max}",
+      "firstCheckIn": "C’est votre premier résultat pour ce questionnaire. À partir du prochain, l’évolution s’affichera ici.",
+      "nextStep": "Vous pouvez refaire ce questionnaire dans deux semaines ou plus tard pour suivre l’évolution. Si quelque chose vous inquiète, parlez-en à tout moment à un professionnel de santé."
     },
     "band": {
       "PHQ9": {
@@ -10774,45 +11211,6 @@
       "ifDanger": "Si tu es en danger immédiat, appelle le {emergency} maintenant.",
       "resourcesTitle": "Des personnes qui peuvent aider"
     },
-    "items": {
-      "phq9": {
-        "1": "Peu d'intérêt ou de plaisir à faire les choses",
-        "2": "Se sentir triste, déprimé(e) ou désespéré(e)",
-        "3": "Difficultés à s'endormir ou à rester endormi(e), ou dormir trop",
-        "4": "Se sentir fatigué(e) ou avoir peu d'énergie",
-        "5": "Avoir peu d'appétit ou manger trop",
-        "6": "Avoir une mauvaise opinion de soi-même — ou avoir le sentiment d'être nul(le) ou d'avoir déçu sa famille ou soi-même",
-        "7": "Avoir du mal à se concentrer, par exemple pour lire le journal ou regarder la télévision",
-        "8": "Bouger ou parler si lentement que les autres ont pu le remarquer. Ou au contraire, être si agité(e) que vous avez bougé beaucoup plus que d'habitude",
-        "9": "Penser qu'il vaudrait mieux mourir ou envisager de vous faire du mal d'une manière ou d'une autre"
-      },
-      "gad7": {
-        "1": "Se sentir nerveux/nerveuse, anxieux/anxieuse ou tendu(e)",
-        "2": "Être incapable d'arrêter de vous inquiéter ou de contrôler vos inquiétudes",
-        "3": "Vous inquiéter trop à propos de choses diverses",
-        "4": "Avoir du mal à vous détendre",
-        "5": "Être si agité(e) qu'il est difficile de rester tranquille",
-        "6": "Devenir facilement contrarié(e) ou irritable",
-        "7": "Avoir peur que quelque chose d'épouvantable puisse arriver"
-      },
-      "who5": {
-        "1": "Je me suis senti(e) bien et de bonne humeur",
-        "2": "Je me suis senti(e) calme et tranquille",
-        "3": "Je me suis senti(e) plein(e) d'énergie et vigoureux(se)",
-        "4": "Je me suis réveillé(e) en me sentant frais(che) et dispos(e)",
-        "5": "Ma vie quotidienne a été remplie de choses intéressantes"
-      },
-      "sci": {
-        "1": "… how long does it take you to fall asleep?",
-        "2": "… if you then wake up during the night … how long are you awake for in total? (add all the wakenings up)",
-        "3": "… how many nights a week do you have a problem with your sleep?",
-        "4": "… how would you rate your sleep quality?",
-        "5": "… affected your mood, energy, or relationships?",
-        "6": "… affected your concentration, productivity, or ability to stay awake?",
-        "7": "… troubled you in general?",
-        "8": "… how long have you had a problem with your sleep?"
-      }
-    },
     "crisisResource": {
       "telefonSeelsorge": {
         "name": "TelefonSeelsorge (24h/24, 7j/7, gratuit et confidentiel)"
@@ -10840,6 +11238,18 @@
       },
       "crisisTextLine": {
         "name": "Crisis Text Line"
+      },
+      "cvv": {
+        "name": "CVV, Centro de Valorização da Vida (Brésil, 24h/24, 7j/7, gratuit et confidentiel)"
+      },
+      "samu": {
+        "name": "SAMU, urgences médicales (Brésil)"
+      },
+      "sns24": {
+        "name": "SNS 24, soutien psychologique (Portugal, 24h/24, 7j/7, option 4)"
+      },
+      "sosVozAmiga": {
+        "name": "SOS Voz Amiga (Portugal, tous les jours de 15h30 à 0h30)"
       }
     },
     "instrumentDescription": {
@@ -10848,7 +11258,6 @@
       "who5": "Test de bien-être en 5 questions. Répondez en pensant aux deux dernières semaines ; des chiffres plus élevés signifient un meilleur bien-être.",
       "sci": "Test de sommeil en 8 questions. La plupart des questions portent sur le dernier mois ; des scores plus élevés signifient un meilleur sommeil."
     },
-    "progress": "{current} / {total}",
     "next": "Suivant",
     "lastResult": "Dernier test",
     "lastScore": "Dernier résultat",
@@ -10860,66 +11269,63 @@
       "who5": "Un score de bien-être de 50 ou moins peut mériter un regard plus attentif. Si tu le souhaites, le PHQ-9 sur cette page explore l'humeur plus en détail. C'est une suggestion bienveillante, pas un diagnostic.",
       "sci": "Dans l'étude de ce questionnaire, des scores de 16 ou moins étaient associés à une insomnie probable. Si un mauvais sommeil continue de te peser, parler à un professionnel de santé peut aider. Ce n'est pas un diagnostic."
     },
-    "validatedInEnglishNote": "Ce questionnaire est validé en anglais ; les questions sont affichées dans leur version originale anglaise.",
-    "who5Options": {
-      "0": "Jamais",
-      "1": "De temps en temps",
-      "2": "Moins de la moitié du temps",
-      "3": "Plus de la moitié du temps",
-      "4": "La plupart du temps",
-      "5": "Tout le temps"
-    },
-    "sciOptions": {
-      "duration": {
-        "0": "≥ 61 min",
-        "1": "46–60 min",
-        "2": "31–45 min",
-        "3": "16–30 min",
-        "4": "0–15 min"
-      },
-      "nights": {
-        "0": "5–7",
-        "1": "4",
-        "2": "3",
-        "3": "2",
-        "4": "0–1"
-      },
-      "quality": {
-        "0": "Very poor",
-        "1": "Poor",
-        "2": "Average",
-        "3": "Good",
-        "4": "Very good"
-      },
-      "impact": {
-        "0": "Very much",
-        "1": "Much",
-        "2": "Somewhat",
-        "3": "A little",
-        "4": "Not at all"
-      },
-      "problemDuration": {
-        "0": "> 1 year",
-        "1": "7–12 months",
-        "2": "3–6 months",
-        "3": "1–2 months",
-        "4": "I don't have a problem / < 1 month"
-      }
-    },
-    "stems": {
-      "who5": {
-        "period": "Au cours des deux dernières semaines"
-      },
-      "sci": {
-        "night": "Thinking about a typical night in the last month …",
-        "impact": "Thinking about the past month, to what extent has poor sleep …",
-        "finally": "Finally …"
-      }
-    },
     "openDetail": "Voir les détails",
     "historyLoadError": "Ton historique d'évaluations n'a pas pu être chargé",
     "historyLoadErrorHint": "Cela ne veut pas dire que tu n'as aucun résultat : la liste n'a pas pu être récupérée. Réessaie.",
-    "privacyNote": "Vos réponses sont stockées chiffrées et n'atteignent jamais le Coach IA."
+    "privacyNote": "Vos réponses sont stockées chiffrées et n'atteignent jamais le Coach IA.",
+    "trend": {
+      "sincePrevious": "Depuis ton bilan précédent du {date} : {change} points.",
+      "sinceFirst": "Depuis ton premier bilan du {date} : {change} points.",
+      "verdict": {
+        "improved": "Cela atteint la variation de {threshold} points que les études jugent significative, dans le bon sens.",
+        "worsened": "Cela atteint la variation de {threshold} points que les études jugent significative, dans le sens moins favorable.",
+        "within_threshold": "C'est moins que la variation de {threshold} points que les études jugent significative."
+      }
+    },
+    "wizard": {
+      "progressLabel": "Question {current} sur {total}",
+      "followUpLabel": "Question complémentaire (facultative)",
+      "keyboardHint": "Les touches 1 à {count} choisissent une réponse.",
+      "allAnswered": "Les {total} questions ont une réponse"
+    },
+    "review": {
+      "title": "Vérifier les réponses",
+      "description": "Rien n’est enregistré avant l’envoi, et chaque réponse peut encore être modifiée.",
+      "change": "Modifier",
+      "changeLabel": "Modifier la réponse à la question {number}",
+      "notAnswered": "Sans réponse",
+      "open": "Vérifier les réponses"
+    },
+    "bandMeaning": {
+      "PHQ9": {
+        "minimal": "Vos réponses indiquent peu ou pas de symptômes dépressifs au cours des deux dernières semaines.",
+        "mild": "Vos réponses indiquent des symptômes dépressifs légers au cours des deux dernières semaines.",
+        "moderate": "Vos réponses indiquent des symptômes dépressifs modérés au cours des deux dernières semaines.",
+        "modSevere": "Vos réponses indiquent des symptômes dépressifs modérément sévères au cours des deux dernières semaines.",
+        "severe": "Vos réponses indiquent des symptômes dépressifs sévères au cours des deux dernières semaines."
+      },
+      "GAD7": {
+        "minimal": "Vos réponses indiquent peu ou pas de symptômes d’anxiété au cours des deux dernières semaines.",
+        "mild": "Vos réponses indiquent des symptômes d’anxiété légers au cours des deux dernières semaines.",
+        "moderate": "Vos réponses indiquent des symptômes d’anxiété modérés au cours des deux dernières semaines.",
+        "severe": "Vos réponses indiquent des symptômes d’anxiété sévères au cours des deux dernières semaines."
+      },
+      "WHO5": {
+        "low": "Votre bien-être des deux dernières semaines était en dessous de la zone que le WHO-5 considère comme bonne.",
+        "good": "Votre bien-être des deux dernières semaines était dans la zone que le WHO-5 considère comme bonne."
+      },
+      "SCI": {
+        "belowThreshold": "Votre sommeil du dernier mois se situait dans la zone où l’étude à l’origine de ce questionnaire jugeait une insomnie probable.",
+        "aboveThreshold": "Votre sommeil du dernier mois se situait en dehors de la zone que cette étude associe à l’insomnie."
+      }
+    },
+    "wording": {
+      "unvalidatedNote": "Cette traduction n’a pas été validée scientifiquement ; considérez le résultat comme une indication.",
+      "showOriginal": "Afficher le texte original en anglais",
+      "showTranslation": "Afficher la traduction",
+      "resultUnvalidated": "Réponses données dans une traduction qui n’a pas été validée scientifiquement ; considérez le résultat comme une indication.",
+      "historyUnvalidated": "Réponses données dans une traduction non validée scientifiquement"
+    }
   },
   "records": {
     "aiInclusion": {
@@ -11446,7 +11852,8 @@
     "toast": {
       "duplicate": "Déjà enregistré. Le document existant est mis en évidence.",
       "deleted": "Document supprimé",
-      "restoreFailed": "Impossible de restaurer le document."
+      "restoreFailed": "Impossible de restaurer le document.",
+      "deletedHint": "Les documents supprimés restent {days} jours dans Supprimés récemment."
     },
     "timeline": {
       "loadingMore": "Chargement…",
@@ -11491,7 +11898,8 @@
           "raster-failed": "Les pages du PDF n’ont pas pu être rendues pour la lecture. Les formats de compression de fax numérisés en sont une cause connue.",
           "provider-error": "Le fournisseur d’IA n’a pas pu lire ce document lors de la dernière tentative.",
           "pdf-needs-anthropic": "Le fournisseur d’IA configuré ne peut pas lire les fichiers PDF. Un fournisseur Claude ou l’OCR local le peut.",
-          "empty-transcription": "Le fournisseur d’IA n’a renvoyé aucun texte pour ce document."
+          "empty-transcription": "Le fournisseur d’IA n’a renvoyé aucun texte pour ce document.",
+          "resource-limit": "Ce PDF est trop volumineux ou trop complexe pour être lu ici. Le fichier lui-même est intact et s'ouvre toujours."
         }
       },
       "loadError": "Impossible de charger ce document.",
@@ -11563,7 +11971,7 @@
       "dismiss": "Ignorer",
       "empty": "Impossible de lire ce document.",
       "unavailableBody": "Configurez un fournisseur d'IA pour suggérer un titre, un type et une date.",
-      "unavailableLocalOcr": "Activez l'OCR local dans les paramètres d'IA pour lire les images sur cet appareil.",
+      "unavailableLocalOcr": "Activez « Lire les scans sur cet appareil » dans Paramètres → Modules → Analyses pour lire les images sur cet appareil.",
       "unavailableAction": "Ouvrir les paramètres d'IA",
       "errorGeneric": "Impossible de lire le document. Réessayez.",
       "errorOcr": "Impossible de lire le texte de cette image.",
@@ -11575,11 +11983,13 @@
       "errorPdfNeedsVision": "La lecture des PDF nécessite un fournisseur de vision Claude.",
       "errorFileType": "Ce type de fichier ne peut pas être lu.",
       "errorNotIndexed": "Lisez d’abord le document, puis extrayez.",
-      "errorLocalOcrDisabled": "Activez d'abord l'OCR local dans les paramètres d'IA.",
+      "errorOutputLimit": "Le fournisseur d’IA a atteint sa limite de sortie avant de renvoyer la moindre valeur. Essayez un modèle qui accepte des réponses plus longues.",
+      "errorLocalOcrDisabled": "Activez d'abord « Lire les scans sur cet appareil » dans Paramètres → Modules → Analyses.",
       "errorProvider": "Aucun fournisseur d'IA n'est configuré pour cela.",
       "errorTextImageOnly": "L'OCR local ne lit que les images, pas ce fichier.",
       "errorConsent": "La lecture de documents par IA nécessite d'abord votre consentement.",
-      "errorUnavailable": "La lecture de documents par IA n'est pas disponible ici pour le moment."
+      "errorUnavailable": "La lecture de documents par IA n'est pas disponible ici pour le moment.",
+      "unavailableLocalOcrAction": "Ouvrir les paramètres des analyses"
     },
     "summary": {
       "summarise": "Résumer",
@@ -11635,6 +12045,7 @@
       "extracting": "Extraction…",
       "extractHint": "Utilise le texte déjà lu de ce document. Les valeurs extraites attendent votre vérification ; rien n’est enregistré automatiquement.",
       "extractEmpty": "Aucune valeur n’a pu être extraite de ce document.",
+      "extractIncomplete": "Une partie du document n’a pas pu être lue entièrement, des valeurs peuvent donc manquer. Comparez la liste avec le document.",
       "failUnitRequired": "Une valeur numérique a besoin d’une unité avant de pouvoir être enregistrée.",
       "failUnitMismatch": "L’unité indiquée ne correspond pas à l’unité enregistrée pour ce marqueur. Ajustez-la, puis terminez à nouveau la vérification.",
       "failGeneric": "Cette valeur n’a pas pu être enregistrée.",
@@ -11656,7 +12067,6 @@
     },
     "chat": {
       "title": "Discuter de ce document",
-      "openAria": "Interroger le Coach sur ce document",
       "openButton": "Demander au Coach"
     },
     "readingConsent": {
@@ -11683,6 +12093,7 @@
       "loadMore": "Charger plus",
       "stateImported": "Dans HealthLog",
       "stateDeleted": "Supprimé dans HealthLog",
+      "stateInTrash": "Dans Supprimés récemment",
       "selectedCount": "{count} sélectionnés sur {max} au plus",
       "importAction": "Importer {count}",
       "importing": "Import en cours, un document après l'autre…",
@@ -11696,7 +12107,9 @@
         "importedLinked": "Importé et lié",
         "duplicate": "Déjà dans HealthLog",
         "duplicateLinked": "Déjà dans HealthLog, désormais lié",
-        "deleted": "Supprimé dans HealthLog, laissé tel quel"
+        "deleted": "Supprimé dans HealthLog, laissé tel quel",
+        "restored": "Restauré depuis Supprimés récemment",
+        "restoredLinked": "Restauré depuis Supprimés récemment et lié"
       },
       "errors": {
         "unavailable": "Les archives de documents ne sont pas activées sur ce serveur.",
@@ -11740,8 +12153,32 @@
     "deleteConfirm": {
       "titleOne": "Supprimer ce document ?",
       "titleMany": "Supprimer {count} documents ?",
-      "body": "Vous pouvez annuler juste après. Au bout de 30 jours, la suppression est définitive.",
+      "body": "Les documents supprimés restent {days} jours dans Supprimés récemment, puis ils sont supprimés définitivement.",
       "action": "Supprimer"
+    },
+    "trash": {
+      "title": "Supprimés récemment",
+      "subtitle": "Les documents supprimés restent ici {days} jours, puis ils sont supprimés définitivement.",
+      "back": "Documents",
+      "entryLabel": "Supprimés récemment ({count})",
+      "loadError": "Impossible de charger Supprimés récemment.",
+      "emptyTitle": "Rien dans Supprimés récemment",
+      "emptyDescription": "Ce que vous supprimez attend ici {days} jours avant d'être supprimé définitivement.",
+      "count": "Documents supprimés ({count})",
+      "restoreAll": "Tout restaurer",
+      "restore": "Restaurer",
+      "purge": "Supprimer maintenant",
+      "deletedOn": "Supprimé le {date}.",
+      "removesIn": "Supprimé définitivement dans {days} jours.",
+      "removesSoon": "Supprimé définitivement dans moins d'un jour.",
+      "restored": "Document restauré",
+      "openRestored": "Ouvrir",
+      "restoreDuplicate": "Un document identique est déjà enregistré, cette copie ne peut donc pas être restaurée.",
+      "restorePartial": "{failed} sur {total} n'ont pas pu être restaurés",
+      "purged": "Document supprimé définitivement",
+      "purgeFailed": "Impossible de supprimer le document.",
+      "purgeConfirmTitle": "Supprimer ce document définitivement ?",
+      "purgeConfirmBody": "Il est supprimé maintenant plutôt qu'à la fin du délai d'attente et ne peut pas être restauré."
     }
   },
   "selfDescription": {
@@ -11883,10 +12320,12 @@
       }
     },
     "hydration": {
-      "referenceMeta": "Apport de référence {value} {unit}/jour (EFSA)"
+      "referenceMeta": "Apport de référence {value} {unit}/jour (EFSA)",
+      "loadError": "Impossible de charger l'eau."
     },
     "caffeine": {
-      "ceilingMeta": "Plafond de sécurité {value} {unit}/jour (EFSA)"
+      "ceilingMeta": "Plafond de sécurité {value} {unit}/jour (EFSA)",
+      "loadError": "Impossible de charger la caféine."
     },
     "micronutrients": {
       "title": "Vitamines et minéraux",
@@ -11995,6 +12434,8 @@
       "logDose": "Enregistrer la dose",
       "reconnect": "Reconnecter",
       "viewCheckups": "Voir les examens",
+      "viewAppointment": "Voir le rendez-vous",
+      "viewAppointments": "Voir les rendez-vous",
       "checkinKeep": "Garder",
       "checkinAdjust": "Ajuster",
       "checkinLetGo": "Laisser tomber",
@@ -12174,7 +12615,10 @@
     "leafVisits": "Consultations",
     "leafSurgicalHistory": "Antécédents chirurgicaux",
     "leafImmunizations": "Vaccinations",
-    "leafEmergency": "Informations d'urgence (groupe sanguin, contacts, directives)"
+    "leafEmergency": "Informations d'urgence (groupe sanguin, contacts, directives)",
+    "leafMedicationEffect": "Changement autour du démarrage de chaque médicament (nécessite la liste des médicaments)",
+    "leafWorkouts": "Entraînements (résumé par sport)",
+    "leafHrvSdnn": "VFC (SDNN)"
   },
   "recordSharing": {
     "banner": {
@@ -12260,7 +12704,7 @@
       "errorFailed": "L'invitation n'a pas pu être envoyée. Veuillez réessayer.",
       "errorScope": "Ces rubriques ne peuvent pas être partagées ainsi. Choisissez au moins une rubrique, ou partagez le dossier complet.",
       "errorManageBrowserOnly": "Un accès de gestion ne peut être proposé que depuis un navigateur.",
-      "errorStepUp": "Confirmez votre deuxième facteur, puis réessayez.",
+      "errorStepUp": "Confirmez votre deuxième facteur ou votre clé d'accès, puis réessayez.",
       "errorOffline": "Cela n'a pas atteint le serveur. Votre invitation est toujours là : vérifiez votre connexion et réessayez."
     },
     "given": {
@@ -12303,8 +12747,7 @@
       "loadError": "L'activité n'a pas pu être chargée.",
       "opened": "{name} a ouvert votre dossier {count}×",
       "acted": "{name} a fait une modification dans votre dossier",
-      "deletedAccount": "Un compte supprimé",
-      "truncated": "Cette liste montre l'activité la plus récente, pas la totalité."
+      "deletedAccount": "Un compte supprimé"
     },
     "delegate": {
       "addOnlyNote": "Vous pouvez ajouter des éléments à ce dossier. Seul {name} peut modifier ou supprimer des entrées."
@@ -12337,7 +12780,7 @@
       "create": "Créer le profil",
       "creating": "Création…",
       "created": "{name} est en place. Vous pouvez entrer dans ce dossier depuis le menu du compte.",
-      "errorStepUp": "Confirmez votre deuxième facteur, puis réessayez.",
+      "errorStepUp": "Confirmez votre deuxième facteur ou votre clé d'accès, puis réessayez.",
       "errorOffline": "Cela n'a pas atteint le serveur. Rien n'a changé. Vérifiez votre connexion et réessayez.",
       "errorInvalid": "Le serveur a refusé ces informations. Vérifiez le nom, la date et le fuseau horaire.",
       "errorFailed": "Le profil n'a pas pu être créé.",
@@ -12376,7 +12819,7 @@
       "guardianErrorNoAccount": "Aucun compte de cette instance ne porte ce nom ou cette adresse e-mail.",
       "guardianErrorRateLimit": "Trop d'invitations dans la dernière heure. Patientez un peu et réessayez.",
       "guardianErrorFailed": "L'invitation n'a pas pu être envoyée.",
-      "errorMfaRequired": "Cela demande un deuxième facteur, et votre compte n'en a pas encore. Configurez-en un dans Réglages → Sécurité, puis réessayez.",
+      "errorMfaRequired": "Cela demande un deuxième facteur ou une clé d'accès, et votre compte n'a encore ni l'un ni l'autre. Configurez-en un dans Réglages → Sécurité, puis réessayez.",
       "rosterLoadError": "Impossible de charger qui s'occupe de ce dossier.",
       "errorRateLimit": "Trop de profils créés dans la dernière heure. Patientez un peu et réessayez.",
       "handover": {
@@ -12420,7 +12863,8 @@
         "entryHint": "Quand {name} souhaite tenir ce dossier de façon autonome.",
         "methodSso": "{name} se connecte par authentification unique en utilisant le lien.",
         "methodBoth": "{name} peut définir un mot de passe ou se connecter par authentification unique."
-      }
+      },
+      "deleteBodyGrace": "Tout ce qui a été enregistré pour {name} disparaît avec le profil : mesures, médicaments, documents et notes. Le profil est verrouillé immédiatement et effacé au bout de {days} jours. D’ici là, un administrateur de ce serveur peut annuler la suppression."
     },
     "toast": {
       "savedTo": "Enregistré dans le dossier de {name}"
@@ -12475,6 +12919,7 @@
       "practitionerContactRestore": "{name} a restauré une entrée du carnet d'adresses",
       "illnessDayLogUpsert": "{name} a enregistré une journée de maladie",
       "medicationUpdate": "{name} a modifié un médicament",
+      "medicationCourseEnd": "{name} a terminé un traitement",
       "medicationDelete": "{name} a supprimé un médicament",
       "medicationGlp1Update": "{name} a modifié un traitement GLP-1",
       "medicationScheduleCreate": "{name} a ajouté un schéma de prise",
@@ -12522,6 +12967,9 @@
       "rejectedDoseUpdate": "{name} a tenté de modifier une prise et a été refusé",
       "rejectedDoseImport": "{name} a tenté d'importer des prises et a été refusé",
       "rejectedTrackedValue": "{name} a tenté d'enregistrer une valeur personnalisée et a été refusé",
+      "rejectedTrackedValueTypeCreate": "{name} a tenté d'ajouter un type de valeur personnalisée et a été refusé",
+      "rejectedTrackedValueTypeUpdate": "{name} a tenté de modifier un type de valeur personnalisée et a été refusé",
+      "rejectedMedicationLayout": "{name} a tenté de réorganiser la liste des médicaments et a été refusé",
       "deniedDoseImport": "Un import de prises lancé par {name} n'a pas pu être mis en file",
       "anamnesisFactCreate": "{name} a ajouté un élément d'antécédents de santé",
       "customMetricCreate": "{name} a ajouté un type de valeur personnalisée",
@@ -12720,6 +13168,13 @@
       "noMatchTitle": "Rien ne correspond à ce filtre",
       "clearFilter": "Effacer le filtre",
       "loadError": "Les interventions n’ont pas pu être chargées."
+    },
+    "preparation": {
+      "practitioner": "Depuis votre dernière visite chez {name} le {date}",
+      "specialty": "Depuis votre dernière visite ({specialty}) le {date}",
+      "kind": "Depuis votre dernière visite du même type ({kind}) le {date}",
+      "default": "Les {days} derniers jours",
+      "defaultReason": "Aucune visite antérieure au même cabinet, dans la même spécialité ou du même type."
     }
   },
   "checkups": {
@@ -12824,7 +13279,8 @@
     "backgroundScan": "Lecture en arrière-plan. Avec un modèle lent, cela peut prendre quelques minutes.",
     "waitingForWorker": "En attente du traitement en arrière-plan. Si rien ne change, le worker du serveur n'est peut-être pas lancé.",
     "errorWorkerUnavailable": "Le traitement en arrière-plan n'est pas disponible pour le moment. Réessayez dans un instant ou demandez à la personne qui gère le serveur de le vérifier.",
-    "errorTimedOut": "La lecture a pris plus de temps que votre délai de réponse IA ne le permet. Réessayez ou augmentez ce délai dans les réglages IA."
+    "errorTimedOut": "La lecture a pris plus de temps que votre délai de réponse IA ne le permet. Réessayez ou augmentez ce délai dans les réglages IA.",
+    "errorReaderBusy": "Le lecteur de documents est occupé par d'autres tâches. Réessayez dans une minute."
   },
   "symptoms": {
     "add": "Nouveau symptôme",
@@ -12905,7 +13361,7 @@
     },
     "episode": {
       "title": "Symptômes notés",
-      "filed": "noté avec cette maladie"
+      "during": "pendant {illness}"
     }
   },
   "day": {
@@ -12969,7 +13425,6 @@
     "meanOfReadingsFew": "Moyenne de {count} mesures",
     "meanOfReadingsOther": "Moyenne de {count} mesures",
     "sinceLastVisit": {
-      "title": "Depuis la dernière visite le {date}",
       "countOne": "1 entrée",
       "countFew": "{count} entrées",
       "countOther": "{count} entrées",
@@ -12978,7 +13433,8 @@
       "allOther": "Afficher les {count}",
       "fewer": "Afficher moins",
       "note": "Établi à partir de vos entrées, sans évaluation. Chaque date ouvre la journée entière.",
-      "report": "Rapport médical du {date} à aujourd’hui"
+      "report": "Rapport médical du {date} à aujourd’hui",
+      "loadError": "Impossible de charger ce qui s’est passé depuis la dernière visite."
     },
     "travel": "En déplacement",
     "event": {
@@ -13347,6 +13803,219 @@
       "targetLower": "Votre objectif, limite basse",
       "clinicalUpper": "Limite clinique haute",
       "clinicalLower": "Limite clinique basse"
+    }
+  },
+  "activityCalendar": {
+    "title": "Calendrier d'activité",
+    "periodLabel": "Période du calendrier",
+    "period": {
+      "week": "Semaine",
+      "month": "Mois"
+    },
+    "weekRange": "{start} au {end}",
+    "previous": "Période précédente",
+    "next": "Période suivante",
+    "metricLabel": "Colorer les jours selon",
+    "metric": {
+      "steps": "Pas",
+      "activeMinutes": "Minutes actives",
+      "load": "Charge d'entraînement"
+    },
+    "empty": "Aucun pas, aucune minute active ni aucun entraînement sur cette période pour l'instant.",
+    "loadError": "Le calendrier d'activité n'a pas pu être chargé.",
+    "weekGoalsColumn": "Objectifs hebdomadaires",
+    "weekGoalsMet": "Tous les objectifs hebdomadaires atteints",
+    "weekGoalsNotMet": "Objectifs hebdomadaires pas tous atteints",
+    "cell": {
+      "steps": "{value} pas",
+      "activeMinutes": "{value} minutes actives",
+      "workouts": "{value} entraînements : {sports}"
+    },
+    "level": {
+      "none": "Aucune donnée",
+      "unrated": "Pas encore assez d'historique",
+      "low": "Bien en dessous de ton habitude",
+      "below": "En dessous de ton habitude",
+      "usual": "Comme d'habitude",
+      "above": "Au-dessus de ton habitude",
+      "high": "Bien au-dessus de ton habitude",
+      "in_progress": "Aujourd’hui, en cours"
+    },
+    "legend": "Comparé à tes 12 semaines précédentes :",
+    "noBaseline": "Ta plage habituelle apparaît après 14 jours avec des données.",
+    "summary": {
+      "steps": "{value} pas",
+      "activeMinutes": "{value} minutes actives",
+      "workouts": "{value} entraînements",
+      "load": "Charge d'entraînement moyenne {value}",
+      "usual": "Ton habitude à ce stade : {value}",
+      "noUsual": "Pas encore assez de semaines ou de mois précédents pour comparer.",
+      "usualThroughYesterday": "Jusqu’à hier {value}, ton habitude à ce stade {usual}",
+      "firstDay": "Comparé à ton habitude dès que le premier jour est terminé."
+    },
+    "sportCount": "{sport} : {count}",
+    "goal": {
+      "workoutsPerWeek": "Entraînements par semaine",
+      "activeMinutesPerWeek": "Minutes actives par semaine",
+      "stepsPerWeek": "Pas par semaine",
+      "stepsPerMonth": "Pas par mois"
+    },
+    "goalOf": "{value} sur {target}",
+    "setGoals": "Définir des objectifs",
+    "editGoals": "Modifier les objectifs",
+    "goalsSheet": {
+      "title": "Objectifs d'activité",
+      "description": "Laisse un champ vide pour ne pas fixer d'objectif.",
+      "none": "Aucun objectif",
+      "invalid": "Un nombre entier de {min} à {max}.",
+      "saveError": "Les objectifs n'ont pas pu être enregistrés."
+    },
+    "crossLink": {
+      "title": "Calendrier d'activité",
+      "body": "Tes pas par semaine ou par mois, comparés à ton habitude.",
+      "cta": "Ouvrir le calendrier"
+    }
+  },
+  "sourceProvenance": {
+    "title": "D'où viennent les valeurs",
+    "description": "Quelle source a fourni une valeur chaque jour, et laquelle ta priorité des sources utilise.",
+    "metric": "Mesure",
+    "day": "Jour",
+    "dayTitle": "Sources de ce jour",
+    "loadError": "Les sources n'ont pas pu être chargées.",
+    "dayEmpty": "Aucune valeur de cette mesure ce jour-là.",
+    "reason": {
+      "only_source": "{source} est la seule source ce jour-là.",
+      "highest_on_ladder": "{source} est utilisée : c'est la plus haute dans ta priorité des sources parmi celles de ce jour.",
+      "name_tiebreak": "{source} est utilisée : aucune source de ce jour n'est dans ta priorité, le nom a donc décidé.",
+      "not_ranked": "Cette mesure n'a pas de priorité des sources : les valeurs de toutes les sources comptent."
+    },
+    "pass": {
+      "lower_on_ladder": "Plus bas dans ta priorité des sources.",
+      "not_on_ladder": "Absente de ta priorité des sources pour cette mesure.",
+      "name_tiebreak": "Même rang que la source utilisée ; le nom a décidé."
+    },
+    "used": "Utilisée",
+    "readings": "{count} mesures, appareils : {devices}",
+    "ladder": "Ton ordre pour cette mesure : {ladder}",
+    "utcNote": "La source est choisie par jour, de minuit à minuit UTC, comme pour les graphiques.",
+    "openSettings": "Modifier l'ordre dans Priorité des sources",
+    "compareTitle": "Comparer deux sources",
+    "range": "Période",
+    "rangeDays": "{days} jours",
+    "compareNeedsTwo": "Une seule source a des valeurs de cette mesure sur cette période.",
+    "side": {
+      "a": "Première source",
+      "b": "Deuxième source"
+    },
+    "daysBoth": "Jours avec les deux",
+    "meanOf": "Moyenne de {source}",
+    "meanAbsDiff": "Écart moyen",
+    "pickedDays": "Jours utilisés (première / deuxième)",
+    "pickedSplit": "{a} / {b}",
+    "compareNote": "Les moyennes ne comptent que les jours où les deux sources ont des valeurs, pour comparer ce qui est comparable. En gras, la valeur utilisée par les graphiques.",
+    "settingsHint": "Pour voir ce que cet ordre décide jour après jour :",
+    "settingsHintLink": "D'où viennent les valeurs",
+    "metricLink": "D'où viennent ces valeurs"
+  },
+  "recordImport": {
+    "title": "Résultats d'analyses et médicaments depuis un tableur",
+    "description": "Importe des années de résultats ou une liste de médicaments depuis un fichier CSV.",
+    "detail": "Tu choisis quelle colonne contient quoi ; HealthLog vérifie chaque ligne d'abord et n'importe rien avant ta confirmation. Les lignes déjà présentes sont ignorées.",
+    "kind": {
+      "labs": "Résultats d'analyses",
+      "medications": "Médicaments"
+    },
+    "sheetTitle": {
+      "labs": "Importer des résultats",
+      "medications": "Importer des médicaments"
+    },
+    "sheetDescription": {
+      "labs": "Les marqueurs sont rattachés aux tiens, les unités converties quand la conversion est connue.",
+      "medications": "Nom, dose, heures quotidiennes, si besoin, début et fin. Les autres rythmes se règlent ensuite dans l'app."
+    },
+    "file": "Fichier CSV",
+    "template": "Télécharger le modèle",
+    "mapping": "Quelle colonne contient quoi",
+    "required": "(obligatoire)",
+    "notInFile": "Absent du fichier",
+    "column": "Colonne {n}",
+    "delimiter": "Séparateur",
+    "delimiterOption": {
+      "comma": "Virgule",
+      "semicolon": "Point-virgule",
+      "tab": "Tabulation"
+    },
+    "decimal": "Séparateur décimal",
+    "decimalOption": {
+      "dot": "Point (5.4)",
+      "comma": "Virgule (5,4)"
+    },
+    "dateOrder": "Format de date",
+    "dateOrderOption": {
+      "iso": "2025-03-01",
+      "dmy": "01.03.2025 (jour d'abord)",
+      "mdy": "03/01/2025 (mois d'abord)"
+    },
+    "header": "La première ligne contient les noms de colonnes",
+    "reminders": "Activer les rappels pour les médicaments importés",
+    "timezoneNote": "Les heures sans fuseau sont lues dans le fuseau de ton compte. Une date sans heure reste ce jour du calendrier.",
+    "missing": "Encore à choisir : {fields}",
+    "check": "Vérifier le fichier",
+    "runIdle": "Importer",
+    "run": "Importer {count} lignes",
+    "close": "Fermer",
+    "summaryCheck": "{rows} lignes lues : {inserted} importables, {duplicates} déjà présentes, {failed} avec un problème.",
+    "summaryDone": "{inserted} lignes importées. Ignorées : {duplicates} déjà présentes et {failed} avec un problème.",
+    "markersMatched": "Rattachés à tes marqueurs :",
+    "markersCreated": "Nouveaux marqueurs :",
+    "line": "Ligne {line}",
+    "errorsTruncated": "Seuls les 500 premiers problèmes sont listés.",
+    "error": {
+      "tooLarge": "Le fichier dépasse 16 Mo.",
+      "rateLimited": "Trop d'importations au cours de la dernière heure. Réessaie plus tard.",
+      "invalid": "Le fichier ou le choix des colonnes n'a pas pu être lu.",
+      "failed": "L'importation n'a pas abouti. Réessaie."
+    },
+    "reason": {
+      "missing_value": "Une cellule obligatoire est vide",
+      "invalid_number": "Ce n'est pas un nombre",
+      "ambiguous_number": "Le nombre se lit de deux façons ; vérifie le séparateur décimal",
+      "missing_unit": "Un nombre a besoin d'une unité",
+      "invalid_date": "Ce n'est pas une date au format choisi",
+      "invalid_time": "Ce n'est pas une heure",
+      "ambiguous_date": "La date se lit de deux façons ; utilise une année à quatre chiffres et le format choisi",
+      "future_date": "La date est dans le futur",
+      "text_too_long": "Le texte est trop long",
+      "unit_mismatch": "Cette unité ne se convertit pas dans celle du marqueur",
+      "invalid_reference_range": "La plage de référence est illisible",
+      "invalid_times": "Les heures sont illisibles (ex. 08:00 20:00)",
+      "missing_times": "Ajoute des heures de prise ou marque le médicament si besoin",
+      "invalid_yes_no": "Utilise oui ou non",
+      "as_needed_with_times": "Un médicament si besoin n'a pas d'heures fixes",
+      "end_before_start": "La fin précède le début",
+      "invalid_medication": "Le médicament ne peut pas être enregistré ainsi",
+      "oversized_row": "La ligne est trop longue ou trop large",
+      "row_limit": "Au-delà de la limite de lignes par importation",
+      "duplicate": "Déjà présente, ignorée"
+    },
+    "field": {
+      "analyte": "Marqueur",
+      "value": "Résultat",
+      "unit": "Unité",
+      "date": "Date",
+      "time": "Heure",
+      "referenceRange": "Plage de référence",
+      "referenceLow": "Référence basse",
+      "referenceHigh": "Référence haute",
+      "panel": "Groupe",
+      "note": "Note",
+      "name": "Nom",
+      "dose": "Dose",
+      "times": "Heures",
+      "asNeeded": "Si besoin",
+      "startsOn": "Début",
+      "endsOn": "Fin"
     }
   }
 }

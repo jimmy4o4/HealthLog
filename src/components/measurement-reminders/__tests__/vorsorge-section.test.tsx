@@ -33,7 +33,8 @@ vi.mock("@/hooks/use-measurement-reminders", () => ({
   }),
 }));
 
-import { VorsorgeSection, postponeOffsetTargets } from "../vorsorge-section";
+import { VorsorgeSection } from "../vorsorge-section";
+import { postponeOffsetTargets } from "../checkups/postpone-sheet";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 
 /**
@@ -64,7 +65,7 @@ function noonOnDisplayDay(offsetDays: number): Date {
 }
 
 function render(node: React.ReactNode) {
-  // v1.18.7 (Wave E) — a measurement-linked card now mounts the 7-day
+  // v1.18.7 — a measurement-linked card now mounts the 7-day
   // trend strip, which reads via TanStack Query; wrap in a client so the
   // static-markup render resolves (the query stays idle on the server).
   const queryClient = new QueryClient({
@@ -114,6 +115,16 @@ describe("<VorsorgeSection> loading + empty", () => {
     expect(html).not.toContain('data-slot="vorsorge-loading"');
   });
 
+  it("links the checkups page to the reminder and screening settings that moved", () => {
+    remindersMock.mockReturnValue({ data: [], isLoading: false });
+    const page = render(<VorsorgeSection variant="page" />);
+    expect(page).toContain('href="/settings/notifications#vorsorge-reminders"');
+    expect(page).toContain('href="/settings/anamnesis#screening-hints"');
+    // The embedded settings card is already in Settings and carries no links.
+    const embedded = render(<VorsorgeSection />);
+    expect(embedded).not.toContain('data-slot="vorsorge-settings-links"');
+  });
+
   it("renders reminder cards once data lands", () => {
     const reminder: MeasurementReminder = {
       id: "r1",
@@ -135,7 +146,7 @@ describe("<VorsorgeSection> loading + empty", () => {
 
   it("renders a 'Measure now' action for a measurement-linked reminder", () => {
     // v1.18.2 — a typed reminder's primary action opens the value-entry form.
-    // v1.18.6 (MOD-06) — surfaced as a green "Measure now" button (a
+    // v1.18.6 — surfaced as a green "Measure now" button (a
     // measurement is not an intake), not a silent checkmark.
     const reminder: MeasurementReminder = {
       id: "linked",

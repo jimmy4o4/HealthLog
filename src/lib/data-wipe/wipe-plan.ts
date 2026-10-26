@@ -35,6 +35,7 @@
  * test asserts that property rather than trusting the author.
  */
 import { Prisma } from "@/generated/prisma/client";
+import { PRE_WIPE_BACKUP_TYPE_PREFIX } from "@/lib/account-deletion/pre-wipe-type";
 
 /**
  * Every user-scoped model this action deletes, children before parents.
@@ -75,7 +76,6 @@ export const WIPE_MODELS = [
   "MedicationSideEffect",
   "MedicationInventoryItem",
   "MedicationIntakeImportJob",
-  "MedicationComplianceRollup",
   // The account's own category names (v1.40, #1041). No child rows; the
   // medications that name one go with their own entry.
   "MedicationCategoryLabel",
@@ -349,9 +349,19 @@ export const INSTANCE_SCOPED: Readonly<Record<string, string>> = {
   EncryptionKeyCanary:
     "one known value per configured encryption key id, checked at boot; belongs to the instance's keys, not to any account",
   RateLimit: "instance-wide rate-limit buckets, keyed by string, self-expiring",
+  OAuthCallbackClaim:
+    "single-use claims on in-flight OAuth callbacks, keyed on a hash of the state, minutes-lived and swept by expiry; no user id",
   HostMetric: "instance-wide host telemetry, not attributable to an account",
   OffhostBackupKeyUse:
     "per encryption key, when the nightly off-host run last wrote an object needing it; says nothing about any account",
+  RestoreDrillOutcome:
+    "the monthly restore drill's last verdict for the instance's off-host bucket; says nothing about any account",
+  RecoveryReadinessNotice:
+    "per backup signal, what the admins were last told; a fact about the instance's backups, not about any account",
+  RecoveryKitConfirmation:
+    "the instance's recovery kit confirmation (key ids and fingerprints); the confirming admin is a plain id, not a relation",
+  DatabaseBackupRun:
+    "the instance's ledger of nightly whole-database dumps; describes the server, not any account",
   OffhostPurgeRequest:
     "the deletions an account deletion or wipe asked of the off-host bucket; written by the wipe itself and removed once the bucket holds nothing of the account",
   CycleSymptomCategory:
@@ -399,7 +409,7 @@ export const USER_RESET = {
   // Derived AI output cached on the row
   insightsPrivacyMode: "aggregated",
   insightsCachedAt: null,
-  insightsCachedText: null,
+  insightsCachedTextEncrypted: null,
   insightsCachedLocale: null,
   insightsSnapshotHash: null,
   insightsWarmFailedAt: null,
@@ -426,6 +436,7 @@ export const USER_RESET = {
   coachLastSeenAt: null,
   documentsAutoAiRead: false,
   labsLocalOcrEnabled: false,
+  storeWorkoutRoutes: false,
   codexAccessTokenEncrypted: null,
   codexRefreshTokenEncrypted: null,
   codexTokenExpiresAt: null,
@@ -461,6 +472,10 @@ export const USER_RESET = {
   ouraClientIdEncrypted: null,
   ouraClientSecretEncrypted: null,
   ouraScopeDenied: Prisma.DbNull,
+  ouraBackfillProgress: Prisma.DbNull,
+  ouraBackfillCompletedAt: null,
+  ouraUserId: null,
+  clientAppSharedBy: Prisma.DbNull,
   stravaClientIdEncrypted: null,
   stravaClientSecretEncrypted: null,
   stravaAccessTokenEncrypted: null,
@@ -468,6 +483,7 @@ export const USER_RESET = {
   stravaAthleteId: null,
   stravaLastActivityAt: null,
   stravaBackfillCompletedAt: null,
+  stravaBackfillResumeBefore: null,
   healthKitConfigJson: Prisma.DbNull,
   healthKitLastSyncedAt: null,
   healthKitLastSyncTrigger: null,
@@ -481,6 +497,8 @@ export const USER_RESET = {
   medicationListLayoutJson: Prisma.DbNull,
   moodTagLayoutJson: Prisma.DbNull,
   documentsLayoutJson: Prisma.DbNull,
+  moduleListLayoutJson: Prisma.DbNull,
+  activityGoalsJson: Prisma.DbNull,
   reportSelectionJson: Prisma.DbNull,
   modulePreferencesJson: Prisma.DbNull,
   healthScoreConfigJson: Prisma.DbNull,
@@ -531,6 +549,12 @@ export const USER_KEPT_FIELDS: Readonly<Record<string, string>> = {
     "a per-account storage quota set by the operator, not by the person",
   syncResetAt:
     "sync bookkeeping, not record content: the wipe sets it to its own time rather than clearing it, so a paired client's delta cursor from before the wipe is refused and the client starts over",
+  deletionRequestedAt:
+    "the account's deletion lifecycle, not record content; an account pending deletion is locked and cannot ask for a wipe, so this is null whenever one runs",
+  deletionPurgeAt:
+    "the account's deletion lifecycle, not record content; null whenever a wipe runs, for the same reason",
+  deletionRequestedById:
+    "the account's deletion lifecycle, not record content; null whenever a wipe runs, for the same reason",
 };
 
 /**
@@ -614,9 +638,30 @@ export function wipeDelegateKey(model: string): string {
  */
 export function wipeWhere(model: string, userId: string): object {
   const fields = WIPE_OWNER_FIELDS[model];
-  if (!fields) return { userId };
-  return { OR: fields.map((field) => ({ [field]: userId })) };
+  const owned = fields
+    ? { OR: fields.map((field) => ({ [field]: userId })) }
+    : { userId };
+  const kept = WIPE_KEPT_ROWS[model];
+  return kept ? { AND: [owned, kept.keep] } : owned;
 }
+
+/**
+ * Rows of a wiped model the per-account wipe leaves in place, each with the
+ * reason. Unlike {@link WIPE_EXEMPT}, which spares a whole model, this spares
+ * named rows of a model whose every other row goes.
+ *
+ * The admin wipe of every account ignores it: the operator clearing the host
+ * asked for nothing to stay.
+ */
+export const WIPE_KEPT_ROWS: Readonly<
+  Record<string, { keep: object; reason: string }>
+> = {
+  DataBackup: {
+    keep: { NOT: { type: { startsWith: PRE_WIPE_BACKUP_TYPE_PREFIX } } },
+    reason:
+      "the account copies taken before a wipe (`PRE_WIPE_<ms>`), the current one included: it is written immediately before this transaction so the wipe can be undone during the deletion grace window, and the account-deletion purge job deletes each one when its window ends",
+  },
+};
 
 /** The narrow slice of a Prisma delegate the wipe loop uses. */
 export interface UserScopedDeleteDelegate {
@@ -665,7 +710,7 @@ export function resolveWipeDelegate(
   model: string,
 ): UserScopedDeleteDelegate {
   const delegate = rawDelegate(client, model);
-  if (!WIPE_OWNER_FIELDS[model]) {
+  if (!WIPE_OWNER_FIELDS[model] && !WIPE_KEPT_ROWS[model]) {
     return delegate as UserScopedDeleteDelegate;
   }
   return {

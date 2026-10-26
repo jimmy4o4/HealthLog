@@ -37,7 +37,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -96,6 +96,13 @@ import { hashInsightSnapshot } from "../snapshot-hash";
 import { compactSections } from "@/lib/ai/prompts/compact-sections";
 import { featuresInReaderUnits } from "../features-units";
 import { DEFAULT_UNIT_PREFERENCES } from "@/lib/measurements/display-transform";
+import {
+  openInsightsCachedText,
+  sealInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
+
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
 
 /** A small data-bearing feature set that survives `compactSections`. */
 const FEATURES = {
@@ -139,7 +146,7 @@ describe("generateComprehensiveInsight — the briefing capability at the wire",
   const STALE_USER = {
     insightsPrivacyMode: "aggregated",
     insightsCachedAt: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
     insightsExcludeMetrics: [],
     insightsSnapshotHash: null,
   };
@@ -177,7 +184,7 @@ describe("generateComprehensiveInsight — the briefing capability at the wire",
     findUnique.mockResolvedValue({
       ...STALE_USER,
       insightsCachedAt: new Date(Date.now() - 60 * 60 * 1000),
-      insightsCachedText: "{}",
+      insightsCachedTextEncrypted: sealInsightsCachedText("{}"),
     });
     aiCapabilityForRecord.mockResolvedValue({
       available: false,
@@ -197,7 +204,7 @@ describe("generateComprehensiveInsight — cache short-circuit", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 21 * 60 * 60 * 1000),
-      insightsCachedText: "{}",
+      insightsCachedTextEncrypted: sealInsightsCachedText("{}"),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: null,
     });
@@ -216,7 +223,7 @@ describe("generateComprehensiveInsight — cache short-circuit", () => {
       insightsPrivacyMode: "aggregated",
       // 21h old — inside the 24h TTL, so the un-forced path would cache.
       insightsCachedAt: new Date(Date.now() - 21 * 60 * 60 * 1000),
-      insightsCachedText: "{}",
+      insightsCachedTextEncrypted: sealInsightsCachedText("{}"),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: null,
     });
@@ -247,7 +254,9 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "old" } }),
+      ),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
     });
@@ -266,7 +275,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       data: Record<string, unknown>;
     };
     expect(args.data.insightsCachedAt).toEqual(expect.any(Date));
-    expect(args.data).not.toHaveProperty("insightsCachedText");
+    expect(args.data).not.toHaveProperty("insightsCachedTextEncrypted");
     expect(args.data).not.toHaveProperty("insightsSnapshotHash");
     expect(auditDeleteMany).not.toHaveBeenCalled();
   });
@@ -276,7 +285,9 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "old" } }),
+      ),
       insightsExcludeMetrics: [],
       // Stored fingerprint from an older data state.
       insightsSnapshotHash: "0".repeat(64),
@@ -290,6 +301,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", {
@@ -302,8 +314,8 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     // Find the cache write among the user updates.
     const write = userUpdate.mock.calls.find(
       (c) =>
-        (c[0] as { data: Record<string, unknown> }).data.insightsCachedText !==
-        undefined,
+        (c[0] as { data: Record<string, unknown> }).data
+          .insightsCachedTextEncrypted !== undefined,
     );
     expect(write).toBeTruthy();
     const data = (write![0] as { data: Record<string, unknown> }).data;
@@ -312,7 +324,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     expect(data.insightsCachedLocale).toBe("de");
     // New text carries the moment it was generated, which the "is this
     // briefing from today" check reads instead of insightsCachedAt.
-    const stored = JSON.parse(data.insightsCachedText as string);
+    const stored = JSON.parse(openInsightsCachedText(data) as string);
     expect(Date.parse(stored.briefingGeneratedAt)).toBeGreaterThan(
       Date.now() - 60_000,
     );
@@ -325,7 +337,9 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "old" } }),
+      ),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
       unitPreference: "imperial",
@@ -340,6 +354,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     // The kilogram fingerprint no longer matches: a unit switch regenerates.
@@ -356,8 +371,8 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
 
     const write = userUpdate.mock.calls.find(
       (c) =>
-        (c[0] as { data: Record<string, unknown> }).data.insightsCachedText !==
-        undefined,
+        (c[0] as { data: Record<string, unknown> }).data
+          .insightsCachedTextEncrypted !== undefined,
     );
     const data = (write![0] as { data: Record<string, unknown> }).data;
     expect(data.insightsSnapshotHash).toBe(
@@ -379,7 +394,9 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 1 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "english" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "english" } }),
+      ),
       insightsCachedLocale: "en",
       insightsExcludeMetrics: [],
       insightsSnapshotHash: null,
@@ -399,7 +416,9 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "old" } }),
+      ),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: null,
     });
@@ -412,6 +431,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", {
@@ -432,10 +452,12 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: null,
-        recommendations: [],
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: null,
+          recommendations: [],
+        }),
+      ),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
     });
@@ -448,6 +470,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", {
@@ -460,8 +483,8 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     // A real cache write happened (not a timestamp-only refresh).
     const write = userUpdate.mock.calls.find(
       (c) =>
-        (c[0] as { data: Record<string, unknown> }).data.insightsCachedText !==
-        undefined,
+        (c[0] as { data: Record<string, unknown> }).data
+          .insightsCachedTextEncrypted !== undefined,
     );
     expect(write).toBeTruthy();
   });
@@ -471,7 +494,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
     });
@@ -484,6 +507,7 @@ describe("generateComprehensiveInsight — content-hash gate (v1.16.8)", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
 
     const outcome = await generateComprehensiveInsight("u1", {
@@ -518,7 +542,9 @@ describe("generateComprehensiveInsight — usage level", () => {
     findUnique.mockResolvedValue({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({ dailyBriefing: { p: "old" } }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: { p: "old" } }),
+      ),
       insightsExcludeMetrics: [],
       insightsSnapshotHash: FEATURES_HASH,
       aiUsageLevel,
@@ -532,18 +558,19 @@ describe("generateComprehensiveInsight — usage level", () => {
       },
       workingProvider: { providerType: "openai" },
       fallbackHops: [],
+      tokensSpent: 0,
     });
   }
 
   function storedPayload() {
     const write = userUpdate.mock.calls.find(
       (c) =>
-        (c[0] as { data: Record<string, unknown> }).data.insightsCachedText !==
-        undefined,
+        (c[0] as { data: Record<string, unknown> }).data
+          .insightsCachedTextEncrypted !== undefined,
     );
     const data = (write![0] as { data: Record<string, unknown> }).data;
     return {
-      payload: JSON.parse(data.insightsCachedText as string),
+      payload: JSON.parse(openInsightsCachedText(data) as string),
       hash: data.insightsSnapshotHash,
     };
   }

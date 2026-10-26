@@ -21,12 +21,14 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { McpAuthContext } from "./auth";
-import { MCP_TOOLS, type McpToolDefinition } from "./tools";
+import { MCP_TOOLS } from "./tools";
+import type { McpToolDefinition } from "./tools/types";
 import { MCP_WRITE_TOOLS } from "./write-tools";
 import { MCP_RESOURCES, MCP_RESOURCE_TEMPLATES } from "./resources";
 import { MCP_PROMPTS } from "./prompts";
 import { resolveBaseOrigin } from "./oauth/config";
 import { advertiseToolSchemasAs2020 } from "./schema-dialect";
+import { toolFailure } from "./tool-failure";
 
 export const MCP_SERVER_NAME = "healthlog";
 export const MCP_SERVER_VERSION = "1.0.0";
@@ -102,7 +104,12 @@ export function createMcpServer(ctx: McpAuthContext): McpServer {
         ...(tool.outputShape ? { outputSchema: tool.outputShape } : {}),
       },
       async (args: Record<string, unknown>) => {
-        const result = await tool.run(ctx, args ?? {});
+        let result: unknown;
+        try {
+          result = await tool.run(ctx, args ?? {});
+        } catch (error) {
+          return toolFailure(tool.name, error);
+        }
         const content = [
           { type: "text" as const, text: JSON.stringify(result) },
         ];

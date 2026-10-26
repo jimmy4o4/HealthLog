@@ -118,6 +118,7 @@ import {
   droppedAnyLinkKeys,
   type DroppedLinkKeysWire,
 } from "@/lib/mood/dropped-link-keys";
+import { InlineAction } from "@/components/ui/inline-action";
 
 // Re-export the score map under the legacy local name to keep the
 // rest of this file unchanged. v1.4.27 B6 / BL-P6-11 — the single
@@ -169,7 +170,7 @@ function toDateTimeLocalValue(isoString: string): string {
 
 interface MoodListProps {
   /**
-   * v1.4.15 phase-C5: optional callback wired by the parent page so
+   * v1.4.15: optional callback wired by the parent page so
    * the empty-state's "Log your first mood" CTA opens the same dialog
    * the header button does. When undefined, the CTA hides instead of
    * rendering a no-op button.
@@ -196,7 +197,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
   // through the router, so a filtered view survives navigation, reload and
   // back/forward.
   // v1.15.13 — management-list source filter + optional date range.
-  const { filters, applyFilters } = useUrlFilterSync({
+  const { filters, applyFilters, patchFilters } = useUrlFilterSync({
     parse: parseMoodListSearchParams,
     serialise: moodListFiltersToSearch,
   });
@@ -285,7 +286,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
     });
   }
   const [editDeleteDialogOpen, setEditDeleteDialogOpen] = useState(false);
-  // v1.4.27 R4 RC2 — Sheet-branch sticky-pinned footer slot.
+  // v1.4.27 — Sheet-branch sticky-pinned footer slot.
   const editFormId = useId();
   const [editFooterEl, setEditFooterEl] = useState<HTMLDivElement | null>(null);
 
@@ -297,25 +298,25 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
   // vault's chips); the committed date bounds replace — a from/to pair set in
   // one sitting should not cost two Back presses.
   const setMoodFilter = (value: string) => {
-    applyFilters({ ...filters, mood: value === "ALL" ? undefined : value });
+    patchFilters({ mood: value === "ALL" ? undefined : value });
     setPage(1);
     clearSelection();
   };
 
   const setSourceFilter = (value: string) => {
-    applyFilters({ ...filters, source: value === "ALL" ? undefined : value });
+    patchFilters({ source: value === "ALL" ? undefined : value });
     setPage(1);
     clearSelection();
   };
 
   const setFromDay = (value: string) => {
-    applyFilters({ ...filters, fromDay: value || undefined }, "replace");
+    patchFilters({ fromDay: value || undefined }, "replace");
     setPage(1);
     clearSelection();
   };
 
   const setToDay = (value: string) => {
-    applyFilters({ ...filters, toDay: value || undefined }, "replace");
+    patchFilters({ toDay: value || undefined }, "replace");
     setPage(1);
     clearSelection();
   };
@@ -340,7 +341,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
   const toParam = toDay || undefined;
   const sourceParam = sourceFilter === "ALL" ? undefined : sourceFilter;
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.moodEntriesList({
       mood: moodFilter === "ALL" ? undefined : moodFilter,
       source: sourceParam,
@@ -714,11 +715,12 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
           // A read failure is NOT an empty list — surface the error + Retry so
           // an outage never reads as "you have no mood entries".
           <QueryErrorCard
+            error={error}
             title={t("mood.loadError")}
             onRetry={() => void refetch()}
           />
         ) : !data?.entries?.length ? (
-          // v1.4.15 phase-C5: replace bare-text empty rectangle with
+          // v1.4.15: replace bare-text empty rectangle with
           // EmptyState. Filter-aware copy splits "no mood entries yet"
           // (brand-new account) from "no entries match this filter".
           <EmptyState
@@ -844,7 +846,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
                           </span>
                         </TableCell>
                         <TableCell className="text-muted-foreground max-w-[18rem] text-sm">
-                          <span className="block truncate">
+                          <span className="block break-words">
                             {entry.tags.length > 0
                               ? entry.tags.join(", ")
                               : "-"}
@@ -958,7 +960,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
                           </DayLink>
                         </p>
                         {entry.tags.length > 0 && (
-                          <p className="text-muted-foreground truncate text-xs">
+                          <p className="text-muted-foreground text-xs break-words">
                             {entry.tags.join(", ")}
                           </p>
                         )}
@@ -1036,7 +1038,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
               })}
             </span>
             <div className="flex gap-1">
-              {/* v1.15.13 L2 — match the measurements list's 44px pagination
+              {/* v1.15.13 — match the measurements list's 44px pagination
                   target (was `size="sm"`, below the WCAG 2.5.5 floor). */}
               <Button
                 variant="ghost"
@@ -1113,7 +1115,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
                 id="edit-mood-logged-at"
                 value={editMoodLoggedAt}
                 onChange={setEditMoodLoggedAt}
-                // v1.17 W1b — match the server bound: no future instant.
+                // v1.17 — match the server bound: no future instant.
                 max={toDateTimeLocalValue(new Date().toISOString())}
                 required
               />
@@ -1167,7 +1169,7 @@ export function MoodList({ onAddFirst, onEmptyChange }: MoodListProps = {}) {
                 that day's figures. */}
             <MoodLinkedDaySection linked={editLinked} />
 
-            {/* v1.8.5 (C1) — free-text note. */}
+            {/* v1.8.5 — free-text note. */}
             <div className="space-y-2">
               <Label htmlFor="edit-mood-note">
                 {t("mood.note")} ({t("common.optional")})
@@ -1360,16 +1362,15 @@ function MoodNoteText({
         {note}
       </p>
       {(expanded || clamped) && (
-        <button
-          type="button"
+        <InlineAction
+          className="font-medium"
           onClick={onToggle}
           aria-expanded={expanded}
           aria-controls={noteId}
           data-testid="mood-note-toggle"
-          className="text-primary cursor-pointer text-xs font-medium"
         >
           {expanded ? t("mood.noteCollapse") : t("mood.noteExpand")}
-        </button>
+        </InlineAction>
       )}
     </div>
   );

@@ -1,8 +1,9 @@
 import type { Locale } from "@/lib/i18n/config";
+import { formatDecimal } from "@/lib/format-locale";
 import type { MetricSignal } from "@/lib/insights/metric-signal";
 
 /**
- * v1.4.25 W9e / v1.31.0 — these no-key fallbacks now carry a written body for
+ * v1.4.25 v1.31.0 — these no-key fallbacks now carry a written body for
  * every shipped locale (de/en/fr/es/it/pl). They used to ship DE + EN only and
  * route the other four through the English body, which meant a French, Spanish,
  * Italian or Polish self-hoster read English on nine metric surfaces whenever
@@ -66,16 +67,18 @@ interface FallbackCopy {
   pointer: Localized<string>;
 }
 
-function fmtValue(value: number, copy: FallbackCopy): string {
+function fmtValue(
+  value: number,
+  copy: FallbackCopy,
+  locale: InsightLocale,
+): string {
   const digits = copy.digits ?? 0;
-  // Round to the metric's precision, but never render a trailing ".0" — an
-  // integer reading (steps, a whole-number BMI day) should read as "4200",
-  // not "4200.0", while a genuine fractional value keeps its decimal.
+  // Round to the metric's precision, but never render a trailing zero — an
+  // integer reading (steps, a whole-number BMI day) reads as "4200", not
+  // "4200.0" — and print the decimal in the reader's notation ("72,5").
   const factor = 10 ** digits;
   const rounded = Math.round(value * factor) / factor;
-  const text = Number.isInteger(rounded)
-    ? String(rounded)
-    : rounded.toFixed(digits);
+  const text = formatDecimal(rounded, locale, digits);
   return copy.unit ? `${text}${copy.unit}` : text;
 }
 
@@ -99,6 +102,8 @@ const VERDICT_STEADY: Localized<string> = {
   es: "Estable, como de costumbre",
   it: "Stabile, come al solito",
   pl: "Stabilnie, tak jak zwykle",
+  nl: "Stabiel en zoals gewoonlijk",
+  "pt-BR": "Estável e como de costume",
 };
 
 const VERDICT_FAVOURABLE: Localized<string> = {
@@ -108,6 +113,8 @@ const VERDICT_FAVOURABLE: Localized<string> = {
   es: "Esto va en buena dirección",
   it: "Sta andando nella direzione giusta",
   pl: "To zmierza w dobrym kierunku",
+  nl: "Dit gaat de goede kant op",
+  "pt-BR": "Isso está indo numa boa direção",
 };
 
 const VERDICT_OFF_USUAL: Localized<string> = {
@@ -117,6 +124,8 @@ const VERDICT_OFF_USUAL: Localized<string> = {
   es: "Últimamente algo fuera de tu rango habitual",
   it: "Ultimamente un po’ fuori dal tuo intervallo abituale",
   pl: "Ostatnio nieco poza twoim zwykłym zakresem",
+  nl: "De laatste tijd iets buiten je gebruikelijke bereik",
+  "pt-BR": "Ultimamente um pouco fora do seu padrão habitual",
 };
 
 function verdictLead(
@@ -188,6 +197,10 @@ const VALUE_VS_BASELINE: Localized<
     `${l} è a ${c} in questo momento — ${higher ? "sopra" : "sotto"} la tua media abituale di ${b}.`,
   pl: (l, c, b, higher) =>
     `${l} wynosi obecnie ${c} — ${higher ? "powyżej" : "poniżej"} twojej zwykłej średniej ${b}.`,
+  nl: (l, c, b, higher) =>
+    `${l} staat nu op ${c}, ${higher ? "hoger" : "lager"} dan je gebruikelijke gemiddelde van ${b}.`,
+  "pt-BR": (l, c, b, higher) =>
+    `${l} está em ${c} agora, ${higher ? "acima" : "abaixo"} da sua média habitual de ${b}.`,
 };
 
 const VALUE_AT_BASELINE: Localized<(label: string, current: string) => string> =
@@ -200,6 +213,9 @@ const VALUE_AT_BASELINE: Localized<(label: string, current: string) => string> =
     it: (l, c) => `${l} è a ${c}, più o meno sulla tua media abituale.`,
     pl: (l, c) =>
       `${l} wynosi obecnie ${c}, czyli mniej więcej tyle co twoja zwykła średnia.`,
+    nl: (l, c) =>
+      `${l} staat op ${c}, ongeveer op je gebruikelijke gemiddelde.`,
+    "pt-BR": (l, c) => `${l} está em ${c}, bem perto da sua média habitual.`,
   };
 
 const VALUE_ALONE: Localized<(label: string, current: string) => string> = {
@@ -209,6 +225,8 @@ const VALUE_ALONE: Localized<(label: string, current: string) => string> = {
   es: (l, c) => `${l} está en ${c} ahora mismo.`,
   it: (l, c) => `${l} è a ${c} in questo momento.`,
   pl: (l, c) => `${l} wynosi obecnie ${c}.`,
+  nl: (l, c) => `${l} staat nu op ${c}.`,
+  "pt-BR": (l, c) => `${l} está em ${c} agora.`,
 };
 
 const CLOSER_IN_RANGE: Localized<string> = {
@@ -218,6 +236,9 @@ const CLOSER_IN_RANGE: Localized<string> = {
   es: "Eso queda dentro de tu rango habitual — nada que pida una reacción ahora.",
   it: "Rientra nel tuo intervallo abituale — niente su cui intervenire adesso.",
   pl: "Mieści się to w twoim zwykłym zakresie — nic, na co trzeba teraz reagować.",
+  nl: "Dat valt binnen je gebruikelijke bereik, dus niets waar je nu iets mee hoeft te doen.",
+  "pt-BR":
+    "Isso está dentro da sua faixa habitual, nada que peça uma ação agora.",
 };
 
 const CLOSER_UNKNOWN_SWING: Localized<string> = {
@@ -227,6 +248,9 @@ const CLOSER_UNKNOWN_SWING: Localized<string> = {
   es: "Unas pocas mediciones más harán fiable la tendencia — obsérvala durante los próximos días.",
   it: "Qualche misurazione in più renderà la tendenza affidabile — tienila d’occhio nei prossimi giorni.",
   pl: "Kilka kolejnych pomiarów sprawi, że tendencja stanie się wiarygodna — obserwuj ją przez najbliższe dni.",
+  nl: "Met nog een paar metingen wordt de trend betrouwbaar. Houd hem de komende dagen in de gaten.",
+  "pt-BR":
+    "Mais algumas medições vão tornar a tendência confiável. Acompanhe nos próximos dias.",
 };
 
 /**
@@ -245,7 +269,7 @@ function composeGroundedFallback(
   if (!signal || !Number.isFinite(signal.current)) return null;
 
   const label = capitalise(pick(locale, copy.label));
-  const current = fmtValue(signal.current, copy);
+  const current = fmtValue(signal.current, copy, locale);
 
   const sentences: string[] = [];
 
@@ -261,7 +285,7 @@ function composeGroundedFallback(
     signal.delta !== 0 &&
     Number.isFinite(signal.baseline)
   ) {
-    const baseline = fmtValue(signal.baseline, copy);
+    const baseline = fmtValue(signal.baseline, copy, locale);
     sentences.push(
       pick(locale, VALUE_VS_BASELINE)(
         label,
@@ -300,6 +324,8 @@ const BLOOD_PRESSURE_COPY: FallbackCopy = {
     es: "tu presión arterial",
     it: "la tua pressione sanguigna",
     pl: "twoje ciśnienie krwi",
+    nl: "je bloeddruk",
+    "pt-BR": "sua pressão arterial",
   },
   unit: "",
   digits: 0,
@@ -310,6 +336,9 @@ const BLOOD_PRESSURE_COPY: FallbackCopy = {
     es: "Unas cuantas mediciones en calma y en las mismas condiciones mostrarán si es la tendencia o un valor aislado.",
     it: "Qualche misurazione a riposo nelle stesse condizioni mostrerà se è la tendenza o un valore isolato.",
     pl: "Kilka spokojnych pomiarów w tych samych warunkach pokaże, czy to tendencja, czy pojedynczy wyskok.",
+    nl: "Een paar rustige metingen onder dezelfde omstandigheden laten zien of dit de trend is of een losse uitschieter.",
+    "pt-BR":
+      "Algumas medições tranquilas nas mesmas condições vão mostrar se isso é a tendência ou um valor isolado.",
   },
 };
 
@@ -321,6 +350,8 @@ const WEIGHT_COPY: FallbackCopy = {
     es: "tu peso",
     it: "il tuo peso",
     pl: "twoja waga",
+    nl: "je gewicht",
+    "pt-BR": "seu peso",
   },
   unit: "",
   digits: 1,
@@ -331,6 +362,9 @@ const WEIGHT_COPY: FallbackCopy = {
     es: "Pésate a la misma hora durante unos días y la fluctuación diaria normal se compensa sola.",
     it: "Pesati alla stessa ora per qualche giorno e la normale oscillazione quotidiana si compensa da sé.",
     pl: "Waż się przez kilka dni o tej samej porze, a normalne dobowe wahania same się wyrównają.",
+    nl: "Weeg je een paar dagen op hetzelfde tijdstip, dan middelt de normale schommeling van dag tot dag zich vanzelf uit.",
+    "pt-BR":
+      "Pese-se no mesmo horário por alguns dias, e a oscilação normal do dia a dia se acerta sozinha.",
   },
 };
 
@@ -342,6 +376,8 @@ const PULSE_COPY: FallbackCopy = {
     es: "tu pulso en reposo",
     it: "il tuo battito a riposo",
     pl: "twoje tętno spoczynkowe",
+    nl: "je rusthartslag",
+    "pt-BR": "seu pulso em repouso",
   },
   unit: " bpm",
   digits: 0,
@@ -352,6 +388,9 @@ const PULSE_COPY: FallbackCopy = {
     es: "Tómatelo relajado y a la misma hora del día para ver si la dirección se mantiene.",
     it: "Misuralo da rilassato e alla stessa ora del giorno per vedere se la direzione tiene.",
     pl: "Mierz je na spokojnie i o tej samej porze dnia, żeby zobaczyć, czy kierunek się utrzyma.",
+    nl: "Meet hem ontspannen en op hetzelfde moment van de dag, dan zie je of de richting aanhoudt.",
+    "pt-BR":
+      "Meça com calma e no mesmo horário do dia para ver se a direção se mantém.",
   },
 };
 
@@ -363,6 +402,8 @@ const BMI_COPY: FallbackCopy = {
     es: "tu IMC",
     it: "il tuo IMC",
     pl: "twoje BMI",
+    nl: "je BMI",
+    "pt-BR": "seu IMC",
   },
   unit: "",
   digits: 1,
@@ -373,6 +414,9 @@ const BMI_COPY: FallbackCopy = {
     es: "Léelo junto con la tendencia de tu peso y tu grasa corporal a lo largo de unas semanas, no día a día.",
     it: "Leggilo insieme all’andamento del tuo peso e alla massa grassa nell’arco di qualche settimana, non giorno per giorno.",
     pl: "Czytaj je razem z tendencją wagi i poziomem tkanki tłuszczowej w skali kilku tygodni, a nie dzień po dniu.",
+    nl: "Bekijk hem samen met je gewichtstrend en vetpercentage over een paar weken, niet dag voor dag.",
+    "pt-BR":
+      "Leia junto com a tendência do seu peso e o percentual de gordura ao longo de algumas semanas, não dia a dia.",
   },
 };
 
@@ -384,6 +428,8 @@ const MOOD_COPY: FallbackCopy = {
     es: "tu estado de ánimo",
     it: "il tuo umore",
     pl: "twój nastrój",
+    nl: "je stemming",
+    "pt-BR": "seu humor",
   },
   unit: "",
   digits: 1,
@@ -394,6 +440,9 @@ const MOOD_COPY: FallbackCopy = {
     es: "Regístralo unos días — un patrón que se repite dice más que un día suelto.",
     it: "Registralo per qualche giorno — uno schema che si ripete dice più di un singolo giorno.",
     pl: "Zapisuj go przez kilka dni — powtarzający się wzorzec mówi więcej niż pojedynczy dzień.",
+    nl: "Houd hem een paar dagen bij. Een terugkerend patroon zegt meer dan één losse dag.",
+    "pt-BR":
+      "Registre por alguns dias. Um padrão que se repete diz mais do que um dia isolado.",
   },
 };
 
@@ -405,6 +454,8 @@ const ADHERENCE_COPY: FallbackCopy = {
     es: "tu adherencia a la medicación",
     it: "la tua aderenza alla terapia",
     pl: "twoja regularność przyjmowania leków",
+    nl: "je medicijntrouw",
+    "pt-BR": "sua adesão à medicação",
   },
   unit: "%",
   digits: 0,
@@ -415,6 +466,9 @@ const ADHERENCE_COPY: FallbackCopy = {
     es: "Una hora fija o un recordatorio breve es lo que mejor recupera los olvidos repetidos.",
     it: "Un orario fisso o un promemoria breve è ciò che intercetta meglio le dimenticanze ripetute.",
     pl: "Stała pora albo krótkie przypomnienie najlepiej wyłapuje powtarzające się pominięcia.",
+    nl: "Een vast tijdstip of een korte herinnering vangt herhaalde vergeten innames het best op.",
+    "pt-BR":
+      "Um horário fixo ou um lembrete rápido é a forma mais confiável de evitar as tomadas esquecidas que se repetem.",
   },
 };
 
@@ -426,6 +480,9 @@ const GENERIC_METRIC_POINTER: Localized<string> = {
   es: "Unas cuantas mediciones constantes mostrarán si es la dirección o un solo día.",
   it: "Qualche misurazione costante mostrerà se è la direzione o un singolo giorno.",
   pl: "Kilka konsekwentnych pomiarów pokaże, czy to kierunek, czy pojedynczy dzień.",
+  nl: "Een paar consistente metingen laten zien of dit de richting is of één enkele dag.",
+  "pt-BR":
+    "Algumas medições consistentes vão mostrar se essa é a direção ou só um dia isolado.",
 };
 
 // ── public fallbacks ────────────────────────────────────────────────────────
@@ -485,7 +542,9 @@ const NO_READ_LEAD: Localized<string> = {
   es: "Ahora mismo no hay ninguna valoración disponible.",
   it: "Al momento non è disponibile alcuna valutazione.",
   pl: "Na razie nie ma tu żadnej oceny.",
+  nl: "Voor deze kaart is er nu geen beoordeling.",
   ko: "지금은 이 카드에 대한 평가가 없어요.",
+  "pt-BR": "Não há avaliação disponível para este cartão no momento.",
 };
 
 function noReadLead(locale: InsightLocale): string {
@@ -506,6 +565,9 @@ export function getNoKeyGeneralStatusText(locale: InsightLocale): string {
     es: "Estos números se vuelven legibles a lo largo de varias semanas y no en días sueltos, y tomados a horas constantes para que sigan siendo comparables. La señal que cuenta son varios indicadores derivando a la vez en la misma dirección desfavorable, no un valor en un día.",
     it: "Questi numeri diventano leggibili nell’arco di più settimane anziché di singoli giorni, e rilevati a orari costanti per restare confrontabili. Il segnale che conta è più indicatori che scivolano insieme nella stessa direzione sfavorevole, non un valore in un giorno.",
     pl: "Te liczby stają się czytelne w skali kilku tygodni, a nie pojedynczych dni, i tylko wtedy, gdy są zbierane o stałych porach, żeby pozostały porównywalne. Sygnałem, który się liczy, jest kilka wskaźników dryfujących jednocześnie w tę samą niekorzystną stronę, a nie jedna wartość jednego dnia.",
+    nl: "Deze cijfers worden leesbaar over meerdere weken, niet over losse dagen, en gemeten op vaste momenten zodat ze vergelijkbaar blijven. Het signaal dat telt is dat meerdere waarden tegelijk dezelfde ongunstige kant op schuiven, niet één waarde op één dag.",
+    "pt-BR":
+      "Estes números ficam legíveis ao longo de várias semanas, não em dias isolados, e medidos em horários consistentes para continuarem comparáveis. O sinal que conta são várias métricas se movendo ao mesmo tempo na mesma direção desfavorável, não um valor em um único dia.",
   });
 }
 
@@ -527,7 +589,9 @@ const BIOMARKER_NAMED_LEAD: Localized<(named: string) => string> = {
   es: (n) => `Ahora mismo no hay ninguna valoración${n}.`,
   it: (n) => `Al momento non è disponibile alcuna valutazione${n}.`,
   pl: (n) => `Na razie nie ma żadnej oceny${n}.`,
+  nl: (n) => `Er is nu geen beoordeling${n}.`,
   ko: (n) => `지금은${n} 평가가 없어요.`,
+  "pt-BR": (n) => `Não há avaliação${n} no momento.`,
 };
 
 const BIOMARKER_NAMED_CLAUSE: Localized<(marker: string) => string> = {
@@ -537,7 +601,9 @@ const BIOMARKER_NAMED_CLAUSE: Localized<(marker: string) => string> = {
   es: (m) => ` de «${m}»`,
   it: (m) => ` per «${m}»`,
   pl: (m) => ` dla „${m}”`,
+  nl: (m) => ` voor "${m}"`,
   ko: (m) => ` '${m}'에 대한`,
+  "pt-BR": (m) => ` para "${m}"`,
 };
 
 export function getNoKeyBiomarkerStatusText(
@@ -555,6 +621,9 @@ export function getNoKeyBiomarkerStatusText(
     es: "Un valor de laboratorio se lee primero frente a tus propias extracciones anteriores — un intervalo de referencia es un ancla aproximada, no un veredicto. Uno que apenas se ha movido a lo largo de varias extracciones cuenta algo distinto de uno que acaba de dar un salto. Tu próxima revisión médica es el lugar adecuado para ponerlo en contexto.",
     it: "Un valore di laboratorio si legge prima di tutto rispetto ai tuoi prelievi precedenti — un intervallo di riferimento è un ancoraggio grossolano, non un verdetto. Uno che si è mosso appena nell’arco di più prelievi racconta una storia diversa da uno che ha appena fatto un salto. Il tuo prossimo controllo medico è il posto giusto per contestualizzarlo.",
     pl: "Wynik laboratoryjny czyta się najpierw na tle twoich wcześniejszych oznaczeń — zakres referencyjny to zgrubna kotwica, a nie wyrok. Wynik, który przez kilka oznaczeń niemal się nie ruszył, mówi co innego niż taki, który właśnie podskoczył. Najbliższa kontrola lekarska to właściwe miejsce, żeby go osadzić w kontekście.",
+    nl: "Een labwaarde lees je eerst tegen je eigen eerdere metingen. Een referentiebereik is een ruw ankerpunt, geen oordeel. Een waarde die over meerdere metingen nauwelijks beweegt, vertelt iets anders dan een waarde die net een sprong heeft gemaakt. Je volgende controle bij de arts is de juiste plek om hem in context te plaatsen.",
+    "pt-BR":
+      "Um valor de exame se lê primeiro em relação às suas coletas anteriores. Uma faixa de referência é um ponto de apoio aproximado, não um veredito. Um valor que mal se moveu ao longo de várias coletas conta uma história diferente de um que acabou de dar um salto. Sua próxima consulta é o lugar certo para colocá-lo em contexto.",
   })}`;
 }
 
@@ -571,6 +640,9 @@ export function getNoKeyBloodPressureStatusText(
       es: "La tensión se lee a lo largo de una serie de mediciones en calma y en condiciones comparables — la dirección a lo largo de varios días dice mucho más que cualquier valor aislado, y la sistólica y la diastólica se leen juntas y no una por una.",
       it: "La pressione si legge su una serie di misurazioni a riposo in condizioni confrontabili — la direzione nell’arco di più giorni dice molto più di un singolo valore isolato, e sistolica e diastolica si leggono insieme anziché una alla volta.",
       pl: "Ciśnienie staje się czytelne dopiero w serii spokojnych pomiarów w porównywalnych warunkach — kierunek z kilku dni mówi znacznie więcej niż pojedynczy wyskok, a wartość skurczowa i rozkurczowa czyta się razem, a nie osobno.",
+      nl: "Bloeddruk wordt leesbaar over een reeks rustige metingen onder vergelijkbare omstandigheden. De richting over meerdere dagen zegt veel meer dan één uitschieter, en de boven- en onderdruk lees je samen in plaats van los van elkaar.",
+      "pt-BR":
+        "A pressão arterial fica legível ao longo de uma série de medições tranquilas em condições parecidas. A direção ao longo de vários dias diz muito mais do que um valor fora da curva, e a sistólica e a diastólica são lidas juntas, não separadamente.",
     })
   );
 }
@@ -588,6 +660,9 @@ export function getNoKeyWeightStatusText(
       es: "El peso se lee como una tendencia y no como una cifra diaria — pesado en condiciones constantes, la fluctuación normal del día a día se compensa sola. Lo que sostiene es la dirección a lo largo de semanas, leída junto a la tensión y el IMC.",
       it: "Il peso si legge come andamento e non come numero del giorno — pesato in condizioni costanti, la normale oscillazione quotidiana si compensa da sé. Quello che regge è la direzione nell’arco di settimane, letta insieme alla pressione e all’IMC.",
       pl: "Wagę czyta się jako przebieg, a nie jako liczbę z jednego dnia — przy ważeniu w stałych warunkach normalne dobowe wahania same się wyrównają. Nośny jest kierunek z kilku tygodni, czytany razem z ciśnieniem i BMI.",
+      nl: "Gewicht lees je als trend, niet als getal van de dag. Weeg je onder vaste omstandigheden, dan middelt de normale schommeling van dag tot dag zich vanzelf uit. Wat telt is de richting over weken, samen gelezen met bloeddruk en BMI.",
+      "pt-BR":
+        "O peso se lê como tendência, não como número do dia. Pesando-se em condições consistentes, a oscilação normal do dia a dia se acerta sozinha. O que conta é a direção ao longo das semanas, lida junto com a pressão arterial e o IMC.",
     })
   );
 }
@@ -605,6 +680,9 @@ export function getNoKeyPulseStatusText(
       es: "El pulso en reposo se lee mejor tomado relajado y a la misma hora del día. Los picos breves son corrientes; lo que destaca es un patrón que se mantiene varios días, o una deriva repetida fuera de tu rango habitual.",
       it: "Il battito a riposo si legge meglio se misurato da rilassato e alla stessa ora del giorno. I picchi brevi sono ordinari; quello che spicca è uno schema che tiene per più giorni, o uno scostamento ripetuto dal tuo intervallo abituale.",
       pl: "Tętno spoczynkowe najlepiej czytać zmierzone na spokojnie i o tej samej porze dnia. Krótkie skoki są czymś zwyczajnym; uwagę zwraca wzorzec utrzymujący się przez kilka dni albo powtarzające się oddalanie od twojego zwykłego zakresu.",
+      nl: "De rusthartslag lees je het best als je hem ontspannen en op hetzelfde moment van de dag meet. Korte pieken zijn gewoon; wat opvalt is een patroon dat meerdere dagen aanhoudt, of steeds weer afwijken van je gebruikelijke bereik.",
+      "pt-BR":
+        "O pulso em repouso se lê melhor quando medido com calma e no mesmo horário do dia. Picos curtos são normais; o que chama atenção é um padrão que se mantém por vários dias, ou um afastamento repetido da sua faixa habitual.",
     })
   );
 }
@@ -622,6 +700,9 @@ export function getNoKeyBmiStatusText(
       es: "El IMC es una orientación aproximada más que un veredicto, y cobra sentido leído junto a la tendencia de tu peso y tu composición corporal. Un movimiento sostenido a lo largo de semanas sostiene donde un valor aislado no lo hace.",
       it: "L’IMC è un orientamento grossolano più che un verdetto, e assume senso letto insieme all’andamento del tuo peso e alla composizione corporea. Un movimento sostenuto nell’arco di settimane regge dove un valore singolo non regge.",
       pl: "BMI to zgrubna orientacja, a nie wyrok, i nabiera sensu dopiero czytane razem z tendencją wagi i składem ciała. Utrzymujący się ruch w skali tygodni jest nośny tam, gdzie pojedyncza wartość nie jest.",
+      nl: "BMI is een ruwe oriëntatie, geen oordeel, en zegt het meest samen met je gewichtstrend en lichaamssamenstelling. Een aanhoudende beweging over weken zegt iets waar één losse waarde dat niet doet.",
+      "pt-BR":
+        "O IMC é uma orientação aproximada, não um veredito, e diz mais quando lido junto com a tendência do seu peso e a sua composição corporal. Um movimento sustentado ao longo de semanas diz algo que um valor isolado não diz.",
     })
   );
 }
@@ -639,6 +720,9 @@ export function getNoKeyMedicationComplianceStatusText(
       es: "La adherencia se lee como constancia a lo largo de semanas y no como una racha de días perfectos — por medicamento y en el conjunto. Los olvidos repetidos a la misma hora son el patrón que cuenta, y lo que suele recuperarlos es una rutina fija.",
       it: "L’aderenza si legge come costanza nell’arco di settimane più che come una serie di giornate perfette — per singolo farmaco e nel quadro complessivo. Le dimenticanze ripetute alla stessa ora sono lo schema che conta, ed è una routine fissa a intercettarle di solito.",
       pl: "Regularność przyjmowania leków czyta się jako stałość w skali tygodni, a nie jako serię idealnych dni — osobno dla każdego leku i w całym obrazie. Powtarzające się pominięcia o tej samej porze to wzorzec, który się liczy, a wyłapuje je zwykle stały rytm dnia.",
+      nl: "Medicijntrouw lees je als regelmaat over weken, niet als een reeks perfecte dagen, per medicijn en in het geheel. Herhaald vergeten op hetzelfde moment van de dag is het patroon dat telt, en een vaste routine vangt dat meestal op.",
+      "pt-BR":
+        "A adesão se lê como regularidade ao longo de semanas, não como uma sequência de dias perfeitos, por medicamento e no conjunto. Esquecimentos repetidos no mesmo horário do dia são o padrão que conta, e uma rotina fixa costuma resolvê-los.",
     })
   );
 }
@@ -656,6 +740,9 @@ export function getNoKeyMoodStatusText(
       es: "El estado de ánimo se lee a lo largo de semanas y no en días sueltos — lo que sostiene son los patrones que se repiten y cómo encajan con tus otros valores. La que merece atención es una fase baja que se prolonga.",
       it: "L’umore si legge nell’arco di settimane più che nei singoli giorni — quello che regge sono gli schemi ricorrenti e come si allineano con gli altri tuoi valori. È una fase bassa che si protrae quella che merita attenzione.",
       pl: "Nastrój czyta się w skali tygodni, a nie pojedynczych dni — nośne są powtarzające się wzorce i to, jak układają się względem twoich pozostałych wartości. Uwagi wymaga przede wszystkim dłużej utrzymujący się spadek.",
+      nl: "Stemming lees je over weken, niet over losse dagen. Wat telt zijn terugkerende patronen en hoe die samenhangen met je andere waarden. Een aanhoudende periode van lage stemming is wat aandacht verdient.",
+      "pt-BR":
+        "O humor se lê ao longo de semanas, não em dias isolados. O que conta são os padrões que se repetem e como eles se relacionam com as suas outras métricas. Um período prolongado de humor baixo é o que merece atenção.",
     })
   );
 }

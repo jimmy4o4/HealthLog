@@ -3,13 +3,10 @@ import { describe, it, expect } from "vitest";
 import {
   INSTRUMENTS,
   INSTRUMENT_MEASUREMENT_TYPE,
-  hasValidatedItems,
   isSafetyFlagged,
   needsFollowUp,
-  optionLabelKey,
   scoreTotal,
   severityBand,
-  stemKey,
 } from "../instruments";
 
 /**
@@ -164,46 +161,40 @@ describe("mental-health instruments", () => {
       expect(INSTRUMENTS.PHQ9.optionOrder).toEqual([0, 1, 2, 3]);
     });
 
-    it("resolves option-label keys per scheme (shared vs SCI per-item groups)", () => {
-      expect(optionLabelKey("PHQ9", 0, 2)).toBe("mentalHealth.options.2");
-      expect(optionLabelKey("WHO5", 4, 5)).toBe("mentalHealth.who5Options.5");
-      // SCI: items 1–2 duration, 3 nights, 4 quality, 5–7 impact, 8 problem duration.
-      expect(optionLabelKey("SCI", 0, 4)).toBe(
-        "mentalHealth.sciOptions.duration.4",
-      );
-      expect(optionLabelKey("SCI", 2, 0)).toBe(
-        "mentalHealth.sciOptions.nights.0",
-      );
-      expect(optionLabelKey("SCI", 3, 2)).toBe(
-        "mentalHealth.sciOptions.quality.2",
-      );
-      expect(optionLabelKey("SCI", 6, 1)).toBe(
-        "mentalHealth.sciOptions.impact.1",
-      );
-      expect(optionLabelKey("SCI", 7, 3)).toBe(
-        "mentalHealth.sciOptions.problemDuration.3",
-      );
-    });
-
-    it("maps recall stems (WHO-5 one stem; SCI three sections; PHQ/GAD none)", () => {
-      expect(stemKey("WHO5", 0)).toBe("who5.period");
-      expect(stemKey("SCI", 0)).toBe("sci.night");
-      expect(stemKey("SCI", 3)).toBe("sci.night");
-      expect(stemKey("SCI", 4)).toBe("sci.impact");
-      expect(stemKey("SCI", 7)).toBe("sci.finally");
-      expect(stemKey("PHQ9", 0)).toBeNull();
-      expect(stemKey("GAD7", 0)).toBeNull();
-    });
-
-    it("declares validated item locales honestly (SCI = English only)", () => {
-      for (const locale of ["de", "en", "es", "fr", "it", "pl", "ko"]) {
-        expect(hasValidatedItems("WHO5", locale)).toBe(true);
-        expect(hasValidatedItems("PHQ9", locale)).toBe(true);
+    it("names the SCI's item-specific anchor groups, one per item", () => {
+      // Items 1–2 duration, 3 nights, 4 quality, 5–7 impact, 8 problem duration.
+      expect(INSTRUMENTS.SCI.optionGroups).toEqual([
+        "duration",
+        "duration",
+        "nights",
+        "quality",
+        "impact",
+        "impact",
+        "impact",
+        "problemDuration",
+      ]);
+      for (const id of ["PHQ9", "GAD7", "WHO5"] as const) {
+        expect(INSTRUMENTS[id].optionGroups).toBeUndefined();
       }
-      expect(hasValidatedItems("SCI", "en")).toBe(true);
-      expect(hasValidatedItems("SCI", "en-GB")).toBe(true);
-      expect(hasValidatedItems("SCI", "de")).toBe(false);
-      expect(hasValidatedItems("SCI", "pl")).toBe(false);
+    });
+
+    it("maps every item to its form's stem (PHQ/GAD/WHO-5 one each; SCI three sections)", () => {
+      expect(INSTRUMENTS.SCI.stemIds).toEqual([
+        "night",
+        "night",
+        "night",
+        "night",
+        "impact",
+        "impact",
+        "impact",
+        "finally",
+      ]);
+      for (const id of ["PHQ9", "GAD7", "WHO5"] as const) {
+        expect(new Set(INSTRUMENTS[id].stemIds)).toEqual(new Set(["period"]));
+      }
+      for (const def of Object.values(INSTRUMENTS)) {
+        expect(def.stemIds).toHaveLength(def.itemCount);
+      }
     });
 
     it("projects each instrument onto its measurement type", () => {

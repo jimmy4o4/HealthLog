@@ -85,7 +85,7 @@ export const errorEnvelope = z
           .string()
           .optional()
           .describe(
-            "Stable machine code for this refusal. Branch on it rather than on `error`, which is prose and may be reworded. Every code the API emits today is enumerated below, grouped by the surface that emits it; four naming conventions coexist and none of them will be renamed, because a code is a wire value a shipped client branches on. Treat an unlisted code the way you would treat an unlisted enum member — as a refusal you do not recognise, not as a malformed response — since the list grows with the surfaces. Three families are outside it on purpose: `assistant.disabled.<switch>` is built from a template so the last segment is open — it is one of `coach`, `briefing`, `insightStatus`, `documentAi` and `enabled`, and `assistant.disabled.coach` is the one the native client names; the integration-probe classes (`credentials_rejected`, `rate_limited`, `upstream_error`, `timeout`, `connection_failed` and the per-provider additions) are enumerated in each `/test` operation instead, where the differences can be stated; and a 401 raised by a route checking a credential of its own may carry no code at all. " +
+            "Stable machine code for this refusal. Branch on it rather than on `error`, which is prose and may be reworded. Every code the API emits today is enumerated below, grouped by the surface that emits it; four naming conventions coexist and none of them will be renamed, because a code is a wire value a shipped client branches on. Every error envelope carries a code: when the route has no reason of its own to name, the code is the status's generic one from the `http` family (`http.not_found` for a 404, `http.internal` for a 500, `http.client_error` / `http.server_error` for a status without its own entry), so `http.*` says which kind of refusal it was and never why. Treat an unlisted code the way you would treat an unlisted enum member — as a refusal you do not recognise, not as a malformed response — since the list grows with the surfaces. Three families are outside it on purpose: `assistant.disabled.<switch>` is built from a template so the last segment is open — it is one of `coach`, `briefing`, `insightStatus`, `documentAi` and `enabled`, and `assistant.disabled.coach` is the one the native client names; the integration-probe classes (`credentials_rejected`, `rate_limited`, `upstream_error`, `timeout`, `connection_failed` and the per-provider additions) are enumerated in each `/test` operation instead, where the differences can be stated; and a 401 raised by a route checking a credential of its own carries the generic `http.unauthenticated`. " +
               renderErrorCodeCatalogue(),
           ),
         capability: z
@@ -118,7 +118,7 @@ export const errorEnvelope = z
   .meta({
     id: "ErrorEnvelope",
     description:
-      "Standard error response: `data` is null, `error` is human prose. `meta.errorCode` carries the stable machine code where one exists, and `meta` may carry further per-refusal context. A 422 from the multi-issue validator additionally carries `details.issues` — every field the request got wrong, so a client can fix them in one round-trip.",
+      "Standard error response: `data` is null, `error` is human prose. `meta.errorCode` always carries a stable machine code — the route's own where it names one, otherwise the status's generic `http.*` code — `meta.requestId` names the request for a support conversation, and `meta` may carry further per-refusal context. A 422 from the multi-issue validator additionally carries `details.issues` — every field the request got wrong, so a client can fix them in one round-trip.",
   });
 
 export function dataEnvelope<T extends z.ZodType>(payload: T, id: string) {
@@ -127,6 +127,42 @@ export function dataEnvelope<T extends z.ZodType>(payload: T, id: string) {
       data: payload,
       error: z.null(),
       meta: z.object({ requestId: z.string().optional() }).optional(),
+    })
+    .meta({ id });
+}
+
+/**
+ * The success envelope of a list the server cuts at a ceiling (see
+ * `src/lib/api/list-cap.ts`). `data` is the route's own payload, unchanged;
+ * `meta.truncated` says whether rows past `meta.limit` exist.
+ */
+export const listCapMeta = z
+  .object({
+    requestId: z.string().optional(),
+    truncated: z
+      .boolean()
+      .describe(
+        "True when more rows exist than this response carries: the list was cut at `limit`, newest or most relevant first as the operation states. False means the list is complete. Show the person that the list is partial rather than letting the last row read as the oldest there is.",
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .describe("The most rows this response could carry."),
+  })
+  .meta({
+    id: "ListCapMeta",
+    description:
+      "How a capped list was cut. Present on every response of an operation that declares it.",
+  });
+
+export function listEnvelope<T extends z.ZodType>(payload: T, id: string) {
+  return z
+    .object({
+      data: payload,
+      error: z.null(),
+      meta: listCapMeta,
     })
     .meta({ id });
 }
@@ -140,7 +176,7 @@ export function dataEnvelope<T extends z.ZodType>(payload: T, id: string) {
 // annotated clone is exported from here under the name the use sites already
 // spell and the base import is aliased. A module that wants the published
 // form imports it from `./shared`; importing the raw schema from
-// `@/lib/validations/*` instead is what inlined these anonymously.
+// a `@/lib/validations` module instead is what inlined these anonymously.
 
 export const measurementTypeEnum = measurementTypeEnumBase.meta({
   id: "MeasurementType",
@@ -279,7 +315,7 @@ export const malformedJsonResponse = {
 export const stdResponses = {
   "401": {
     description:
-      "Authentication required or invalid credentials. The generic auth gates — the ones every route passes through before its own body runs — name the reason in `meta.errorCode`, and that is the field to branch on there; the English sentence beside it may be reworded or localised at any time. `auth.missing`: no session cookie and no Bearer header; send the user to sign in. `auth.token.expired`: the Bearer token's lifetime has passed; refresh and retry the request. `auth.token.invalid`: unknown, revoked, or the owning account is gone; discard the credential and sign in again — retrying will not help. `auth.mfa.code_invalid`: a second factor presented on a step-up flow did not verify; re-prompt for a code and keep the session. The related 403 refusals carry `auth.scope.insufficient` (the credential is valid but its scope does not reach this route, including any Bearer token against an admin surface) and `auth.admin.required` (a cookie session that is not an admin's). A route that checks a credential of its own — sign-in, the MFA challenge exchange, a password confirmation — may still answer 401 with prose and no code, so a missing `meta.errorCode` means the route refused the credential it was handed, not that the response is malformed.",
+      "Authentication required or invalid credentials. The generic auth gates — the ones every route passes through before its own body runs — name the reason in `meta.errorCode`, and that is the field to branch on there; the English sentence beside it may be reworded or localised at any time. `auth.missing`: no session cookie and no Bearer header; send the user to sign in. `auth.token.expired`: the Bearer token's lifetime has passed; refresh and retry the request. `auth.token.invalid`: unknown, revoked, or the owning account is gone; discard the credential and sign in again — retrying will not help. `auth.mfa.code_invalid`: a second factor presented on a step-up flow did not verify; re-prompt for a code and keep the session. The related 403 refusals carry `auth.scope.insufficient` (the credential is valid but its scope does not reach this route, including any Bearer token against an admin surface) and `auth.admin.required` (a cookie session that is not an admin's). A route that checks a credential of its own — sign-in, the MFA challenge exchange, a password confirmation — may answer 401 with the generic `http.unauthenticated`, which means the route refused the credential it was handed. A session that could not be checked because the session store was unreachable is NOT a 401: it answers 503 with `auth.session.unavailable`, and the client keeps its credential and retries.",
     content: { "application/json": { schema: errorEnvelope } },
   },
   "422": {
@@ -315,15 +351,139 @@ export const stdResponses = {
   },
 };
 
+// ── The generic 403 ──────────────────────────────────────────────────
+
+/**
+ * The 403 the generic auth gates answer before a route's own body runs.
+ *
+ * `requireAuth` refuses a narrow Bearer token on a route that names no scope
+ * the token holds (`auth.scope.insufficient`), and `requireAdmin` refuses a
+ * session that is not an administrator's (`auth.admin.required`). The shared
+ * 401 described both in its prose and no operation declared the status, so a
+ * decoder generated from the contract had no typed branch for a refusal any
+ * authenticated route can send.
+ *
+ * Neither is a member of `stdResponses`, on purpose. That set is spread into
+ * several hundred operations, about three hundred of them declare a 403 of
+ * their own, and most spread the set AFTER their own entries — a shared 403
+ * in it would silently overwrite every module-off and sharing refusal in the
+ * document. `withScopeRefusal` adds them to the assembled table instead, where
+ * the order of a spread cannot decide it.
+ */
+export const scopeRefusalResponse = {
+  description:
+    "The credential is valid but its scope does not reach this operation. `meta.errorCode` = `auth.scope.insufficient`: a narrow Bearer token on a route that names no scope it holds, or a connector-bound token on a write. Retrying with the same token will not help; use a session, or a token minted with the scope the route names.",
+  content: { "application/json": { schema: errorEnvelope } },
+};
+
+/**
+ * The admin surfaces' variant. `requireAdmin` reads only the session cookie,
+ * so a Bearer caller never gets this far (it is a 401 there); the 403 is a
+ * signed-in account that is not an administrator.
+ */
+export const adminRefusalResponse = {
+  description:
+    "The session is valid but its account is not an administrator. `meta.errorCode` = `auth.admin.required`.",
+  content: { "application/json": { schema: errorEnvelope } },
+};
+
+const GATE_SENTENCE = {
+  scope:
+    "`meta.errorCode` = `auth.scope.insufficient` when a Bearer token's scope does not reach this route; the generic auth gate answers it before the route's own checks run. Otherwise: ",
+  admin:
+    "`meta.errorCode` = `auth.admin.required` when the session's account is not an administrator; the admin gate answers it before the route's own checks run. Otherwise: ",
+} as const;
+
+const GATE_CODE = {
+  scope: "auth.scope.insufficient",
+  admin: "auth.admin.required",
+} as const;
+
+/**
+ * Surfaces that authenticate by a credential of their own and never pass the
+ * generic gate, so they cannot answer its 403: a URL credential (the
+ * clinician share link, the notification quick answer) or the external ingest
+ * token, which runs its own scope check and documents its own 403.
+ */
+const OUTSIDE_THE_GENERIC_GATE = new Set([
+  "/api/c/{token}/unlock",
+  "/api/notifications/action/{token}",
+  "/api/ingest/medication",
+]);
+
+/**
+ * Declare the gate's 403 on every operation that passes the generic auth
+ * gate: one that declares a 401 and does not opt out of authentication with
+ * `security: []`. Under `/api/admin/` the gate is `requireAdmin`, everywhere
+ * else `requireAuth`. An operation without a 403 of its own gets the shared
+ * response; one with its own keeps it, and its description is prefixed with
+ * the gate's code, because a client branching on that 403 has to tell a
+ * module-off refusal from a gate refusal. Prefixed, not appended: the sharing
+ * refusal has to stay the description's closing sentence, byte for byte
+ * (`openapi-sharing-denial.test.ts`).
+ *
+ * Response objects shared between operations stay shared (one augmented copy
+ * per original), so the emitted document keeps its anchors.
+ */
+export function withScopeRefusal<T extends Record<string, unknown>>(
+  paths: T,
+): T {
+  const augmented = {
+    scope: new WeakMap<object, object>(),
+    admin: new WeakMap<object, object>(),
+  };
+  const out: Record<string, unknown> = {};
+  for (const [path, item] of Object.entries(paths)) {
+    if (!isPlainRecord(item) || OUTSIDE_THE_GENERIC_GATE.has(path)) {
+      out[path] = item;
+      continue;
+    }
+    const gate = path.startsWith("/api/admin/") ? "admin" : "scope";
+    const nextItem: Record<string, unknown> = { ...item };
+    for (const method of ["get", "put", "post", "patch", "delete"] as const) {
+      const op = item[method];
+      if (!isPlainRecord(op) || !isPlainRecord(op.responses)) continue;
+      if (Array.isArray(op.security) && op.security.length === 0) continue;
+      if (!op.responses["401"]) continue;
+      const own = op.responses["403"];
+      let forbidden: unknown =
+        gate === "admin" ? adminRefusalResponse : scopeRefusalResponse;
+      if (isPlainRecord(own)) {
+        forbidden = augmented[gate].get(own);
+        if (!forbidden) {
+          const description =
+            typeof own.description === "string" ? own.description : "";
+          forbidden = description.includes(GATE_CODE[gate])
+            ? own
+            : { ...own, description: GATE_SENTENCE[gate] + description };
+          augmented[gate].set(own, forbidden as object);
+        }
+      }
+      nextItem[method] = {
+        ...op,
+        responses: { ...op.responses, "403": forbidden },
+      };
+    }
+    out[path] = nextItem;
+  }
+  return out as T;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * The 429 the shared single-record write bucket answers with.
  *
  * The batch endpoints have been capped at 60 calls a minute since they were
  * written and the per-record siblings were not capped at all, which is exactly
- * backwards: the batch endpoint is the one a well-behaved client uses. The
- * eleven single-record creates now share one generous per-account bucket, and
- * this is the response that names it — a client that meets a ceiling should be
- * able to read which one it met without a bug report.
+ * backwards: the batch endpoint is the one a well-behaved client uses. Every
+ * authenticated write now shares one generous per-account bucket, charged where
+ * the caller is resolved (`src/lib/auth/write-meter.ts`), and this is the
+ * response that names it on the single-record creates that publish it — a
+ * client that meets a ceiling should be able to read which one it met without
+ * a bug report.
  *
  * Spread AFTER `...stdResponses` so it replaces the generic 429 on those
  * operations. The headers block is the one the standard 429 already declares.
@@ -335,7 +495,7 @@ export const stdResponses = {
 export const recordWriteRateLimitResponse = {
   "429": {
     description:
-      "Rate limit exceeded. This route shares one per-account bucket with the other single-record writes — `record-write:<accountId>`, 300 requests per 60 seconds — keyed on the ACTING account, so a delegate burns their own allowance rather than the record owner's. Nothing was written. `meta.errorCode` is `record_write.rate_limited`, which is what tells this refusal apart from a route's own narrower bucket when both can answer 429. The `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers describe that bucket; back off on `Retry-After` rather than guessing. Every request counts against the bucket, refused ones included: the check runs before the body is read, so a client looping on a 422 spends the same allowance as one that writes rows. A client with more than a handful of rows to send should use the batch endpoint for its domain instead of looping this one.",
+      "Rate limit exceeded. This route shares one per-account bucket with every other authenticated write — `record-write:<accountId>`, 300 requests per 60 seconds — keyed on the ACTING account, so a delegate burns their own allowance rather than the record owner's. Only the routes that meter themselves with a dedicated bucket (the bulk ingest endpoints and the model-turn chats) and a POST that writes nothing stay outside it. If the bucket cannot be read, the write goes ahead unmetered rather than failing. Nothing was written. `meta.errorCode` is `record_write.rate_limited`, which is what tells this refusal apart from a route's own narrower bucket when both can answer 429. The `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers describe that bucket; back off on `Retry-After` rather than guessing. Every request counts against the bucket, refused ones included: the check runs before the body is read, so a client looping on a 422 spends the same allowance as one that writes rows. A client with more than a handful of rows to send should use the batch endpoint for its domain instead of looping this one.",
     content: { "application/json": { schema: errorEnvelope } },
     headers: stdResponses["429"].headers,
   },

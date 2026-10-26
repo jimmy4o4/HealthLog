@@ -14,7 +14,7 @@
  */
 
 import { useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 
@@ -26,7 +26,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { QueryErrorCard } from "@/components/ui/query-error-card";
 import { SettingsCard } from "@/components/settings/settings-card";
 import { SettingsCardHeader } from "@/components/settings/_card-header";
-import { apiFetchRaw } from "@/lib/api/api-fetch";
+import { apiGet } from "@/lib/api/api-fetch";
 import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -51,6 +51,7 @@ import {
   type ProviderType,
   type UserAIProvider,
 } from "./shared";
+import { writeUrlState } from "@/lib/url-state";
 
 export function AiInsightsCard({
   isAuthenticated,
@@ -59,8 +60,6 @@ export function AiInsightsCard({
 }) {
   const { t } = useTranslations();
   const queryClient = useQueryClient();
-  const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   // A read failure must surface, not be swallowed into a null that renders the
@@ -71,15 +70,11 @@ export function AiInsightsCard({
     data: insightsSettings,
     isPending: settingsPending,
     isError: settingsError,
+    error: settingsFailure,
     refetch: refetchSettings,
   } = useQuery({
     queryKey: queryKeys.insightsSettings(),
-    queryFn: async () => {
-      const res = await apiFetchRaw("/api/insights/settings");
-      if (!res.ok) throw new Error("insights settings read failed");
-      const json = await res.json();
-      return json.data as InsightsSettings;
-    },
+    queryFn: () => apiGet<InsightsSettings>("/api/insights/settings"),
     enabled: isAuthenticated,
   });
 
@@ -87,15 +82,11 @@ export function AiInsightsCard({
     data: userProvider,
     isPending: providerPending,
     isError: providerError,
+    error: providerFailure,
     refetch: refetchProvider,
   } = useQuery({
     queryKey: queryKeys.userAiProvider(),
-    queryFn: async () => {
-      const res = await apiFetchRaw("/api/user/ai-provider");
-      if (!res.ok) throw new Error("user AI provider read failed");
-      const json = await res.json();
-      return json.data as UserAIProvider;
-    },
+    queryFn: () => apiGet<UserAIProvider>("/api/user/ai-provider"),
     enabled: isAuthenticated,
   });
 
@@ -103,15 +94,11 @@ export function AiInsightsCard({
     data: chainData,
     isPending: chainPending,
     isError: chainError,
+    error: chainFailure,
     refetch: refetchChain,
   } = useQuery({
     queryKey: queryKeys.insightsProviderChain(),
-    queryFn: async () => {
-      const res = await apiFetchRaw("/api/insights/provider-chain");
-      if (!res.ok) throw new Error("insights provider chain read failed");
-      const json = await res.json();
-      return json.data as ProviderChainData;
-    },
+    queryFn: () => apiGet<ProviderChainData>("/api/insights/provider-chain"),
     enabled: isAuthenticated,
   });
 
@@ -158,10 +145,7 @@ export function AiInsightsCard({
 
   function pickProvider(next: ProviderType) {
     setSelectedProvider(next);
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
-    params.set("provider", next);
-    router.replace(`${pathname}?${params.toString()}`);
+    writeUrlState((params) => params.set("provider", next));
   }
 
   // v1.42 — one card per concern. The page used to be a single "AI provider"
@@ -185,7 +169,10 @@ export function AiInsightsCard({
           }
         />
         {hasReadError ? (
-          <QueryErrorCard onRetry={retryReads} />
+          <QueryErrorCard
+            error={settingsFailure ?? providerFailure ?? chainFailure}
+            onRetry={retryReads}
+          />
         ) : readsPending ? (
           <Skeleton className="h-40 w-full rounded-lg" />
         ) : (

@@ -32,7 +32,7 @@ import { Compass } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { TileHeader } from "@/components/insights/tile-header";
-import { Skeleton } from "@/components/ui/skeleton";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { useAuth } from "@/hooks/use-auth";
 import { apiGet } from "@/lib/api/api-fetch";
 import { formatDate } from "@/lib/date-format";
@@ -52,18 +52,32 @@ function formatValue(value: number, locale: string): string {
   }).format(value);
 }
 
+/**
+ * The card over its read. Nothing is drawn while the read is on its way:
+ * below the first rung the card draws nothing at all, so a loading
+ * placeholder was a frame that often collapsed again. A failed read says so
+ * with a retry rather than passing for "nothing to say yet".
+ */
 export function MoodPrognosisCard() {
   const { isAuthenticated } = useAuth();
+  const { t } = useTranslations();
 
-  const { data, isLoading } = useQuery({
+  const { data, error, isError, refetch } = useQuery({
     queryKey: queryKeys.moodPrognosis(),
     queryFn: async () => apiGet<PrognosisReading>("/api/mood/prognosis"),
     enabled: isAuthenticated,
     staleTime: 60_000,
   });
 
-  if (isLoading) {
-    return <Skeleton className="min-h-24 w-full rounded-xl" />;
+  if (isError && !data) {
+    return (
+      <QueryErrorRow
+        error={error}
+        slot="mood-prognosis-error"
+        message={t("insights.mood.prognosis.loadError")}
+        onRetry={() => void refetch()}
+      />
+    );
   }
   if (!data) return null;
   return <MoodPrognosisView reading={data} />;
@@ -92,7 +106,7 @@ export function MoodPrognosisView({ reading }: { reading: PrognosisReading }) {
   if (!data.present && data.reason === "no-output-yet") return null;
 
   return (
-    <Card data-slot="mood-prognosis" className="gap-2 py-3 md:py-4">
+    <Card data-slot="mood-prognosis" density="compact">
       <CardHeader>
         <TileHeader icon={Compass} title={t("insights.mood.prognosis.title")} />
       </CardHeader>

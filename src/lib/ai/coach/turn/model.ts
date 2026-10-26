@@ -12,6 +12,7 @@ import {
   AllProvidersFailedError,
   runStreamingRawCompletionWithFallback,
 } from "@/lib/ai/provider-runner";
+import { spentOnFailure } from "@/lib/ai/reasoning/answerless";
 import type { ProviderChainType } from "@/lib/ai/provider-chain";
 import { singleUserTurn, type CompletionResult } from "@/lib/ai/types";
 import { PROMPT_VERSION } from "@/lib/ai/prompts/insight-generator";
@@ -31,7 +32,7 @@ import {
   runCoachToolLoop,
   type CoachToolTrace,
 } from "@/lib/ai/coach/tools";
-import { admittedPriorResults } from "@/lib/ai/coach/tools/executor";
+import { admittedPriorResults } from "@/lib/ai/coach/tools/run/prior-results";
 import type { InventoryEntry } from "@/lib/ai/coach/tools/inventory";
 import {
   COMPARE_SERIES_TOOL_DEF,
@@ -85,7 +86,7 @@ import type { TurnLedger } from "./budget";
 import type { TurnReasoning } from "./reasoning";
 import type { TurnChain } from "./chain";
 import type { TurnContext } from "./context";
-import { classifyBubblingProviderError } from "./errors";
+import { chainFailureCode, classifyBubblingProviderError } from "./errors";
 import { snapshotStep, toStep } from "./steps";
 import type { TurnEmitter } from "./types";
 
@@ -101,12 +102,12 @@ export type ModelOutcome =
       workingProviderType: ProviderChainType;
       toolTrace: CoachToolTrace[];
       /**
-       * v1.21.0 (P6) — the present tool-result payloads this turn, for the
+       * v1.21.0 — the present tool-result payloads this turn, for the
        * post-hoc prose number-verifier. Empty on the no-tools path.
        */
       toolResultPayloads: unknown[];
       /**
-       * v1.21.2 (A8) — no-tools/local-provider parity for the prose
+       * v1.21.2 — no-tools/local-provider parity for the prose
        * number-verifier. The tool path grades prose against the figures the
        * tools returned; the no-tools path has no tools, so the authoritative
        * set is the SNAPSHOT the model was actually shown this turn —
@@ -128,7 +129,7 @@ export type ModelOutcome =
       inventoryPayloads: unknown[];
       totalTokens: number;
       /**
-       * v1.21.0 (F3) — cached-input tokens to subtract at reconcile
+       * v1.21.0 — cached-input tokens to subtract at reconcile
        * (prompt-cached input the user did not re-pay for must not be billed
        * to the daily meter).
        */
@@ -307,7 +308,7 @@ export async function runTurnModel(args: {
       locale,
       figures: () => figures,
       userMessage: args.message,
-      scheduleDoses: ctx.scheduleDoses,
+      dosePlan: ctx.dosePlan,
       medicationNames: ctx.medicationNames,
     },
   });
@@ -355,7 +356,7 @@ export async function runTurnModel(args: {
     }
 
     if (toolMode) {
-      // v1.20.0 (F1) — base context: the full system prompt + a tool-mode
+      // v1.20.0 — base context: the full system prompt + a tool-mode
       // grounding addendum, with the tiny DATA INVENTORY manifest and the
       // transcript on the user turn. The figures are NOT in the prompt — the
       // model pulls only what it needs via the retrieval tools.
@@ -433,7 +434,7 @@ export async function runTurnModel(args: {
         temperature: AI_BUDGETS.coach.temperature,
         maxTokens: AI_BUDGETS.coach.maxTokens,
         fallbackWindow: effectiveScope?.window,
-        // v1.21.0 (D5-1) — share the inventory's full-source snapshot across
+        // v1.21.0 — share the inventory's full-source snapshot across
         // every tool so the turn builds ONE snapshot, not one per tool.
         sharedScope: inventory.probeScope,
         // The lookback limit: every tool call is clamped to it.
@@ -466,7 +467,7 @@ export async function runTurnModel(args: {
           ...(args.userMessageId ? { userMessageId: args.userMessageId } : {}),
           inventory: inventory.entries,
           conversationWindowSet: args.conversationWindowSet,
-          scheduleDoses: ctx.scheduleDoses,
+          dosePlan: ctx.dosePlan,
           medicationNames: ctx.medicationNames,
         },
         checkpointScreen: { userMessage: args.message },
@@ -689,7 +690,8 @@ export async function runTurnModel(args: {
     });
     const result = fallback.result;
     await args.ledger.settleRound({
-      tokens: result.tokensUsed ?? 0,
+      // #1279 — with what the hops that failed before it spent.
+      tokens: (result.tokensUsed ?? 0) + fallback.tokensSpent,
       cachedTokens: result.cachedInputTokens ?? 0,
       servedBy: fallback.workingProvider.providerType,
       final: false,
@@ -704,7 +706,7 @@ export async function runTurnModel(args: {
       workingProviderType: fallback.workingProvider.providerType,
       toolTrace: [],
       toolResultPayloads: [],
-      // v1.21.2 (A8) — the no-tools path grades only when it delivered the
+      // v1.21.2 — the no-tools path grades only when it delivered the
       // full SNAPSHOT.
       noToolsSnapshotPayloads: turnContext.includeFullSnapshot
         ? [
@@ -729,20 +731,17 @@ export async function runTurnModel(args: {
     };
   } catch (err) {
     // The provider chain failed: every round that returned is already
-    // settled; give back what is still reserved before the error frame.
-    await args.ledger.close();
-    // #781 — the client walked away mid-generation. The request's abort
-    // signal is threaded into every provider call, so the teardown surfaces
-    // here as an abort-shaped failure with `request.signal` already flipped.
-    // Close the turn honestly instead of letting the user message dangle
-    // unanswered: persist an EMPTY assistant marker tagged
-    // `providerType: "cancelled"` (the same channel "refusal" and "nudge"
-    // already use for non-provider rows) so the thread shows the turn as
-    // interrupted and offers a retry on reload. The content is empty by
-    // construction — nothing guarded was produced, and anything the client
-    // ever SAW was persisted before the first token frame left, so no
-    // unguarded partial text is ever written. The reservation was refunded
-    // above; a retry pays exactly what a fresh turn pays.
+    // settled; give back what is still reserved before the error frame, less
+    // what the failed hops reported spending (#1279).
+    await args.ledger.close(spentOnFailure(err));
+    // #781 — the client walked away mid-generation (the abort signal is
+    // threaded into every provider call). Close the turn honestly instead of
+    // leaving the user message dangling: persist an EMPTY assistant marker
+    // tagged `providerType: "cancelled"` (the channel "refusal" and "nudge"
+    // use for non-provider rows), so the thread shows the turn as interrupted
+    // and offers a retry. Empty by construction: nothing guarded was
+    // produced, and anything the client SAW was persisted before the first
+    // token frame left. A retry pays exactly what a fresh turn pays.
     if (signal.aborted) {
       await appendMessage({
         conversationId,
@@ -769,29 +768,9 @@ export async function runTurnModel(args: {
           credentialExpired: err.primaryCredentialExpired,
         },
       });
-      // v1.11.0 W1 — when the user's PRIMARY provider failed with an
-      // auth-class status (401/403), the credential is dead, not the
-      // service. Surface a distinct `credential_expired` frame so the
-      // drawer can deep-link the user to reconnect rather than telling
-      // them to "try again later" — the gap that let an expired codex
-      // token silently kill all generation.
-      if (err.primaryCredentialExpired) {
-        return { ok: false, code: "coach.provider.credential_expired" };
-      }
-      // v1.4.25 W5 — distinguish provider rate-limit (every attempt
-      // landed on 429) from generic unavailability. The drawer's
-      // error-decoder surfaces the rate-limit copy with a warning
-      // toast instead of the generic provider-down message, so the
-      // user understands the limit is transient.
-      const allRateLimited =
-        err.attempts.length > 0 &&
-        err.attempts.every((a) => a.httpStatus === 429);
-      return {
-        ok: false,
-        code: allRateLimited
-          ? "coach.provider.rate_limited"
-          : "coach.provider.unavailable",
-      };
+      // Credential expired, rate limited, reasoning without an answer
+      // (#1276), or unavailable: `chainFailureCode` says which and why.
+      return { ok: false, code: chainFailureCode(err) };
     }
     // v1.21.3 — defence in depth. The chain runner wraps every hard provider
     // failure in `AllProvidersFailedError`, but a provider client can still

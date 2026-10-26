@@ -2,9 +2,12 @@
 
 HealthLog reads Fitbit, Pixel Watch and Fitbit Air data through the **Google
 Health API** (`health.googleapis.com/v4`), the successor to the classic Fitbit
-Web API. Google retires the classic Fitbit Web API in **September 2026**, and
-Fitbit access/refresh tokens do not carry over — every account re-consents
-through Google OAuth. This integration is that path.
+Web API. Google ended support for the classic Fitbit Web API on 30 September
+2026 and turns it off on **30 October 2026**
+([migration guide](https://developers.google.com/health/migration)); from that
+day HealthLog's `fitbit` connection stops syncing and keeps what it imported.
+Fitbit access/refresh tokens do not carry over, so every account consents once
+more through Google OAuth. This integration is that path.
 
 The OAuth app is a **Google Cloud** OAuth client, not a Fitbit developer-console
 app. Credentials are brought **per user**: each user registers their own Google
@@ -126,8 +129,11 @@ Only one sync runs per account at a time. **Sync now** reports that a sync is
 already in progress while the history backfill that follows a connect is
 running, and shows its progress instead of starting a second one.
 
-The backfill reads the account's whole history, and for a watch that records
-heart rate every minute that is a thousand-odd pages per year. It runs in
+The backfill reads the account's whole history. Heart rate is by far the
+largest part: a page holds up to 1,000 readings, so a watch that records once
+a minute fills some 525 pages a year, and one that records every few seconds
+(as many Pixel and Fitbit watches do during the day) several thousand; one
+account measured about 4,100 pages a year. It runs in
 slices: a slice reads for up to five minutes or 500 pages, writes what it
 read, notes how far it got and lets go of the account. The next slice starts
 a minute later where the last one stopped. Two kinds of note are kept: a data
@@ -171,6 +177,44 @@ three times before they count as a failure. None of these mark the connection
 as needing a reconnect. Access tokens last an hour, and a long backfill renews
 its token as it goes.
 
+### How far back the backfill reads
+
+The backfill is not bounded by a number of pages, because how many pages a
+year of history fills depends on the device. Two bounds apply instead:
+
+- **The horizon.** It reads back at most 20 years. Set
+  `GOOGLE_HEALTH_BACKFILL_HORIZON_YEARS` to a whole number from 1 to 100 to
+  change that (it is on the compose `environment:` list; any other value
+  falls back to 20). A data type whose history goes back further is imported
+  up to the horizon and ends there.
+- **Progress.** A walk has to reach older readings as it goes. If Google
+  hands out 20 pages in a row that reach no further back than the ones before
+  them (the same page again, or a page token that goes round in a circle),
+  the walk stops where it got to. A passing fault in Google's paging looks
+  the same as the end of what it holds, so the first time this happens the
+  data type only waits: it keeps its place, the rest of the backfill goes
+  on, and a day later it is walked again from there. If that second attempt
+  also stops without getting anywhere, the data type's history ends at the
+  oldest reading written so far. If it moves on, it is an ordinary walk
+  again. A walk that stops before it has written a single reading notes no
+  end at all (there is no date it could be said to end at); the slice fails
+  as stuck and is retried like any other. A reconnect starts the backfill
+  over.
+
+Either way the data type counts as finished once its end is final, the
+backfill completes once every other type is in, and the integration card
+stops saying that older history is loading. Instead it says, per data type,
+how far back the import reaches and why it ends there. While a type waits
+for its second attempt the backfill is not complete, and the card still
+says older history is loading.
+
+Before 1.43.6 every page-by-page data type had a ceiling of pages counted
+across all slices (10,000 for heart rate, 1,000 for the others). A dense
+heart-rate history reaches 10,000 pages two to three years back, the count
+never reset, and from then on every slice stopped at the same place without
+the backfill ever completing. A backfill left in that state continues from
+where it stopped with the first slice after the update.
+
 A slice that moved nothing forward (no data type finished, no reading older
 than before) is a real failure: the job fails with the reason, pg-boss retries
 it a few times, and after that the next restart offers the backfill again.
@@ -204,8 +248,10 @@ reading:
     upper-bound filter Google refused.
   - `stopReason`: why it ended early. `time_budget` and `page_budget` are the
     normal end of a slice, `rate_limited` means Google would not take more
-    requests for now, `job_budget` that the job itself ran out of time.
-    `null` means the slice read everything it started.
+    requests for now, `job_budget` that the job itself ran out of time,
+    `lane_wanted` that the slice made room for another heavy job (a nightly
+    run, a backup, an upload) that was waiting; the next slice starts two
+    minutes later. `null` means the slice read everything it started.
   - `collectionsDone` of `collectionsTotal`: data types read to the end so
     far.
   - `collections`: one entry per data type the slice touched, with its
@@ -215,6 +261,21 @@ reading:
     `edgeFrom` and `edgeTo`, the oldest reading written before and after the
     slice.
   - `edges`: where every unfinished page-by-page data type stands now.
+  - `ended`: data types whose history ended short of its beginning, each
+    with its measurement `type`, the instant it ends at (`at`) and the
+    `reason` (`horizon` or `no_progress`). A `no_progress` entry also
+    carries `attempts` and `endedAt`; with one attempt it is waiting for
+    its second, a day after `endedAt`, and is not yet published.
+- `action: google_health.backfill.retry_scheduled` marks a slice that found
+  nothing left but a data type waiting for its second attempt and queued the
+  next slice for when it is due (`delaySeconds`).
+- `meta["googleHealth.backfill.ended"]` appears on the slice where a data
+  type ended short: the `collection`, its measurement `type`, the `reason`,
+  whether the end is `final`, how many data types have ended short so far
+  (`endedCount`) and of those for good (`finalCount`), and their `types`.
+  The full entries are in the slice report's `ended`. A walk stopped for lack of
+  progress also leaves a warning:
+  `fetchHeartRate: 20 pages in a row reached no further back than <instant>`.
 - `meta["googleHealth.backfill.edgeFilterUnsupported"]` appears on the slice
   where Google refused the upper-bound filter, listing the data types noted
   as refusing it.
@@ -244,7 +305,7 @@ triggers the verification + CASA requirements above.)
 
 If Google Health and another source (Withings, WHOOP, Apple Health) both supply
 the same vital — resting heart rate, blood oxygen, respiratory rate — the source
-priority ladder in **Settings → Sources** decides which one wins
+priority ladder in **Settings → Source priority** decides which one wins
 per metric.
 
 ## Disconnect

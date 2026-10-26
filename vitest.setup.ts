@@ -1,33 +1,31 @@
 /**
  * Unit-test setup.
  *
- * Seed the client-side locale cache with every message bundle. In
- * production only EN ships statically; the active locale arrives as an
- * RSC prop from the root layout and other locales load via dynamic
- * import on switch (see `src/lib/i18n/load-locale.ts`). Tests mount
+ * Seed the client-side locale cache with the EN bundle. In production
+ * only the active locale reaches the client (boot script, then dynamic
+ * import on switch — see `src/lib/i18n/load-locale.ts`). Tests mount
  * `I18nProvider` standalone — often with `renderToStaticMarkup`, which
- * is synchronous and cannot await a dynamic import — so the cache is
- * primed up front and `t()` resolves every locale on the first render,
- * exactly like the server-handoff path does in the app.
+ * is synchronous and cannot await a dynamic import — so EN, the fallback
+ * floor of the t() chain, is primed up front.
+ *
+ * Only EN. Every catalog is several hundred kilobytes and this file runs
+ * once per test file, so priming all of them made setup the largest share
+ * of a unit run. A test that renders another locale primes it itself:
+ *
+ *   import deMessages from "../../../messages/de.json";
+ *   primeMessages("de", deMessages);
+ *
+ * Server-side translation (`getServerTranslator`, `shared-resolve`) holds
+ * every catalog on its own and needs no priming.
  */
-import { afterEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import { settleBackgroundTasks } from "@/lib/logging/background-tasks";
+import { quarantineEntryFor } from "./tests/quarantine/quarantine";
+import { watchSwallowedMockErrors } from "./tests/support/swallowed-mock-errors";
 import { primeMessages } from "@/lib/i18n/load-locale";
-import deMessages from "./messages/de.json";
 import enMessages from "./messages/en.json";
-import esMessages from "./messages/es.json";
-import frMessages from "./messages/fr.json";
-import itMessages from "./messages/it.json";
-import plMessages from "./messages/pl.json";
-import koMessages from "./messages/ko.json";
 
-primeMessages("de", deMessages);
 primeMessages("en", enMessages);
-primeMessages("es", esMessages);
-primeMessages("fr", frMessages);
-primeMessages("it", itMessages);
-primeMessages("pl", plMessages);
-primeMessages("ko", koMessages);
 
 /**
  * Leave no background work in flight when a test ends.
@@ -44,6 +42,62 @@ primeMessages("ko", koMessages);
  * console, which would have thrown away a real signal and left the
  * non-determinism in place. See `src/lib/logging/background-tasks.ts`.
  */
+const checkSwallowedMockErrors = watchSwallowedMockErrors();
+
 afterEach(async () => {
   await settleBackgroundTasks();
+  // A caught "missing mock export" error fails the test it happened in
+  // (`tests/support/swallowed-mock-errors.ts`).
+  checkSwallowedMockErrors();
+});
+
+/**
+ * Skip a test on the flaky-test quarantine list until its entry expires. See
+ * `tests/quarantine/quarantine.ts` and docs/contributing/testing.md.
+ */
+beforeEach((context) => {
+  const entry = quarantineEntryFor(context.task);
+  if (entry) {
+    context.skip(`quarantined until ${entry.expires} (${entry.issue})`);
+  }
+});
+
+/**
+ * The shared write ceiling is charged by every identity resolver on a write
+ * (`src/lib/auth/write-meter.ts`), which is a database round-trip most route
+ * tests have no fake for: their Prisma mock carries the models the handler
+ * touches and nothing else. The meter is therefore a no-op in unit tests by
+ * default. Its own behaviour is pinned by
+ * `src/lib/auth/__tests__/write-meter.test.ts`, which loads the real module,
+ * and against Postgres by `tests/integration/write-meter.test.ts`; a route test
+ * that wants the refusal mocks `meterAccountWrite` to throw.
+ */
+vi.mock("@/lib/auth/write-meter", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/auth/write-meter")>();
+  return { ...actual, meterAccountWrite: vi.fn(async () => undefined) };
+});
+
+/**
+ * The end of the legacy Fitbit Web API is a calendar date
+ * (`src/lib/fitbit/retirement.ts`). Read off the real clock, every suite that
+ * exercises the Fitbit sync, its jobs or its routes would turn red on that day
+ * and stay red until the provider code is removed. The suites therefore run
+ * before the turndown by default; a test about the turndown itself flips
+ * `isFitbitRetired` (`vi.mocked(isFitbitRetired).mockReturnValue(true)`) or
+ * loads the real module with `vi.importActual`, as
+ * `src/lib/fitbit/__tests__/retirement.test.ts` does.
+ */
+vi.mock("@/lib/fitbit/retirement", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/fitbit/retirement")>();
+  const isFitbitRetired = vi.fn((_now?: Date) => false);
+  return {
+    ...actual,
+    isFitbitRetired,
+    fitbitRetirement: vi.fn((now?: Date) => ({
+      ...actual.fitbitRetirement(now),
+      ended: isFitbitRetired(now),
+    })),
+  };
 });

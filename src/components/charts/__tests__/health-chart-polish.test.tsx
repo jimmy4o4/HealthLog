@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { computePersonalBaseline } from "../health-chart";
+import { computePersonalBaseline } from "../health-chart/series-math";
 
 /**
- * v1.4.16 B1a — HealthChart Apple-Health-style polish contract.
+ * v1.4.16 — HealthChart Apple-Health-style polish contract.
  *
  * The HealthChart wrapper is the single component that the dashboard
  * uses for BP, weight, pulse, body-fat, sleep, and steps. We upgrade it

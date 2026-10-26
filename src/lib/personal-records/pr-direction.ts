@@ -103,6 +103,12 @@ export function getPRDirection(
     case "BONE_MASS":
     case "MUSCLE_MASS":
     case "TIME_IN_DAYLIGHT":
+    // v1.44 — the activity rings: more exercise, standing and mindful
+    // minutes (and more stood hours) are the goal, as Apple frames them.
+    case "EXERCISE_MINUTES":
+    case "STAND_MINUTES":
+    case "STAND_HOURS":
+    case "MINDFUL_MINUTES":
     // v1.4.30 — walking steadiness on a 0-100 scale; Apple's own
     // Mobility section treats higher as the achievement (the
     // recovery direction from a low-steadiness window).
@@ -110,7 +116,7 @@ export function getPRDirection(
     // v1.5.5 — lean body mass is the muscle-mass-adjacent body-comp
     // axis where higher is the goal.
     case "LEAN_BODY_MASS":
-    // v1.5.5 follow-up — walking speed is a well-established
+    // v1.5.5 — walking speed is a well-established
     // clinical fitness marker (often called the "sixth vital
     // sign" in older-adult medicine); faster gait correlates
     // with cardiovascular fitness, sarcopenia recovery, and
@@ -190,7 +196,7 @@ export function getPRDirection(
     // either ill or harder-effort).
     case "RESPIRATORY_RATE":
     case "WALKING_HEART_RATE_AVERAGE":
-    // v1.5.5 follow-up — walking step length is a state metric:
+    // v1.5.5 — walking step length is a state metric:
     // taller users have longer strides regardless of fitness, and
     // there is no clean "higher is better" axis (very long strides
     // can also signal an unsafe overstride). Defer to a null PR
@@ -206,6 +212,15 @@ export function getPRDirection(
     // "personal record" for a health-notification event would be both
     // meaningless and alarming, so they explicitly have no PR direction.
     case "IRREGULAR_RHYTHM_NOTIFICATION":
+    // v1.44 — AFib burden is an awareness signal from a certified feature,
+    // and a State of Mind valence is a self-report of how a moment felt.
+    // Neither is a goal axis a record could celebrate.
+    case "AFIB_BURDEN":
+    case "STATE_OF_MIND_VALENCE":
+    // v1.44 — room climate describes a room, not a person's effort.
+    case "INDOOR_CO2":
+    case "INDOOR_TEMPERATURE":
+    case "INDOOR_HUMIDITY":
     case "HIGH_HEART_RATE_EVENT":
     case "LOW_HEART_RATE_EVENT":
     case "WALKING_STEADINESS_EVENT":

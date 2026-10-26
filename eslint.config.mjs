@@ -115,6 +115,88 @@ const eslintConfig = defineConfig([
       // carries `eslint-disable-next-line ... -- <reason>`; the rule refuses
       // a directive without one. See the rule header.
       "healthlog/no-utc-day-key": "error",
+      // A comment does not open with the identifier of the work item that
+      // produced it: those point into notes that never ship. A release
+      // version and an issue reference may stay. The matcher is shared with
+      // scripts/strip-planning-tags.mjs; see eslint-plugins/healthlog/
+      // planning-tags.js for the shape and its limits.
+      "healthlog/no-planning-tags": "error",
+      // A number shown to a person goes through useFormatters() (or
+      // makeFormatters / formatDecimal outside React), in src/components,
+      // src/app, src/hooks and src/lib: toFixed() prints a full stop in every
+      // language and a locale-less toLocaleString() follows the browser
+      // instead of the language picked in the app. SVG path data and other
+      // machine-read strings carry `eslint-disable-next-line ... -- <reason>`;
+      // the rule refuses a directive without one. See the rule header.
+      "healthlog/no-unlocalised-decimal": "error",
+      // A card surface is a <Card> (or SettingsCard / TrendTile), never a
+      // hand-rolled bg-card + border + rounded-xl (UI standards §1). The
+      // files below are where a shell is the point; each says why. A new
+      // exception is a reviewed change to this list, there is no inline
+      // escape. See the rule header.
+      "healthlog/no-raw-card-shell": [
+        "error",
+        {
+          allow: [
+            // The shell primitives themselves.
+            "src/components/settings/settings-card.tsx",
+            "src/components/medications/medication-detail-section.tsx",
+            // The sanctioned identity surface of the dashboard (§1).
+            "src/components/daily/today-hero.tsx",
+            "src/components/daily/today-hero-skeleton.tsx",
+            // Floating surfaces: a chart tooltip, the tour popovers, the
+            // wizard's icon tile.
+            "src/components/charts/chart-tooltip.tsx",
+            "src/components/onboarding/tour.tsx",
+            "src/components/medications/wizard/medication-wizard-dialog.tsx",
+            // The chart frame: chart, skeleton and error state paint the
+            // same frame so a chart never moves when it loads or fails.
+            "src/components/charts/health-chart.tsx",
+            "src/components/charts/chart-skeleton.tsx",
+            "src/components/charts/chart-error-state.tsx",
+            "src/components/charts/medication-compliance-chart.tsx",
+            "src/components/insights/derived/score-trend-chart.tsx",
+            "src/components/insights/intraday-pulse-chart.tsx",
+            // Table frames: a clipped, unpadded border around a table.
+            "src/components/medications/medication-table.tsx",
+            "src/app/notifications/page.tsx",
+            // Surfaces that render outside the app shell: sign-in, register,
+            // claim, the key-mismatch gate.
+            "src/app/auth/login/page.tsx",
+            "src/app/auth/register/page.tsx",
+            "src/components/auth/claim-profile.tsx",
+            "src/app/key-mismatch-page.tsx",
+            // The first-run flow: full-screen steps with their own rhythm.
+            "src/components/onboarding/anamnesis-card.tsx",
+            "src/components/onboarding/baseline-fields.tsx",
+            "src/components/onboarding/confirm-screen.tsx",
+            "src/components/onboarding/done-screen.tsx",
+            "src/components/onboarding/first-result-screen.tsx",
+            "src/components/onboarding/getting-started-checklist.tsx",
+          ],
+        },
+      ],
+      // Layer direction: src/lib never imports src/components or src/app, and
+      // a "use client" file makes no value import of the database client,
+      // crypto, the Prisma client entry, the job queue, pg or next/headers.
+      // The files below still import upward; each says why it has not moved.
+      // A listed file that stops importing upward fails until it is removed,
+      // so the map only shrinks. See the rule header.
+      "healthlog/import-boundaries": [
+        "error",
+        {
+          allow: {
+            "src/lib/insights/metric-catalog.ts":
+              "reads SUB_PAGE_TABS, which is declared inside the client tab strip component together with its labels and order",
+            "src/lib/insights/target-adjust-context.tsx":
+              "a React provider that renders TargetEditSheet; it belongs under components but has importers across 21 insight pages",
+            "src/lib/errors/error-toast.tsx":
+              "a React toast renderer that renders ErrorIdLine; it belongs under components but is imported by most client surfaces",
+            "src/lib/module-list-prefs.ts":
+              "a client hook module that raises the shared outcome toast; it moves with the module list settings surface",
+          },
+        },
+      ],
     },
   },
   // v1.28.17 — every recharts-rendering component funnels through the
@@ -132,6 +214,9 @@ const eslintConfig = defineConfig([
       "src/components/charts/chart-runtime.ts",
       "src/components/admin/host-metrics-chart.tsx",
       "src/components/charts/health-chart.tsx",
+      // HealthChart's plot layers, imported by health-chart.tsx alone, so
+      // they sit inside the same chart-runtime graph.
+      "src/components/charts/health-chart/chart-layers.tsx",
       "src/components/charts/medication-compliance-chart.tsx",
       "src/components/charts/mood-chart.tsx",
       "src/components/charts/nutrient-daily-bar-chart.tsx",
@@ -154,6 +239,9 @@ const eslintConfig = defineConfig([
       "src/components/charts/workout-elevation-chart.tsx",
       "src/components/insights/coach-panel/result-chart.tsx",
       "src/components/insights/derived/score-trend-chart.tsx",
+      // Browser tests draw a chart with Recharts itself to pin what it lays
+      // out; a test file is never bundled, so it mints no chunk.
+      "src/**/*.browser.test.tsx",
     ],
     rules: {
       "no-restricted-imports": [

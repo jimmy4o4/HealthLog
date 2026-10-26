@@ -14,7 +14,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useRecordCapabilities } from "@/hooks/use-record-capabilities";
 import { queryKeys } from "@/lib/query-keys";
 import { apiGet } from "@/lib/api/api-fetch";
-import { coachScopeSourceSchema } from "@/lib/ai/coach/types";
+import { COACH_SCOPE_SOURCES } from "@/lib/ai/coach/scope-sources";
+import type { CoachScopeSource } from "@/lib/ai/coach/types";
+import { writeUrlState } from "@/lib/url-state";
 
 /**
  * v1.12.0 (Coach v2 #6) — full-page Coach conversation.
@@ -33,14 +35,14 @@ import { coachScopeSourceSchema } from "@/lib/ai/coach/types";
  * operator's master flag is off or the user opted out, the page redirects
  * back to `/insights` rather than painting a dead chat shell.
  *
- * v1.18.10 (W4) — the page is now a single full-bleed conversation
+ * v1.18.10 — the page is now a single full-bleed conversation
  * surface: the inner panel chrome (the bordered/rounded card) is gone so
  * the chat is no longer a window-inside-a-window, and the top "back to the
  * drawer" minimize control is removed (pointless on the dedicated page —
  * the separate bottom-right FAB drawer is the compact surface). The chat
  * claims the full content width and the viewport height below the top bar.
  *
- * v1.18.11 (W11) — ChatGPT-style IA: the page drops its own header bar
+ * v1.18.11 — ChatGPT-style IA: the page drops its own header bar
  * AND the top conversation-history strip entirely. The composer is the
  * single control hub (leading `+` actions menu = new chat + open
  * conversations, settings deep-link, mic, send); conversation history is a
@@ -49,7 +51,7 @@ import { coachScopeSourceSchema } from "@/lib/ai/coach/types";
  * the active conversation. All of that lives in `<CoachConversation>`'s
  * page branch, so the page stays a thin gating + sizing wrapper.
  *
- * v1.19.1 (C1/C5) — the Coach now DEFAULTS to the new-chat hero, reversing
+ * v1.19.1 — the Coach now DEFAULTS to the new-chat hero, reversing
  * the v1.19.0 (W7) "always resume most-recent" default the maintainer
  * disliked. Resolution order on mount:
  *   - `?c=<id>` → open that specific thread (explicit deep-link, unchanged).
@@ -117,12 +119,13 @@ function CoachPageBody() {
   // chat (`?doc=`) keeps its own established scope.
   const freshChat = deepLinkedId === null && seedDocumentId === null;
   const rawScope = freshChat ? searchParams.get("scope") : null;
-  const scopeResult = rawScope
-    ? coachScopeSourceSchema.safeParse(rawScope)
-    : null;
-  const launchScope: CoachLaunchScope | null = scopeResult?.success
-    ? { metric: scopeResult.data }
-    : null;
+  // A closed-set check, not a schema parse: the route stays free of the
+  // schema library for one string comparison.
+  const launchScope: CoachLaunchScope | null =
+    rawScope !== null &&
+    (COACH_SCOPE_SOURCES as readonly string[]).includes(rawScope)
+      ? { metric: rawScope as CoachScopeSource }
+      : null;
   const seedPrefill = freshChat ? searchParams.get("ask") : null;
 
   // Read once: the panel consumes it on mount, then the URL loses it.
@@ -131,13 +134,7 @@ function CoachPageBody() {
   );
   useEffect(() => {
     if (!openSettingsOnData) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("settings");
-    window.history.replaceState(
-      window.history.state,
-      "",
-      url.pathname + url.search,
-    );
+    writeUrlState((params) => params.delete("settings"), { state: "keep" });
   }, [openSettingsOnData]);
 
   // #781 — a navigation away mid-reply recorded the interrupted conversation

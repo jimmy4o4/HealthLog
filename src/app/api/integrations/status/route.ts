@@ -50,9 +50,17 @@ import {
 } from "@/lib/withings/plan-features";
 import { getPolarClientCredentials } from "@/lib/polar/credentials";
 import { getStravaClientCredentials } from "@/lib/strava/credentials";
-import { hasActivityScope } from "@/lib/withings/client";
+import { hasActivityScope } from "@/lib/withings/oauth";
 import { loadConnectionHealth } from "@/lib/integrations/connection-health-load";
+import {
+  googleHealthBackfillEndedList,
+  type GoogleHealthBackfillEndedEntry,
+} from "@/lib/google-health/backfill-progress";
 import type { ConnectionHealth } from "@/lib/integrations/connection-health";
+import {
+  fitbitRetirement,
+  type PublishedFitbitRetirement,
+} from "@/lib/fitbit/retirement";
 
 export const dynamic = "force-dynamic";
 
@@ -60,126 +68,141 @@ export const GET = apiHandler(async () => {
   const { user } = await requireAuth();
   annotate({ action: { name: "integrations.status" } });
 
+  // One round: the per-provider rows, the unified connection health and the
+  // per-metric freshness do not depend on each other. Awaited one after
+  // another, a cold first visit paid the three latencies end to end.
+  let metricFreshnessDegraded = false;
   const [
-    withingsStatus,
-    whoopStatus,
-    fitbitStatus,
-    googleHealthStatus,
-    polarStatus,
-    ouraStatus,
-    stravaStatus,
-    nightscoutStatus,
-    dawarichStatus,
-    dbUser,
-    withingsConn,
-    whoopConn,
-    fitbitConn,
-    googleHealthConn,
-    // v1.17.1 — `available` reports whether usable OAuth credentials resolve
-    // (per-user BYO first, then the shared env app), mirroring the per-card
-    // /api/<provider>/status the consolidated envelope now replaces.
-    polarAvailable,
-    ouraAvailable,
-    stravaAvailable,
+    [
+      withingsStatus,
+      whoopStatus,
+      fitbitStatus,
+      googleHealthStatus,
+      polarStatus,
+      ouraStatus,
+      stravaStatus,
+      nightscoutStatus,
+      dawarichStatus,
+      dbUser,
+      withingsConn,
+      whoopConn,
+      fitbitConn,
+      googleHealthConn,
+      // v1.17.1 — `available` reports whether usable OAuth credentials resolve
+      // (per-user BYO first, then the shared env app), mirroring the per-card
+      // /api/<provider>/status the consolidated envelope now replaces.
+      polarAvailable,
+      ouraAvailable,
+      stravaAvailable,
+    ],
+    health,
+    metricFreshness,
   ] = await Promise.all([
-    getIntegrationStatus(user.id, "withings"),
-    getIntegrationStatus(user.id, "whoop"),
-    getIntegrationStatus(user.id, "fitbit"),
-    getIntegrationStatus(user.id, "google-health"),
-    getIntegrationStatus(user.id, "polar"),
-    getIntegrationStatus(user.id, "oura"),
-    getIntegrationStatus(user.id, "strava"),
-    getIntegrationStatus(user.id, "nightscout"),
-    getIntegrationStatus(user.id, "dawarich"),
-    prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        withingsClientIdEncrypted: true,
-        withingsClientSecretEncrypted: true,
-        whoopClientIdEncrypted: true,
-        whoopClientSecretEncrypted: true,
-        fitbitClientIdEncrypted: true,
-        fitbitClientSecretEncrypted: true,
-        googleHealthClientIdEncrypted: true,
-        googleHealthClientSecretEncrypted: true,
-        polarAccessTokenEncrypted: true,
-        polarClientIdEncrypted: true,
-        polarClientSecretEncrypted: true,
-        ouraAccessTokenEncrypted: true,
-        ouraClientIdEncrypted: true,
-        ouraClientSecretEncrypted: true,
-        ouraScopeDenied: true,
-        stravaAccessTokenEncrypted: true,
-        stravaClientIdEncrypted: true,
-        stravaClientSecretEncrypted: true,
-        // Nightscout folds onto the envelope; the card reads these three off
-        // it instead of its own /api/nightscout/status round-trip.
-        nightscoutUrlEncrypted: true,
-        nightscoutTokenEncrypted: true,
-        nightscoutAllowPrivateHost: true,
-        dawarichUrlEncrypted: true,
-      },
+    Promise.all([
+      getIntegrationStatus(user.id, "withings"),
+      getIntegrationStatus(user.id, "whoop"),
+      getIntegrationStatus(user.id, "fitbit"),
+      getIntegrationStatus(user.id, "google-health"),
+      getIntegrationStatus(user.id, "polar"),
+      getIntegrationStatus(user.id, "oura"),
+      getIntegrationStatus(user.id, "strava"),
+      getIntegrationStatus(user.id, "nightscout"),
+      getIntegrationStatus(user.id, "dawarich"),
+      prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+          withingsClientIdEncrypted: true,
+          withingsClientSecretEncrypted: true,
+          whoopClientIdEncrypted: true,
+          whoopClientSecretEncrypted: true,
+          fitbitClientIdEncrypted: true,
+          fitbitClientSecretEncrypted: true,
+          googleHealthClientIdEncrypted: true,
+          googleHealthClientSecretEncrypted: true,
+          polarAccessTokenEncrypted: true,
+          polarClientIdEncrypted: true,
+          polarClientSecretEncrypted: true,
+          ouraAccessTokenEncrypted: true,
+          ouraClientIdEncrypted: true,
+          ouraClientSecretEncrypted: true,
+          ouraScopeDenied: true,
+          stravaAccessTokenEncrypted: true,
+          stravaClientIdEncrypted: true,
+          stravaClientSecretEncrypted: true,
+          // Nightscout folds onto the envelope; the card reads these three off
+          // it instead of its own /api/nightscout/status round-trip.
+          nightscoutUrlEncrypted: true,
+          nightscoutTokenEncrypted: true,
+          nightscoutAllowPrivateHost: true,
+          dawarichUrlEncrypted: true,
+        },
+      }),
+      prisma.withingsConnection.findUnique({
+        where: { userId: user.id },
+        select: {
+          tokenExpiresAt: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          scope: true,
+          apiPlanState: true,
+        },
+      }),
+      prisma.whoopConnection.findUnique({
+        where: { userId: user.id },
+        select: {
+          tokenExpiresAt: true,
+          whoopUserId: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          backfillCompletedAt: true,
+        },
+      }),
+      prisma.fitbitConnection.findUnique({
+        where: { userId: user.id },
+        select: {
+          tokenExpiresAt: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          backfillCompletedAt: true,
+        },
+      }),
+      prisma.googleHealthConnection.findUnique({
+        where: { userId: user.id },
+        select: {
+          tokenExpiresAt: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          backfillCompletedAt: true,
+          backfillProgress: true,
+          needsReauth: true,
+        },
+      }),
+      getPolarClientCredentials(user.id).then((c) => !!c),
+      getOuraClientCredentials(user.id).then((c) => !!c),
+      getStravaClientCredentials(user.id).then((c) => !!c),
+    ]),
+    // The unified per-connection state. Resolved by the same loader the
+    // per-provider routes and the integration watchdog use, so the envelope
+    // and every other surface say the same thing about a connection.
+    loadConnectionHealth(user.id, [
+      "withings",
+      "whoop",
+      "fitbit",
+      "google-health",
+      "polar",
+      "oura",
+      "strava",
+      "nightscout",
+      "dawarich",
+    ]),
+    // See `metricFreshnessDegraded` below.
+    getSourceMetricFreshness(user.id).catch(() => {
+      metricFreshnessDegraded = true;
+      return {} as Partial<Record<IntegrationKey, MetricFreshnessSample[]>>;
     }),
-    prisma.withingsConnection.findUnique({
-      where: { userId: user.id },
-      select: {
-        tokenExpiresAt: true,
-        lastSyncedAt: true,
-        createdAt: true,
-        scope: true,
-        apiPlanState: true,
-      },
-    }),
-    prisma.whoopConnection.findUnique({
-      where: { userId: user.id },
-      select: {
-        tokenExpiresAt: true,
-        whoopUserId: true,
-        lastSyncedAt: true,
-        createdAt: true,
-        backfillCompletedAt: true,
-      },
-    }),
-    prisma.fitbitConnection.findUnique({
-      where: { userId: user.id },
-      select: {
-        tokenExpiresAt: true,
-        lastSyncedAt: true,
-        createdAt: true,
-        backfillCompletedAt: true,
-      },
-    }),
-    prisma.googleHealthConnection.findUnique({
-      where: { userId: user.id },
-      select: {
-        tokenExpiresAt: true,
-        lastSyncedAt: true,
-        createdAt: true,
-        backfillCompletedAt: true,
-        needsReauth: true,
-      },
-    }),
-    getPolarClientCredentials(user.id).then((c) => !!c),
-    getOuraClientCredentials(user.id).then((c) => !!c),
-    getStravaClientCredentials(user.id).then((c) => !!c),
   ]);
 
-  // The unified per-connection state. Resolved by the same loader the
-  // per-provider routes and the integration watchdog use, so the envelope and
-  // every other surface say the same thing about a connection.
-  const health = await loadConnectionHealth(user.id, [
-    "withings",
-    "whoop",
-    "fitbit",
-    "google-health",
-    "polar",
-    "oura",
-    "strava",
-    "nightscout",
-    "dawarich",
-  ]);
-
-  // F-SYNC-1 — per-metric-type last-value timestamps so the card can show that a
+  // Per-metric-type last-value timestamps so the card can show that a
   // single metric type has gone silent even while the integration reads green
   // ("connected · 5 min ago"). Fail-soft: this is an honesty signal, never worth
   // 500-ing the whole Settings card, so a groupBy hiccup degrades to no data.
@@ -191,12 +214,7 @@ export const GET = apiHandler(async () => {
   // the wire, and the honesty signal quietly became the thing it was built to
   // prevent. `metricFreshnessDegraded` separates them. One flag rather than a
   // nullable array per entry, because this is ONE query for all eight providers
-  // — it fails for all of them or for none.
-  let metricFreshnessDegraded = false;
-  const metricFreshness = await getSourceMetricFreshness(user.id).catch(() => {
-    metricFreshnessDegraded = true;
-    return {} as Partial<Record<IntegrationKey, MetricFreshnessSample[]>>;
-  });
+  // — it fails for all of them or for none. (Read in the round above.)
 
   const now = Date.now();
   const whoopConnected = !!whoopConn?.whoopUserId;
@@ -277,6 +295,19 @@ export const GET = apiHandler(async () => {
     !!dbUser?.fitbitClientIdEncrypted && !!dbUser?.fitbitClientSecretEncrypted;
   const fitbitLegacyLastSyncedAt =
     fitbitConn?.lastSyncedAt?.toISOString() ?? null;
+  // Once the Web API is gone the Fitbit card only explains the move to an
+  // account that had something to move: a connection, its own Fitbit app, or
+  // imported Fitbit data. Anyone else is shown no dead card. The data probe
+  // runs only after the turndown, for an account with neither of the others.
+  const retirementNow = fitbitRetirement();
+  const fitbitOffered =
+    !retirementNow.ended ||
+    fitbitConnected ||
+    fitbitConfigured ||
+    (await prisma.measurement.findFirst({
+      where: { userId: user.id, source: "FITBIT", deletedAt: null },
+      select: { id: true },
+    })) !== null;
   const googleHealthConnected = !!googleHealthConn;
   const googleHealthConfigured =
     !!dbUser?.googleHealthClientIdEncrypted &&
@@ -310,7 +341,7 @@ export const GET = apiHandler(async () => {
         tokenExpired: withingsConn
           ? withingsConn.tokenExpiresAt.getTime() <= now
           : null,
-        // v1.4.25 W5d — `scope` is the comma-separated OAuth scope string;
+        // v1.4.25 — `scope` is the comma-separated OAuth scope string;
         // `hasActivityScope` is the derived flag the reconnect banner reads.
         // Null `scope` = legacy connection that predates activity-scope reads.
         scope: withingsConn?.scope ?? null,
@@ -364,6 +395,7 @@ export const GET = apiHandler(async () => {
           ? fitbitConn.tokenExpiresAt.getTime() <= now
           : null,
         backfillCompleted: fitbitConn ? !!fitbitConn.backfillCompletedAt : null,
+        retirement: { ...retirementNow, offered: fitbitOffered },
         health: health["fitbit"],
         ...resolve("fitbit", fitbitStatus, {
           connected: fitbitConnected,
@@ -384,6 +416,9 @@ export const GET = apiHandler(async () => {
         backfillCompleted: googleHealthConn
           ? !!googleHealthConn.backfillCompletedAt
           : null,
+        backfillEnded: googleHealthConn
+          ? googleHealthBackfillEndedList(googleHealthConn.backfillProgress)
+          : [],
         // v1.27.0 — `needsReauth` is the 7-day Testing-mode refresh expiry (or a
         // user-revoked grant) surfaced from the connection row; the card reads it
         // to raise a distinct "Reconnect" CTA separate from parked/disconnected.
@@ -467,8 +502,8 @@ export const GET = apiHandler(async () => {
       } satisfies IntegrationViewModel & NightscoutExtras,
       {
         ...publish(dawarichStatus),
-        // v1.43 — Dawarich, read by the card through `health`. The ledger core
-        // rides along like on every entry, and goes with the rest in v1.44.
+        // Dawarich, read by the card through `health`. The ledger core rides
+        // along like on every entry.
         connected: dawarichConfigured,
         configured: dawarichConfigured,
         health: health["dawarich"],
@@ -489,8 +524,9 @@ interface IntegrationViewModel {
    * health-shaped field on this entry (`state`, `lastError`,
    * `consecutiveFailuresByKind`, `syncHealth`, `tokenExpired`, `needsReauth`,
    * `hasActivityScope`, `planUnavailable`, `scopeReconnect`) is folded into
-   * it and goes once the settings cards render `health`; no other client
-   * reads this envelope.
+   * it. Those stay on the wire, deprecated in the published document; the
+   * cards render `health`, and only their copied diagnostics still read
+   * `consecutiveFailuresByKind`. No native client reads this envelope.
    */
   health: ConnectionHealth | null;
   state: string;
@@ -541,6 +577,8 @@ interface FitbitExtras {
   tokenExpiresAt: string | null;
   tokenExpired: boolean | null;
   backfillCompleted: boolean | null;
+  /** The end of the legacy Fitbit Web API (`@/lib/fitbit/retirement`). */
+  retirement: PublishedFitbitRetirement;
 }
 
 // v1.27.0 — Google Health mirrors the Fitbit shape plus `needsReauth`: Google
@@ -555,6 +593,7 @@ interface GoogleHealthExtras {
   tokenExpiresAt: string | null;
   tokenExpired: boolean | null;
   backfillCompleted: boolean | null;
+  backfillEnded: GoogleHealthBackfillEndedEntry[];
   needsReauth: boolean;
 }
 

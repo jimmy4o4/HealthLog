@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * v1.4.20 phase B3 — guards for the `/insights` wiring of the
+ * v1.4.20 — guards for the `/insights` wiring of the
  * Trends row + the analytics correlations payload.
  *
  * The page-source scan pattern mirrors `insights-polish.test.ts` —
@@ -21,7 +21,11 @@ import { join } from "node:path";
 
 const ROOT = join(__dirname, "../../..");
 const INSIGHTS_PATH = join(ROOT, "src/app/insights/page-client.tsx");
-const ANALYTICS_ROUTE_PATH = join(ROOT, "src/app/api/analytics/route.ts");
+/** The analytics default body, built outside its route. */
+const ANALYTICS_BODY_PATHS = [
+  join(ROOT, "src/lib/analytics/response/default-body.ts"),
+  join(ROOT, "src/lib/analytics/response/correlations.ts"),
+];
 const ADVISOR_HOOK_PATH = join(
   ROOT,
   "src/components/insights/use-insights-advisor.ts",
@@ -65,7 +69,7 @@ describe("v1.4.20 B3 — /insights mounts TrendsRow", () => {
 });
 
 describe("v1.4.20 B3 — /api/analytics surfaces correlations", () => {
-  // v1.4.37 W2 — the inline correlation builder relocated to
+  // v1.4.37 — the inline correlation builder relocated to
   // `src/lib/analytics/correlations-fast-path.ts`. The route now
   // delegates through `computeCorrelationHypothesesFastPath`; the
   // three Pearson runner imports live alongside the new dispatcher.
@@ -84,7 +88,7 @@ describe("v1.4.20 B3 — /api/analytics surfaces correlations", () => {
   });
 
   it("returns a `correlations` block on the success payload", () => {
-    const src = load(ANALYTICS_ROUTE_PATH);
+    const src = ANALYTICS_BODY_PATHS.map(load).join("\n");
     expect(src).toMatch(/correlations:\s*correlationsWithPatterns,/);
     expect(src).toMatch(/computeCorrelationHypotheses/);
   });

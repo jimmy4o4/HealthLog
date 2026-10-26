@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 /**
- * v1.4.27 MB5 — `/admin/app-logs` summary line lifted out of the
+ * v1.4.27 — `/admin/app-logs` summary line lifted out of the
  * `overflow-x-auto` table wrapper so admins on narrow viewports can
  * still see "showing X of Y events" without first scrolling the table
  * back to its starting offset. The refresh control already lives in
@@ -83,7 +83,9 @@ describe("AppLogPreviewSection — summary lives outside the scroll wrapper", ()
     const summaryIdx = html.indexOf('data-testid="app-log-preview-summary"');
     expect(summaryIdx).toBeGreaterThan(-1);
     const before = html.slice(0, summaryIdx);
-    const lastScrollOpen = before.lastIndexOf('class="overflow-x-auto"');
+    const lastScrollOpen = before.lastIndexOf(
+      'class="relative overflow-x-auto"',
+    );
     expect(lastScrollOpen).toBeGreaterThan(-1);
     const tail = before.slice(lastScrollOpen);
     expect(tail).toContain("</div>");
@@ -92,7 +94,7 @@ describe("AppLogPreviewSection — summary lives outside the scroll wrapper", ()
   it("does not nest the summary copy inside the scroll wrapper", () => {
     const html = render();
     const wrapper = html.match(
-      /<div class="overflow-x-auto"[^>]*>[\s\S]*?<\/table><\/div>/,
+      /<div class="relative overflow-x-auto"[^>]*>[\s\S]*?<\/table><\/div>/,
     );
     expect(wrapper).not.toBeNull();
     expect(wrapper![0]).not.toContain("app-log-preview-summary");

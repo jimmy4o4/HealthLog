@@ -1,5 +1,5 @@
 /**
- * Retention and maintenance cleanups: rate-limit rows, idempotency keys, audit logs, OAuth states (Withings / WHOOP), mood-reminder events, push attempts, and measurement tombstones.
+ * Retention and maintenance cleanups: rate-limit rows, idempotency keys, audit logs, OAuth states (Withings / WHOOP) and OAuth callback claims, mood-reminder events, push attempts, and measurement tombstones.
  *
  * Extracted from reminder-worker.ts, which owns the queue names, cron
  * schedules, and the queue bindings.
@@ -33,6 +33,7 @@ import { cleanupOldAuditLogs } from "@/lib/jobs/audit-log-cleanup";
 import { cleanupOldCoachMessages } from "@/lib/jobs/coach-message-cleanup";
 import { cleanupOldWorkoutInsightClaims } from "@/lib/jobs/workout-insight-claim-cleanup";
 import { cleanupExpiredWithingsOAuthStates } from "@/lib/jobs/withings-oauth-state-cleanup";
+import { cleanupExpiredOAuthCallbackClaims } from "@/lib/jobs/oauth-callback-claim-cleanup";
 import { cleanupExpiredOidcNativeHandoffs } from "@/lib/jobs/oidc-handoff-cleanup";
 import {
   cleanupExpiredMeasurementTombstones,
@@ -107,6 +108,7 @@ export async function handleMoodReminderCleanup(
       cutoff.setUTCDate(cutoff.getUTCDate() - MOOD_REMINDER_RETENTION_DAYS);
       // eslint-disable-next-line healthlog/no-utc-day-key -- UTC by design: retention cutoff; a day either way does not matter
       const cutoffIso = cutoff.toISOString().slice(0, 10);
+      // account-deletion: retention ages dispatch rows out whatever their account's state.
       const deleted = await p.moodReminderDispatch.deleteMany({
         where: { date: { lt: cutoffIso } },
       });
@@ -155,15 +157,18 @@ export async function handlePushAttemptCleanup(
     try {
       const cutoff = new Date();
       cutoff.setUTCDate(cutoff.getUTCDate() - PUSH_ATTEMPT_RETENTION_DAYS);
+      // account-deletion: retention ages delivery ledger rows out whatever their account's state.
       const deletedAttempts = await p.pushAttempt.deleteMany({
         where: { createdAt: { lt: cutoff } },
       });
+      // account-deletion: retention, as above.
       const deletedEvents = await p.notificationEvent.deleteMany({
         where: {
           createdAt: { lt: cutoff },
           eventType: { not: CONFIG_NOTICE_EVENT_TYPE },
         },
       });
+      // account-deletion: retention, as above.
       const deletedAuthorizations =
         await p.notificationEgressAuthorization.deleteMany({
           where: { authorizedAt: { lt: cutoff } },
@@ -210,6 +215,7 @@ export async function handleArrivalReactionCleanup(
     try {
       const cutoff = new Date();
       cutoff.setUTCDate(cutoff.getUTCDate() - ARRIVAL_REACTION_RETENTION_DAYS);
+      // account-deletion: retention ages rows out whatever their account's state.
       const deleted = await p.arrivalReaction.deleteMany({
         where: { createdAt: { lt: cutoff } },
       });
@@ -342,6 +348,7 @@ export async function handleStepUpElevationCleanup(
   return withBackgroundEvent("job.step_up_elevation_cleanup", async (evt) => {
     const p = getWorkerPrisma();
     try {
+      // account-deletion: expires single-use step-up proofs; acts for no account.
       const { count } = await p.stepUpElevation.deleteMany({
         where: { expiresAt: { lt: new Date() } },
       });
@@ -462,7 +469,12 @@ export async function handleWithingsOAuthStateCleanup(
       try {
         const deleted = await cleanupExpiredWithingsOAuthStates(p);
         evt.addMeta("withings_oauth_state_cleanup_deleted", deleted);
-        return jobDone({ deleted });
+        // The provider-neutral callback claims ride this daily pass: the
+        // callbacks sweep them only when one completes, which a quiet
+        // instance may not see for weeks.
+        const claimsDeleted = await cleanupExpiredOAuthCallbackClaims(p);
+        evt.addMeta("oauth_callback_claim_cleanup_deleted", claimsDeleted);
+        return jobDone({ deleted, callback_claims_deleted: claimsDeleted });
       } catch (err) {
         // The OAuth flow tolerates a stale row for an extra day, which used
         // to be the argument for swallowing this so the queue would not

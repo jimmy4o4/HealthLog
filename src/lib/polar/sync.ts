@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — Polar AccessLink sync.
+ * v1.17.0 — Polar AccessLink sync.
  *
  * Pulls Nightly Recharge (→ RECOVERY_SCORE / ANS_CHARGE / HRV / RHR /
  * respiratory rate), sleep (per-stage durations on a reconstructed END-instant
@@ -13,12 +13,19 @@
  * exactly like Nightscout's token-rejected path.
  *
  * Isolation: the five vitals collections are settled independently
- * (`Promise.allSettled`), so a single dead collection — e.g. a 403 on SpO2 or
- * cardio-load on an account without the sensor or the higher tier — imports the
- * healthy four and records ONE partial failure rather than blanking every
- * collection. Mirrors Oura's shipped per-collection isolation, minus the
- * token-refresh leg Polar structurally lacks (a 401 is just a per-collection
- * failure the classifier maps to `reauth_required`).
+ * (`Promise.allSettled`), so a single dead collection imports the healthy four
+ * and records ONE partial failure rather than blanking every collection.
+ * Mirrors Oura's shipped per-collection isolation, minus the token-refresh leg
+ * Polar structurally lacks (a 401 is just a per-collection failure the
+ * classifier maps to `reauth_required`).
+ *
+ * A 403 on one collection while a sibling succeeded is a refusal, not a
+ * failure (`isPolarCollectionRefusal`): the same token just worked, so the
+ * account simply does not share that data type (SpO2 without the sensor,
+ * cardio load without the tier). Counting it as `reauth_required` put a
+ * working connection behind a "reconnect" prompt that no reconnect clears.
+ * The refused names ride the wide event; the leg records success. Mirrors
+ * Oura's handling of a scope the grant does not cover.
  *
  * Window contract: every hourly tick re-reads the full server-fixed window for
  * each collection — 28 days for recharge / sleep / activity / cardio-load /
@@ -39,25 +46,18 @@
  */
 import { prisma } from "@/lib/db";
 import type { MeasurementType } from "@/generated/prisma/client";
-import { getEvent } from "@/lib/logging/context";
+import { annotate, getEvent } from "@/lib/logging/context";
 import {
   recordSyncFailure,
   recordSyncSuccess,
   toFailureKind,
   type FailureKind,
 } from "@/lib/integrations/status";
-import {
-  collapseToTypeDayKeys,
-  recomputeBucketsForMeasurement,
-} from "@/lib/rollups/measurement-rollups";
+import { afterProviderWrite } from "@/lib/integrations/sync-kit/after-write";
 import { invalidateUserMeasurements } from "@/lib/cache/invalidate";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/comprehensive-generate";
 import type { SyncWriteResult } from "@/lib/outcome/written-outcome";
 import { maybeEnqueueMorningRefresh } from "@/lib/daily/morning-refresh-trigger";
-import {
-  emitInsertedMeasurementArrivals,
-  type InsertedMeasurementArrivalRow,
-} from "@/lib/arrivals/measurement-emit";
+import type { InsertedMeasurementArrivalRow } from "@/lib/arrivals/measurement-emit";
 import {
   MeasurementReconciliationError,
   reconcileExternalMeasurement,
@@ -68,19 +68,25 @@ import {
   fetchNightlyRecharges,
   fetchSleeps,
   fetchSpo2,
+} from "./client";
+import {
   mapActivity,
   mapCardioLoad,
   mapNightlyRecharge,
   mapSleep,
   mapSpo2,
   type MappedMeasurement,
-} from "./client";
+} from "./map";
 import {
   sweepStaleSleepSegments,
   type SleepSegmentSweep,
 } from "@/lib/sleep/sweep-stale-segments";
 import { getPolarConnection } from "./credentials";
-import { PolarApiError, classifyPolarError } from "./response-classifier";
+import {
+  PolarApiError,
+  classifyPolarError,
+  isPolarCollectionRefusal,
+} from "./response-classifier";
 import { resolveUserTimezone } from "@/lib/tz/resolver";
 
 /** Map a Polar error onto the shared integration-ledger failure kind. */
@@ -164,6 +170,15 @@ export interface PolarCollectionFailure {
   err: unknown;
 }
 
+/** The vitals leg's outcome, plus whether any collection proved the token. */
+export interface PolarVitalsResult extends SyncWriteResult {
+  /**
+   * True when at least one collection read succeeded with the token, so a 403
+   * elsewhere in this run (the workouts leg included) is a per-type refusal.
+   */
+  tokenProven: boolean;
+}
+
 /**
  * Sync one user's Polar data. Returns the rows written AND whether a
  * collection did not settle — the bare count used to narrow the partial away,
@@ -177,9 +192,11 @@ export interface PolarCollectionFailure {
  * escapes now is a write-path/unexpected error out of `upsertPolarMeasurements`
  * — the poll-cohort boundary records that unmarked escape once.
  */
-export async function syncUserPolar(userId: string): Promise<SyncWriteResult> {
+export async function syncUserPolar(
+  userId: string,
+): Promise<PolarVitalsResult> {
   const conn = await getPolarConnection(userId);
-  if (!conn) return { imported: 0, failed: false };
+  if (!conn) return { imported: 0, failed: false, tokenProven: false };
   // Date-keyed rows are anchored at local noon of their date in this zone.
   const tz = await resolveUserTimezone(userId);
 
@@ -250,15 +267,23 @@ export async function syncUserPolar(userId: string): Promise<SyncWriteResult> {
     collections.map((spec) => spec.collect(conn.accessToken)),
   );
   const readings: PolarMeasurementUpsert[] = [];
-  const failures: PolarCollectionFailure[] = [];
+  const settledFailures: PolarCollectionFailure[] = [];
   settled.forEach((res, i) => {
     const spec = collections[i]!;
     if (res.status === "fulfilled") {
       readings.push(...res.value);
     } else {
-      failures.push({ name: spec.name, err: res.reason });
+      settledFailures.push({ name: spec.name, err: res.reason });
     }
   });
+  const tokenProven = settled.some((res) => res.status === "fulfilled");
+  const { failures, refused } = splitPolarRefusals(
+    settledFailures,
+    tokenProven,
+  );
+  if (refused.length > 0) {
+    annotate({ meta: { polar_collections_refused: refused } });
+  }
 
   // Clear whatever an earlier scoring left under the re-fetched nights before
   // the fresh set upserts (mirrors Google Health's replace-by-window order).
@@ -274,7 +299,7 @@ export async function syncUserPolar(userId: string): Promise<SyncWriteResult> {
     },
   });
 
-  // S4 — trigger the debounced morning refresh on a last-night segment landing
+  // Trigger the debounced morning refresh on a last-night segment landing
   // (mirrors the Withings / WHOOP / Apple seams). Fires whether or not a
   // sibling collection failed, since the sleep readings were still imported.
   void maybeEnqueueMorningRefresh(userId, insertedSleepMeasuredAts).catch(
@@ -317,11 +342,29 @@ export async function syncUserPolar(userId: string): Promise<SyncWriteResult> {
           ? String(firstErr.httpStatus)
           : undefined,
     });
-    return { imported, failed: true };
+    return { imported, failed: true, tokenProven };
   }
 
   await recordSyncSuccess(userId, "polar", { leg: POLAR_LEG_VITALS });
-  return { imported, failed: false };
+  return { imported, failed: false, tokenProven };
+}
+
+/**
+ * Split a run's collection failures into the ones that count and the per-type
+ * refusals (a 403 while another read proved the token). Without a proof every
+ * failure counts: a 403 on every collection is the account-wide consent gap.
+ */
+export function splitPolarRefusals(
+  failures: PolarCollectionFailure[],
+  tokenProven: boolean,
+): { failures: PolarCollectionFailure[]; refused: string[] } {
+  if (!tokenProven) return { failures, refused: [] };
+  return {
+    failures: failures.filter((f) => !isPolarCollectionRefusal(f.err)),
+    refused: failures
+      .filter((f) => isPolarCollectionRefusal(f.err))
+      .map((f) => f.name),
+  };
 }
 
 /**
@@ -393,28 +436,12 @@ export async function upsertPolarMeasurements(
   }
 
   opts.onInserted?.(insertedRows);
-  void emitInsertedMeasurementArrivals(userId, insertedRows, "polar").catch(
-    () => {},
-  );
-  try {
-    const keys = collapseToTypeDayKeys(touched);
-    for (const k of keys) {
-      await recomputeBucketsForMeasurement(userId, k.type, k.measuredAt);
-    }
-    invalidateStatusInsightsForTypes(
-      userId,
-      keys.map((k) => k.type),
-      { source: "sync" },
-    ).catch((err) => {
-      getEvent()?.addWarning(
-        `polar: status-insight invalidate failed for ${userId}: ${err}`,
-      );
-    });
-  } catch (err) {
-    getEvent()?.addWarning(
-      `polar: rollup recompute failed for ${userId}: ${err}`,
-    );
-  }
+  await afterProviderWrite({
+    userId,
+    provider: "polar",
+    touched,
+    arrivals: { rows: insertedRows, source: "polar" },
+  });
 
   return imported;
 }

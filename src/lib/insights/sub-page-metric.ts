@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W4 — slug → metric mapping for the routed insights sub-pages.
+ * v1.4.25 — slug → metric mapping for the routed insights sub-pages.
  *
  * The mother page (`/insights`) hosts the overview (hero + briefing +
  * trends + advisor). Each named slug below is a sub-route that focuses
@@ -29,12 +29,12 @@
  * enum, the slug array, and the per-slug metric list all derive from
  * the keys of this record — adding a sub-page is a one-place change.
  */
-// v1.4.33 F9 — order follows the MeasurementCategory overlay
+// v1.4.33 — order follows the MeasurementCategory overlay
 // (`src/lib/measurements/categories.ts`):
 //
 //   vitals → body → activity → sleep → cardiovascular → mood → events
 //
-// v1.4.34 IW-D — the five wave-A HealthKit entries (HRV, resting HR,
+// v1.4.34 — the five wave-A HealthKit entries (HRV, resting HR,
 // SpO2, body temperature, active energy) added in v1.4.32 share a
 // presentation group on the routed tab strip. Each sub-page keeps its
 // own URL and own page component — only the strip presentation changes
@@ -120,7 +120,8 @@ const SUB_PAGE_METRIC = {
   // ── cardiovascular ──
   "resting-pulse": ["RESTING_HEART_RATE"],
   // v1.17.0 — HRV surfaces both flavours: SDNN (`HEART_RATE_VARIABILITY`,
-  // Apple / Fitbit) and RMSSD (`HRV_RMSSD`, Oura / Polar / WHOOP). A
+  // Apple Health) and RMSSD (`HRV_RMSSD`, Oura / Polar / WHOOP / Fitbit /
+  // Google Health). A
   // ring / strap user stores only RMSSD; listing both keeps the tab,
   // pill, and dashboard tile lit whichever source the user has.
   hrv: ["HEART_RATE_VARIABILITY", "HRV_RMSSD"],
@@ -158,7 +159,7 @@ export type SubPageSlug = keyof typeof SUB_PAGE_METRIC;
 export const SUB_PAGE_SLUGS = Object.keys(SUB_PAGE_METRIC) as SubPageSlug[];
 
 /**
- * v1.4.34 IW-D — strip-presentation grouping. Only `"vitals"` is in
+ * v1.4.34 — strip-presentation grouping. Only `"vitals"` is in
  * use today; every other slug renders as a top-level pill. The group
  * key is rendered through a single parent pill that opens a popover
  * containing the grouped sub-pages. Adding a new group is a one-row
@@ -262,7 +263,7 @@ export const SUB_PAGE_GROUP: Partial<Record<SubPageSlug, SubPageGroup>> = {
 };
 
 /**
- * v1.4.34 IW-D — canonical order of the sub-pages inside each parent
+ * v1.4.34 — canonical order of the sub-pages inside each parent
  * popover. The strip iterates `SUB_PAGE_SLUGS`, so a member's position
  * in the popover follows its position in that array.
  */
@@ -286,7 +287,7 @@ export const SUB_PAGE_GROUP_ORDER: Record<
 };
 
 /**
- * v1.15.14 W2 — manager grouping for the "Anpassen" → "Detailseiten
+ * v1.15.14 — manager grouping for the "Anpassen" → "Detailseiten
  * verwalten" surface.
  *
  * The tab strip only assigns a `SUB_PAGE_GROUP` to the metrics that
@@ -340,7 +341,7 @@ const FLAT_SLUG_MANAGER_GROUP: Partial<Record<SubPageSlug, ManagerGroup>> = {
   sleep: "sleep",
   mood: "mood",
   medications: "events",
-  // 2026-07-17 UX/IA audit (M3) — breathing disturbances stays a flat,
+  // Breathing disturbances stays a flat,
   // ungrouped tab-strip pill (see `SUB_PAGE_GROUP`) but files under the
   // Sleep section in the manager, not the foreign Vitals popover it used
   // to disappear from whenever the sleep module was off.

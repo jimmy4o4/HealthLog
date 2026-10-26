@@ -10,13 +10,15 @@ import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { metricFractionDigits } from "@/lib/measurements/value-domain";
 import { apiGet } from "@/lib/api/api-fetch";
+import { readFailureKind } from "@/lib/api/read-failure";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TileHeader } from "@/components/insights/tile-header";
 import type { CoachReadStripData } from "@/lib/insights/derived/coach-read-shape";
 
 /**
- * v1.21.2 (A1) — "Coach read" strip.
+ * v1.21.2 — "Coach read" strip.
  *
  * A compact two-line read rendered ABOVE the chart on each metric sub-page:
  *
@@ -59,6 +61,13 @@ export interface CoachReadStripProps {
   valueScale?: number;
 }
 
+/**
+ * The strip's body holds the height of the error row's Retry button (32 px,
+ * 44 px on a touch screen) in every state, so the placeholder, a failure and
+ * a one-line read all stand the same height and the chart below never moves.
+ */
+const STRIP_BODY = "min-h-8 pointer-coarse:min-h-11";
+
 export function CoachReadStrip({
   metricType,
   unit,
@@ -79,7 +88,7 @@ export function CoachReadStrip({
   const transformed = unitDisplay.isTransformed(metricType);
   const resolvedUnit = transformed ? unitDisplay.unitFor(metricType) : unit;
 
-  const { data, isError } = useQuery({
+  const { data, error, isError, refetch } = useQuery({
     queryKey: queryKeys.insightsCoachRead(metricType, locale),
     queryFn: () =>
       apiGet<CoachReadStripData>(
@@ -94,15 +103,22 @@ export function CoachReadStrip({
   // shape: it lands above the chart, and popping in later pushed the chart
   // and everything under it down the page. A landed read always paints (the
   // baseline line degrades to the "learning" copy), so the placeholder only
-  // ever gives way to a card of its own height; a failed read drops it.
+  // ever gives way to a card of its own height. A failed read gives way to a
+  // notice with a retry: dropping the strip read as "nothing to say about
+  // today", which is not what happened. The notice sits inside the same card
+  // shell as the placeholder, so a failure does not move the chart either.
+  // The route is a manage-level read, so a viewer on a read-only share is
+  // refused it; that draws nothing, and a spent analytics budget says so
+  // without offering a retry.
   if (!mounted || !data) {
-    if (!isAuthenticated || isError) return null;
+    if (!isAuthenticated) return null;
+    if (isError && readFailureKind(error) === "refused") return null;
     return (
       <Card
         data-slot="coach-read-strip"
-        data-state="loading"
-        aria-busy="true"
-        className="gap-2 py-3 md:py-4"
+        data-state={isError ? "error" : "loading"}
+        aria-busy={isError ? undefined : "true"}
+        density="compact"
       >
         <CardHeader>
           <TileHeader
@@ -111,8 +127,19 @@ export function CoachReadStrip({
             titleAs="h2"
           />
         </CardHeader>
-        <CardContent>
-          <Skeleton className="h-5.5 w-3/4" />
+        <CardContent className={STRIP_BODY}>
+          {isError ? (
+            <QueryErrorRow
+              inset
+              error={error}
+              slot="coach-read-strip-error"
+              message={t("insights.coach.readStrip.loadError")}
+              onRetry={() => void refetch()}
+              className="flex-row items-center justify-between"
+            />
+          ) : (
+            <Skeleton className="h-5.5 w-3/4" />
+          )}
         </CardContent>
       </Card>
     );
@@ -216,17 +243,17 @@ export function CoachReadStrip({
   // text edge ~8 px left of the card norm on md+. Body prose in the
   // regular foreground; muted stays reserved for meta lines.
   return (
-    <Card data-slot="coach-read-strip" className="gap-2 py-3 md:py-4">
+    <Card data-slot="coach-read-strip" density="compact">
       <CardHeader>
         <TileHeader
           icon={Sparkles}
           title={t("insights.coach.readStrip.label")}
-          // L3 — top-level section on every metric sub-page, sibling of the
+          // Top-level section on every metric sub-page, sibling of the
           // already-`h2` stat strip directly under the page `h1`.
           titleAs="h2"
         />
       </CardHeader>
-      <CardContent>
+      <CardContent className={STRIP_BODY}>
         <div className="min-w-0 space-y-1 text-sm leading-relaxed">
           {baselineLine ? (
             <p data-slot="coach-read-baseline" className="text-pretty">

@@ -32,26 +32,32 @@ vi.mock("@/lib/logging/context", () => ({
 }));
 
 import {
-  GOOGLE_HEALTH_DATA_TYPES,
   GOOGLE_HEALTH_SKIP_MS,
-  type GoogleHealthDataPoint,
   forEachDataPointPage,
-  googleHealthSliceBudget,
   refusesEdgeFilter,
+} from "@/lib/google-health/data-points";
+import {
+  googleHealthSliceBudget,
   runWithGoogleHealthClientOutcome,
   runWithGoogleHealthStop,
-} from "../client";
+} from "@/lib/google-health/budget";
+import {
+  GOOGLE_HEALTH_DATA_TYPES,
+  type GoogleHealthDataPoint,
+} from "@/lib/google-health/mappers";
 import { GoogleHealthApiError } from "../response-classifier";
+import { GOOGLE_HEALTH_NO_PROGRESS_PAGES } from "../backfill-bounds";
 import {
   googleHealthBackfillCursor,
   noteGoogleHealthEdgeFilterUnsupported,
-  readGoogleHealthBackfillCursors,
-  readGoogleHealthBackfillEdgeFilterUnsupported,
   recordGoogleHealthBackfillPage,
   recordGoogleHealthBackfillResumePoint,
   runWithGoogleHealthBackfillResume,
-  type GoogleHealthBackfillCursor,
 } from "../sync-core";
+import {
+  readGoogleHealthBackfillProgress,
+  type GoogleHealthBackfillCursor,
+} from "../backfill-progress";
 
 const MINUTE = 60_000;
 const NOW = Date.parse("2026-01-01T00:00:00Z");
@@ -479,14 +485,42 @@ describe("passing over the samples beyond the edge inside a slice", () => {
     expect(outcome.truncated).toBe(true);
   });
 
-  it("gives up past its own ceiling instead of reading without end", async () => {
+  it("stops passing over once the pages it reads stop reaching further back", async () => {
+    // A list that hands out its newest page whatever token it is asked with:
+    // passing over it would never reach the edge. There is no page count to
+    // run into any more; the walk stops because it gets nowhere.
+    safeFetchMock.mockImplementation(async (url: string) => {
+      const u = new URL(url);
+      u.searchParams.delete("pageToken");
+      const res = respond(u.toString());
+      const body = (await res.json()) as object;
+      return json({ ...body, nextPageToken: "1" });
+    });
+    const onNoProgress = vi.fn();
     const { pages, outcome } = await walk({
       resumable: true,
-      edge: { at: at(30), order: "desc", filter: false, maxSkipPages: 2 },
+      edge: { at: at(30), order: "desc", filter: false },
+      onNoProgress,
     });
     expect(pages).toHaveLength(0);
-    expect(safeFetchMock).toHaveBeenCalledTimes(2);
+    // The first page reaches somewhere; the twenty after it repeat it.
+    expect(safeFetchMock).toHaveBeenCalledTimes(
+      1 + GOOGLE_HEALTH_NO_PROGRESS_PAGES,
+    );
     expect(outcome.truncated).toBe(true);
+    expect(onNoProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes over as many pages as it takes while they move toward the edge", async () => {
+    // One reading a page, so reaching the edge takes more pages than the
+    // no-progress limit and more than any page count a walk once had to fit.
+    const { rows, outcome } = await walk({
+      resumable: true,
+      pageSize: 1,
+      edge: { at: at(30), order: "desc", filter: false },
+    });
+    expect(rows).toHaveLength(TOTAL - 30);
+    expect(outcome.truncated).toBe(false);
   });
 });
 
@@ -537,7 +571,8 @@ describe("the note that a collection refuses the edge filter", () => {
 
     // Slice two: starts from what slice one left on disk.
     server.requests = [];
-    const unsupported = readGoogleHealthBackfillEdgeFilterUnsupported(progress);
+    const unsupported =
+      readGoogleHealthBackfillProgress(progress).edgeFilterUnsupported;
     await runWithGoogleHealthBackfillResume(
       "u1",
       new Set(),
@@ -547,7 +582,7 @@ describe("the note that a collection refuses the edge filter", () => {
         const { rows } = await walk({ resumable: true, edge: cursor.edge });
         expect(rows).toHaveLength(TOTAL - 19);
       },
-      readGoogleHealthBackfillCursors(progress),
+      readGoogleHealthBackfillProgress(progress).cursors,
       unsupported,
     );
     expect(server.requests.some((f) => f.includes("<="))).toBe(false);
@@ -587,7 +622,7 @@ describe("the note that a collection refuses the edge filter", () => {
       page: 4,
     });
     expect(first.advanced.has("fetchHeartRate")).toBe(true);
-    const saved = readGoogleHealthBackfillCursors(lastProgress());
+    const saved = readGoogleHealthBackfillProgress(lastProgress()).cursors;
     expect(saved.get("fetchHeartRate")).toEqual({
       ...cursor,
       resume: { token: "4", page: 4, reached: 4 },
@@ -599,8 +634,9 @@ describe("the note that a collection refuses the edge filter", () => {
     const back = await run(new Map(saved), { token: "2", page: 2 });
     expect(back.advanced.size).toBe(0);
     expect(
-      readGoogleHealthBackfillCursors(lastProgress()).get("fetchHeartRate")
-        ?.resume,
+      readGoogleHealthBackfillProgress(lastProgress()).cursors.get(
+        "fetchHeartRate",
+      )?.resume,
     ).toEqual({ token: "2", page: 2, reached: 4 });
 
     // A page written keeps the place; the next slice is handed it.
@@ -615,7 +651,7 @@ describe("the note that a collection refuses the edge filter", () => {
       new Map(saved),
       new Set(["fetchHeartRate"]),
     );
-    const next = readGoogleHealthBackfillCursors(lastProgress());
+    const next = readGoogleHealthBackfillProgress(lastProgress()).cursors;
     expect(next.get("fetchHeartRate")?.resume).toEqual(
       saved.get("fetchHeartRate")?.resume,
     );
@@ -634,10 +670,12 @@ describe("the note that a collection refuses the edge filter", () => {
 
   it("reads only well-formed keys", () => {
     expect([
-      ...readGoogleHealthBackfillEdgeFilterUnsupported({
+      ...readGoogleHealthBackfillProgress({
         edgeFilterUnsupported: ["fetchHeartRate", 3, "x".repeat(65)],
-      }),
+      }).edgeFilterUnsupported,
     ]).toEqual(["fetchHeartRate"]);
-    expect(readGoogleHealthBackfillEdgeFilterUnsupported(null).size).toBe(0);
+    expect(
+      readGoogleHealthBackfillProgress(null).edgeFilterUnsupported.size,
+    ).toBe(0);
   });
 });

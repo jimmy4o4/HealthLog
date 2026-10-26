@@ -1,6 +1,6 @@
 /**
  * Server-safe constants for the v1.5 admin split. Mirrors the pattern in
- * `src/components/settings/section-slugs.ts` so server-rendered code paths
+ * `src/lib/settings/section-slugs.ts` so server-rendered code paths
  * (`generateStaticParams()`, the page guard, route-existence tests) can
  * import the slug list without dragging the `<AdminShell>` client bundle
  * into the server graph.
@@ -21,7 +21,7 @@ export const ADMIN_SECTION_SLUGS = [
   // for one coherent coach-quality concern read as clutter; one card opens
   // the full picture.
   "coach",
-  // v1.18.6 (W9) — server-wide module availability is its own section now
+  // v1.18.6 — server-wide module availability is its own section now
   // (was stacked under Coach). It gates every module, not just the coach,
   // so it reads better next to Coach than buried inside it.
   "module-availability",
@@ -41,7 +41,7 @@ export const ADMIN_SECTION_SLUGS = [
   // danger zone.
   "encryption",
   "danger-zone",
-  // v1.4.36 W4e — About / version / update check folded into Admin
+  // v1.4.36 — About / version / update check folded into Admin
   // Console. Lives at /admin/about; the legacy /settings/about route
   // is unlinked from the user-card dropdown.
   "about",

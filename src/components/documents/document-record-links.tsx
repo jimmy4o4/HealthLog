@@ -50,6 +50,7 @@ import { queryKeys } from "@/lib/query-keys";
 import type { EncounterDTO, EncounterListDTO } from "@/lib/encounters/dto";
 import type { EncounterKind } from "@/generated/prisma/client";
 import type { InboundDocumentDetailDto } from "@/lib/validations/inbound-documents";
+import { visitPath } from "@/lib/encounters/visit-links";
 
 type Translate = ReturnType<typeof useTranslations>["t"];
 
@@ -109,7 +110,7 @@ export async function fetchEncounterPage(
 
 /** Where a visit opens: its sheet on the checkups page. */
 function visitHref(encounterId: string): string {
-  return `/checkups?visit=${encodeURIComponent(encounterId)}`;
+  return visitPath(encounterId);
 }
 
 /** Where a dose opens: its sheet on the vaccinations page. */
@@ -287,7 +288,7 @@ export function DocumentRecordLinks({
           title={t("documents.detail.vaccinationsLabel")}
           slot="document-vaccination-links"
           pending={vaccinations.isPending || !seedFresh}
-          error={vaccinations.isError || seedError}
+          error={vaccinations.error || seedError}
           errorLabel={t("links.picker.loadError")}
           onRetry={() => {
             if (vaccinations.isError) void vaccinations.refetch();

@@ -55,6 +55,10 @@
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
 import type { AssessmentInstrument } from "@/generated/prisma/client";
+import {
+  isAssessmentWording,
+  type AssessmentWording,
+} from "@/lib/mental-health/wording/types";
 
 export interface SensitiveBackupOptions {
   purpose?: "portable-export" | "disaster-recovery";
@@ -65,6 +69,8 @@ export interface MentalHealthAssessmentBackupEntry {
   id: string;
   instrument: AssessmentInstrument;
   locale: string;
+  /** Which text the answers were given in; null before it was recorded. */
+  wording: AssessmentWording | null;
   version: string;
   /** Ciphertext as base64. The per-item answers, including PHQ-9 item 9. */
   responsesEncrypted: string;
@@ -146,6 +152,7 @@ const MENTAL_HEALTH_BACKUP_SELECT = {
   id: true,
   instrument: true,
   locale: true,
+  wording: true,
   version: true,
   responsesEncrypted: true,
   totalScore: true,
@@ -195,12 +202,12 @@ export async function buildSensitiveBackupSection(
   const [assessmentRows, receiptRows] = await Promise.all([
     prisma.mentalHealthAssessment.findMany({
       where: { userId },
-      orderBy: { takenAt: "asc" },
+      orderBy: [{ takenAt: "asc" }, { id: "asc" }],
       select: MENTAL_HEALTH_BACKUP_SELECT,
     }),
     prisma.consentReceipt.findMany({
       where: { userId },
-      orderBy: { signedAt: "asc" },
+      orderBy: [{ signedAt: "asc" }, { id: "asc" }],
       select: CONSENT_RECEIPT_BACKUP_SELECT,
     }),
   ]);
@@ -210,6 +217,9 @@ export async function buildSensitiveBackupSection(
       id: row.id,
       instrument: row.instrument,
       locale: row.locale,
+      // The app writes only the closed set; anything else travels as null
+      // ("not recorded") rather than as a value the restore would refuse.
+      wording: isAssessmentWording(row.wording) ? row.wording : null,
       version: row.version,
       responsesEncrypted: Buffer.from(row.responsesEncrypted).toString(
         "base64",
@@ -276,6 +286,7 @@ export type RestoredMentalHealthAssessment = Pick<
     Pick<
       MentalHealthAssessmentBackupEntry,
       | "version"
+      | "wording"
       | "item9Flagged"
       | "crisisShownAt"
       | "tz"
@@ -326,6 +337,7 @@ export async function restoreSensitiveData(
         userId: ownerId,
         instrument: entry.instrument,
         locale: entry.locale,
+        wording: entry.wording ?? null,
         version: entry.version ?? "standard",
         responsesEncrypted: decodeBase64(entry.responsesEncrypted),
         totalScore: entry.totalScore,

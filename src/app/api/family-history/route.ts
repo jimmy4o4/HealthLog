@@ -19,8 +19,8 @@ import {
   apiSuccess,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
 } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { withIdempotency } from "@/lib/idempotency";
 import { encryptToBytes } from "@/lib/ai/coach/bytes-codec";
 import {
@@ -28,6 +28,8 @@ import {
   familyHistoryListQuerySchema,
 } from "@/lib/validations/family-history";
 import { toFamilyHistoryEntryDTO } from "@/lib/records/dto";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const GET = apiHandler(async (request: NextRequest) => {
   const { user } = await requireRecordAuth("read", "profile");
@@ -43,18 +45,20 @@ export const GET = apiHandler(async (request: NextRequest) => {
   }
 
   const limit = parsed.data.limit ?? 100;
-  const rows = await prisma.familyHistoryEntry.findMany({
-    where: { userId: user.id, deletedAt: null },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-  });
+  const { rows, cap } = await listPage(limit, (take) =>
+    prisma.familyHistoryEntry.findMany({
+      where: { userId: user.id, deletedAt: null },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+    }),
+  );
 
   annotate({
     action: { name: "family-history.list", entity_type: "family_history" },
     meta: { count: rows.length },
   });
 
-  return apiSuccess(rows.map(toFamilyHistoryEntryDTO));
+  return apiListSuccess(rows.map(toFamilyHistoryEntryDTO), cap);
 });
 
 export const POST = apiHandler(
@@ -76,21 +80,13 @@ async function postFamilyHistory(request: NextRequest): Promise<Response> {
   // it (`recordSharing.anamnesis.relativeNote`).
   const { user } = await requireRecordAuth("manage", "profile");
 
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, familyHistoryCreateSchema, {
     maxBytes: 16 * 1024,
+    action: "family-history.validation-failed",
+    countIssues: true,
+    errorCode: "familyHistory.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = familyHistoryCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "family-history.validation-failed" },
-      meta: { issue_count: parsed.error.issues.length },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "familyHistory.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const entry = parsed.data;
 

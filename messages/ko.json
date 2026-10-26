@@ -1,5 +1,6 @@
 {
   "common": {
+    "listCapped": "최근 {count}개만 표시되며, 이전 항목은 여기에 나오지 않습니다.",
     "save": "저장",
     "conflictReloaded": "서버에서 다시 불러왔어요. 변경 내용을 다시 입력해 주세요.",
     "cancel": "취소",
@@ -54,7 +55,10 @@
     "durationClockHours": "{time}시간",
     "errorIdLabel": "오류 ID",
     "errorIdCopy": "오류 ID 복사",
-    "errorIdCopied": "오류 ID 복사됨"
+    "errorIdCopied": "오류 ID 복사됨",
+    "readThrottled": "지금은 요청이 너무 많으니 나중에 다시 시도해 주세요.",
+    "sessionEnded": "세션이 만료되었으니 계속하려면 다시 로그인해 주세요.",
+    "signIn": "로그인"
   },
   "apiErrors": {
     "measurement": {
@@ -171,6 +175,9 @@
           "failed": "라벨을 읽지 못했어요. 더 선명한 사진으로 다시 시도하세요."
         }
       }
+    },
+    "aiRuns": {
+      "readerBusy": "문서 판독기가 다른 작업으로 바빠요. 1분 후에 다시 시도하세요."
     }
   },
   "doctorReport": {
@@ -397,7 +404,42 @@
     "lifeSittingValue": "{hours}시간, 본인 응답",
     "lifeWork": "일",
     "lifeNightWork": "야간 근무",
-    "lifeExposures": "노출: {list}"
+    "lifeExposures": "노출: {list}",
+    "workouts": {
+      "title": "운동",
+      "summary": "총 {sessions}회, {hours}시간; 주당 평균 {perWeek}회, {minutesPerWeek}분.",
+      "colSport": "종목",
+      "colSessions": "횟수",
+      "colTime": "시간",
+      "colDistance": "거리",
+      "colEnergy": "에너지",
+      "colHeartRate": "평균 심박수",
+      "moreSports": "{count}개 종목이 합계에는 포함되지만 목록에는 없습니다."
+    },
+    "medicationEffect": {
+      "title": "약 시작 전후의 변화",
+      "colMedication": "약 / 측정값",
+      "colStart": "시작",
+      "colLevel": "수준 변화(95% CI)",
+      "colSlope": "추세 변화(95% CI)",
+      "colDays": "전 / 후 일수",
+      "to": "~",
+      "week": "주",
+      "reasonNoStart": "기록된 시작일 없음",
+      "reasonBefore": "시작 전 측정값이 너무 적음",
+      "reasonAfter": "시작 후 측정값이 너무 적음",
+      "reasonFit": "계산할 수 없음",
+      "excludedAdherence": "시작 후 {count}일 제외(복용률 {floor}% 미만)",
+      "excludedNotTaking": "{count}일 제외(일시 중지 또는 복용 기간 사이)",
+      "notTracked": "복용 미기록으로 놓친 용량에 따른 제외 없음",
+      "endDoseChange": "기간은 첫 용량 변경 전인 {date}에 끝남",
+      "days": "시작 전 {before}일, 시작 후 {after}일, 제외 {excluded}일",
+      "method": "시작 90일 전부터 최대 180일 후까지의 일별 값에 대한 분절 회귀, Newey-West 구간. 직전 14일 복용률이 80% 미만인 시작 후 날짜는 제외했습니다. 시간에 따른 연관성을 보여 줄 뿐, 약의 효과를 입증하지 않습니다.",
+      "autocorrelation": "전날 값에 크게 좌우되므로 범위가 여전히 너무 좁을 수 있음",
+      "window": "{from}부터 {to}까지 분석, 보고 기간을 넘어설 수 있음",
+      "windowLine": "{from}부터 {to}까지 분석했습니다. 이 기간은 보고 기간을 넘어설 수 있습니다."
+    },
+    "screenerUnvalidated": "{label}: {total}개 결과 중 {count}개는 과학적으로 검증되지 않은 번역으로 응답했습니다. 참고용으로만 보십시오."
   },
   "errorBoundary": {
     "title": "문제가 생겼어요",
@@ -590,7 +632,9 @@
       "title": "유효하지 않은 초대예요",
       "description": "이 초대 링크가 불완전하거나 잘못 복사되었어요. 초대한 분께 새 링크를 요청해 주세요.",
       "toLogin": "로그인으로 이동"
-    }
+    },
+    "deletionPending": "이 계정은 {date}에 삭제될 예정이며 그때까지 잠겨 있어요. 그 전에는 이 서버의 관리자가 삭제를 취소할 수 있어요.",
+    "deletionPendingNoDate": "이 계정은 삭제 예정이라 잠겨 있어요. 삭제가 끝나기 전까지는 이 서버의 관리자가 취소할 수 있어요."
   },
   "dashboard": {
     "title": "대시보드",
@@ -739,13 +783,13 @@
         "bmi": "kg/m²"
       }
     },
-    "keyBackupBanner": {
-      "title": "암호화 키를 백업하세요",
-      "body": "키 사본이 없으면 다시 설치한 뒤 데이터를 복구할 수 없습니다. 1분이면 됩니다.",
-      "action": "단계 열기"
-    },
     "quickAddSymptom": "증상 기록",
-    "todayCardVisible": "상단 카드 표시"
+    "todayCardVisible": "상단 카드 표시",
+    "recoveryKitBanner": {
+      "title": "복구 키트를 보관하세요",
+      "body": "이 서버가 사용하는 키의 사본이 없으면 다시 설치한 뒤 데이터를 복구할 수 없습니다. 몇 분이면 됩니다.",
+      "action": "키트 열기"
+    }
   },
   "measurements": {
     "title": "측정",
@@ -842,7 +886,7 @@
     "nextPage": "다음 쪽",
     "dailyTotalCaption": "({count}개 샘플)",
     "openMetricInsights": "{type} 인사이트 열기",
-    "sleepNapCaption": "+낮잠 {count}회",
+    "sleepNapCaption": "낮잠 {count}회 포함",
     "sleepAwakeningsCaption": "깬 횟수 {count}회",
     "expandDay": "이 날의 샘플 보기",
     "collapseDay": "이 날의 샘플 숨기기",
@@ -907,6 +951,15 @@
     "unitRating": "단계",
     "typeWho5Score": "WHO-5 점수",
     "typeSciScore": "SCI 점수",
+    "typeExerciseMinutes": "운동 시간(분)",
+    "typeStandMinutes": "서 있기 시간(분)",
+    "typeStandHours": "일어서기 시간",
+    "typeMindfulMinutes": "마음 챙기기 시간(분)",
+    "typeStateOfMindValence": "마음 상태",
+    "typeAfibBurden": "심방세동 부담",
+    "typeIndoorCo2": "실내 CO₂",
+    "typeIndoorTemperature": "실내 온도",
+    "typeIndoorHumidity": "실내 습도",
     "durationReadAs": "{duration}(으)로 읽었어요",
     "durationHoursMinutes": "{hours}시간 {minutes}분",
     "durationHoursOnly": "{hours}시간",
@@ -1272,7 +1325,8 @@
       "bodyNotLogged": "이 날은 아픈 날 일지에 기록된 게 없어요",
       "openIllness": "열기"
     },
-    "sourceNotification": "알림"
+    "sourceNotification": "알림",
+    "tagCatalogLoadError": "태그를 불러오지 못했어요."
   },
   "medications": {
     "title": "복약",
@@ -2345,7 +2399,31 @@
       },
       "scaleAbsolute": "절대값",
       "scalePercentSinceStart": "시작 이후 %",
-      "scaleToggleLabel": "차트 눈금"
+      "scaleToggleLabel": "차트 눈금",
+      "segmented": {
+        "title": "시작 시점의 변화",
+        "level": "시작 직후 수준이 {value} {unit} 이동했습니다(95% 범위 {low}~{high}).",
+        "slope": "시작 후 주간 추세가 주당 {value} {unit} 변했습니다(95% 범위 {low}~{high}).",
+        "preSlope": "시작 전 추세는 주당 {value} {unit}였습니다.",
+        "includesZero": "범위에 0이 포함되면 이 측정값은 변화가 없다는 것과도 일치합니다.",
+        "basis": "시작 전 {before}일과 시작 후 {after}일 기준({from}~{to}).",
+        "excludedAdherence": "직전 {lookback}일 동안 복용한 용량이 {floor}% 미만이어서 시작 후 {count}일을 제외했습니다.",
+        "excludedNotTaking": "약을 일시 중지했거나 복용 기간 사이였던 {count}일을 제외했습니다.",
+        "notTracked": "이 약은 복용을 기록하지 않으므로 놓친 용량 때문에 제외한 날이 없습니다.",
+        "endDoseChange": "기간이 첫 용량 변경 전에 끝나므로 시작 용량을 나타냅니다.",
+        "confoundersTitle": "이 기간의 다른 약 변경 사항으로, 이 화면에서는 이 약과 구분할 수 없습니다.",
+        "confounderStarted": "{name} {date} 시작",
+        "confounderStopped": "{name} {date} 중단",
+        "confounderDoseChange": "{name}: {date} 용량 변경",
+        "confounderPaused": "{name} {date} 일시 중지",
+        "confounderResumed": "{name} {date} 재개",
+        "method": "계산 방법: 시작 전 일별 값에 직선 하나를, 시작 후 값에 또 하나를 맞춥니다. 시작 시점의 두 직선 사이 간격이 수준 변화이고, 기울기 차이가 추세 변화입니다. 범위는 하루의 값이 다음 날로 이어지는 점을 반영합니다.",
+        "needStart": "시작 시점의 변화를 보려면 시작일을 설정하세요.",
+        "needBefore": "시작 시점의 변화를 보려면 시작 전 {span}일에 걸쳐 최소 {days}일의 측정값이 필요합니다.",
+        "needAfter": "시작 시점의 변화를 보려면 시작 후 {span}일에 걸쳐, 용량을 복용한 날 기준으로 최소 {days}일의 측정값이 필요합니다.",
+        "fitFailed": "이 측정값으로는 계산할 수 없어 시작 시점의 변화를 표시하지 않습니다.",
+        "autocorrelation": "하루 값이 전날 값에 크게 좌우되므로 이 범위도 너무 좁을 수 있습니다."
+      }
     },
     "import": {
       "resultSuccess": "복용 {imported}건을 불러왔어요",
@@ -2592,7 +2670,8 @@
     "days90Title": "최근 90일",
     "daysAllLabel": "전체",
     "daysAllTitle": "전체 기간",
-    "medicationsEmptyAction": "약 추가하기"
+    "medicationsEmptyAction": "약 추가하기",
+    "rangeLabel": "기간"
   },
   "chart": {
     "overlay": {
@@ -2673,7 +2752,20 @@
         "ENV_PRESSURE_DELTA": "하루 중 기압 변화",
         "ENV_PM25": "초미세먼지(PM2.5)",
         "ENV_OZONE_8H": "오존",
-        "ENV_POLLEN_MAX": "꽃가루"
+        "ENV_POLLEN_MAX": "꽃가루",
+        "HRV_RMSSD": "심박 변이도(RMSSD)",
+        "HYDRATION": "수분 섭취량",
+        "CAFFEINE": "카페인 섭취량",
+        "ALCOHOL": "음주",
+        "WORKOUT_MINUTES": "운동 시간",
+        "TRAINING_LOAD": "훈련 부하",
+        "EXERCISE_MINUTES": "운동하기 시간",
+        "STAND_MINUTES": "서 있은 시간",
+        "MINDFUL_MINUTES": "마음챙김 시간",
+        "STATE_OF_MIND_VALENCE": "기록한 마음 상태",
+        "INDOOR_CO2": "실내 CO2",
+        "INDOOR_TEMPERATURE": "실내 온도",
+        "INDOOR_HUMIDITY": "실내 습도"
       },
       "daily": {
         "high": "{behaviour} 수치가 높은 날에는 다음 날 {outcome} 수치가 {direction} 경향이 있어요. 원인이 아니라 지켜볼 만한 패턴이에요.",
@@ -2701,6 +2793,12 @@
         "high": "당일과 전날의 {behaviour}이(가) 높을수록 내 데이터에서는 {outcome}이(가) {direction} 경향이 있습니다. 지켜볼 만한 패턴이지 원인은 아닙니다.",
         "moderate": "지금까지의 데이터로 보면 당일과 전날의 {behaviour}이(가) 높을수록 {outcome}이(가) {direction} 것으로 보입니다. 지켜볼 만한 패턴이지 원인은 아닙니다.",
         "faint": "당일과 전날의 {behaviour}이(가) 높을 때 내 데이터에서 {outcome}이(가) {direction} 기미가 아주 약하게 보일 뿐입니다. 의지하기엔 너무 작고, 원인은 아닙니다."
+      },
+      "channelNutrient": "{nutrient} 섭취량",
+      "dailyOvernight": {
+        "high": "밤사이 {behaviour}이(가) 높을수록 내 데이터에서는 그날 밤 {outcome}이(가) {direction} 경향이 있습니다. 지켜볼 만한 패턴이지 원인은 아닙니다.",
+        "moderate": "지금까지의 데이터로 보면 밤사이 {behaviour}이(가) 높을수록 그날 밤 {outcome}이(가) {direction} 것으로 보입니다. 지켜볼 만한 패턴이지 원인은 아닙니다.",
+        "faint": "밤사이 {behaviour}이(가) 높을 때 내 데이터에서 그날 밤 {outcome}이(가) {direction} 기미가 아주 약하게 보일 뿐입니다. 의지하기엔 너무 작고, 원인은 아닙니다."
       }
     },
     "noAnalysisYet": "아직 평가가 없어요.",
@@ -2927,6 +3025,7 @@
       "refusalInjection": "제 지시를 덮어쓰려는 표현이 보였어요. 저는 HealthLog 코치이고 회원님의 건강 데이터만 정리해 드려요. 그 범위로 질문을 다시 적어 주세요.",
       "errorBudget": "오늘 코치 사용 한도에 도달했어요. 사용량은 내 시간대의 자정에 초기화돼요.",
       "errorProvider": "지금은 코치가 인사이트 제공자에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      "errorReasoningOnly": "모델이 생각만 하고 답변을 쓰지 않았어요. 다시 시도하거나 AI 설정에서 다른 모델을 선택해 주세요.",
       "errorDemo": "데모에서는 코치가 답하지 않아요.",
       "errorNoProvider": "코치는 기록된 건강 데이터를 읽고 그에 대한 질문에 답해요(의학적 조언은 아니에요). 그러려면 HealthLog에 AI 제공자가 필요해요. 직접 발급한 키나 로컬 모델을 연결해 주세요.",
       "errorNoProviderAction": "AI 제공자 연결",
@@ -3139,11 +3238,11 @@
           "last30days": "{days}일",
           "last90days": "{days}일",
           "lastYear": "{months}개월",
-          "allTime": "전체"
+          "allTime": "{months}개월 상세, 검사 결과는 더 길게"
         },
         "detailDays": "코치는 어떤 답변에서도 {days}일보다 오래된 기록은 읽지 않아요.",
         "detailMonths": "코치는 어떤 답변에서도 {months}개월보다 오래된 기록은 읽지 않아요.",
-        "detailAll": "기록한 모든 것: 최근 {dailyMonths}개월은 하루 단위로, 그 이전 측정값은 최대 {years}년 전까지 월별 값으로, 검사 결과는 최근 {labMonths}개월 치를 읽어요.",
+        "detailAll": "제한이 없으면 코치는 최근 {dailyMonths}개월은 하루 단위로, 그 이전 측정값은 최대 {years}년 전까지 월별 값으로 읽어요. 검사 결과는 가장 최근에 측정한 항목들의 최신 값을 읽고, 물어본 항목은 이전 결과 {labRecent}개도 읽어요. 더 오래된 결과는 최대 {labYears}년 전까지 연도별로 요약하고, 그보다 이전 연도는 개수만 세요.",
         "note": "프로필, 현재 복용 중인 약, 진행 중인 질병, 예정된 진료는 계속 보여요. 더 긴 기록이 필요한 요약은 줄이거나 빼요. 예전 대화에서 코치가 이미 한 답변에는 더 오래된 값이 남아 있을 수 있어요."
       },
       "showConversations": "대화 보기",
@@ -3173,7 +3272,8 @@
         "steadyLatestAbove": "평소 값: {low} {unit}. 마지막 측정({date}) 값 {value}, 평소보다 높았어요.",
         "steadyLatestBelow": "평소 값: {low} {unit}. 마지막 측정({date}) 값 {value}, 평소보다 낮았어요.",
         "insufficient": "아직 평소 범위를 배우는 중이에요. 며칠 더 기록해 주세요.",
-        "driver": "{note}"
+        "driver": "{note}",
+        "loadError": "평소 범위를 불러오지 못했어요."
       },
       "scope": {
         "prefix": "코치가 이미 보고 있어요: {metric}"
@@ -3257,11 +3357,12 @@
         "provider": "응답 제공자",
         "modelManaged": "이 제공자의 모델은 AI 설정에서 정해요.",
         "noProvider": "사용할 수 있는 제공자가 없어요",
+        "allSettings": "모든 AI 설정",
+        "operatorCodex": "ChatGPT (운영자 공유)",
+        "changeModel": "설정 > AI에서 변경",
         "saving": "저장 중…",
         "saveFailed": "변경 사항을 저장하지 못했어요.",
-        "allSettings": "모든 AI 설정",
         "providerNotActive": "{provider}(으)로 전환하지 못했습니다. 작동하는 로그인이나 키가 없습니다. AI 설정에서 설정하세요.",
-        "operatorCodex": "ChatGPT (운영자 공유)",
         "operatorManaged": "이 연결은 서버 운영자가 관리합니다. 내 공급자를 하나라도 설정하면 그 공급자가 먼저 답합니다."
       },
       "answer": {
@@ -3558,6 +3659,7 @@
       "falls": "회",
       "years": "세",
       "breathingEvents": "회",
+      "standHours": "시간",
       "respiratoryRate": "회/분"
     },
     "sleep": {
@@ -3800,6 +3902,16 @@
         "editTitle": "운동 편집",
         "editAction": "편집",
         "updated": "운동을 업데이트했습니다"
+      },
+      "load": {
+        "title": "훈련 부하",
+        "fitness": "체력",
+        "fatigue": "피로",
+        "form": "컨디션",
+        "explainer": "체력은 심박 기반 훈련 자극을 약 6주 동안, 피로는 약 1주 동안 평균한 값이고, 컨디션은 그 차이입니다. 이 숫자는 다른 사람이나 다른 앱이 아니라 내 과거와 비교하는 값입니다.",
+        "warmingUp": "지금까지 {days}일 기준: 6주가 채워질 때까지는 체력이 실제보다 낮게 나옵니다.",
+        "coverage": "최근 {days}일 중 {rated}일을 평가할 수 있었습니다. 활동 데이터가 없는 날이나 평가할 수 없는 운동이 있는 날은 휴식일로 세지 않고 제외합니다.",
+        "asOf": "{date} 기준, 평가할 수 있었던 마지막 날입니다."
       }
     },
     "bloodGlucose": {
@@ -4214,13 +4326,8 @@
         "metricNextDayRecovery": "다음 날 회복도",
         "metricNextDayRestingHr": "다음 날 안정 시 심박수",
         "metricNextDayHrv": "다음 날 심박변이도",
-        "unitHours": "h",
-        "unitKcal": "kcal",
-        "unitScore": "점",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "detailSameDay": "이 태그를 붙인 {withDays}일의 평균은 {withAvg}{unit}, 붙이지 않은 날의 평균은 {withoutAvg}{unit}.",
-        "detailNextDay": "이 태그를 붙인 {withDays}일의 다음 날 평균은 {withAvg}{unit}, 그 외의 날은 {withoutAvg}{unit}."
+        "detailSameDay": "이 태그를 붙인 {withDays}일의 평균은 {withAvg}, 붙이지 않은 날의 평균은 {withoutAvg}.",
+        "detailNextDay": "이 태그를 붙인 {withDays}일의 다음 날 평균은 {withAvg}, 그 외의 날은 {withoutAvg}."
       },
       "factorCrosstab": {
         "title": "직접 평가한 요인과 생체 지표",
@@ -4232,15 +4339,8 @@
         "metricHrv": "심박변이도",
         "metricWeight": "체중",
         "metricBloodPressureSys": "수축기",
-        "unitHours": "h",
-        "unitScore": "점",
-        "unitSteps": "걸음",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "unitKg": "kg",
-        "unitMmHg": "mmHg",
-        "detail": "{factor} 평가가 낮았던 {lowDays}일의 평균은 {lowAvg}{unit}, 높게 평가한 날의 평균은 {highAvg}{unit}.",
-        "detailInverse": "{factor} 상태가 나빴던 {lowDays}일의 평균은 {lowAvg}{unit}, 좋았던 날의 평균은 {highAvg}{unit}."
+        "detail": "{factor} 평가가 낮았던 {lowDays}일의 평균은 {lowAvg}, 높게 평가한 날의 평균은 {highAvg}.",
+        "detailInverse": "{factor} 상태가 나빴던 {lowDays}일의 평균은 {lowAvg}, 좋았던 날의 평균은 {highAvg}."
       },
       "discovery": {
         "title": "눈에 띄는 점",
@@ -4253,7 +4353,12 @@
         "outcomeDown": "기분이 좋으면 다음 날 {factor} 값은 낮은 편이에요.",
         "stat": "짝지은 {n}일, r = {r}, q = {q}",
         "statLabel": "계산 방법",
-        "explainerLabel": "계산 방법"
+        "explainerLabel": "계산 방법",
+        "channel": {
+          "ALCOHOL": "음주",
+          "WORKOUT_MINUTES": "운동 시간",
+          "TRAINING_LOAD": "훈련 부하"
+        }
       },
       "inTargetTitle": "내 범위 안",
       "dimensions": {
@@ -4290,7 +4395,8 @@
         "caveat": "이건 내 지난 날들과의 비교일 뿐, 그날이 왜 그렇게 흘러갔는지에 대한 설명은 아니에요.",
         "learning": "학습 중이에요: {threshold}일 중 {entries}일 기록했어요. 충분히 모이면 비교가 나타나요.",
         "noPattern": "지금까지 기록한 {entries}일 중에는 하루를 견줄 만큼 일정한 패턴이 없어요. 하루의 맥락까지 함께 남기면 비교할 수 있는 게 늘어나요.",
-        "featureValue": "{field}: {value}"
+        "featureValue": "{field}: {value}",
+        "loadError": "내 패턴상 예상값을 불러오지 못했어요."
       },
       "patterns": {
         "title": "기분 패턴",
@@ -4389,6 +4495,10 @@
             "consistency": "일관성",
             "timing": "타이밍",
             "composition": "구성"
+          },
+          "gap": {
+            "fewNights": "아직 밤이 부족해요 ({needed}일 중 {count}일)",
+            "noMainSleep": "최근 하루는 낮잠만 있었어요"
           }
         },
         "READINESS": {
@@ -4656,7 +4766,10 @@
       "description": "몸이 얼마나 회복했는지: 웨어러블이 밤사이 기록한 회복·부하 신호예요.",
       "scoreCrossLink": "종합 회복 점수 보기",
       "emptyTitle": "아직 회복 데이터가 없어요",
-      "empty": "아직 여기에 표시할 내용이 없어요. 이 페이지는 WHOOP과 Polar가 기록하는 충전, 부하, 운동량 값과 Oura의 회복 탄력성 단계를 보여줘요. Oura의 준비도(Readiness)는 위에 연결된 회복 점수에 표시돼요.",
+      "empty": "이 페이지에는 WHOOP 또는 Polar의 회복, 부하, 훈련 부하 값과 Oura의 회복탄력성 수준이 표시돼요.",
+      "emptyOuraPermission": "Oura의 회복탄력성 수준에는 스트레스 데이터 권한이 필요하니, 연동에서 Oura를 한 번 다시 연결하고 허용해 주세요.",
+      "emptyOuraNoResilience": "Oura가 연결되어 있으며, Oura가 회복탄력성 수준을 제공하는 즉시 여기에 표시돼요.",
+      "emptyAction": "통합 열기",
       "block": {
         "ansChargeExplainer": "오늘 하루를 맞을 자율신경계의 충전 상태예요. 밤사이 심장·호흡 신호에서 읽어낸 재충전 지표예요.",
         "dayStrainExplainer": "기기의 부하 척도로 본 하루 전체의 심혈관 부하예요. 그 자체를 목표로 삼지 말고 회복과 견줘 보세요.",
@@ -4665,7 +4778,8 @@
         "averageHeartRateExplainer": "웨어러블이 보고한 하루 또는 주기 전체의 평균 심박수예요.",
         "maxHeartRateExplainer": "웨어러블이 보고한 하루 또는 주기 전체의 최고 심박수예요.",
         "energyExpenditureKjExplainer": "기기가 자체 단위로 보고한, 하루 동안 몸이 쓴 에너지예요(킬로줄)."
-      }
+      },
+      "loadError": "회복 값을 불러오지 못했어요."
     },
     "bodyTempDeviation": {
       "title": "체온 편차",
@@ -4705,7 +4819,8 @@
       "shiftDown": "{vital}: 최근 평소 수준보다 내려갔어요.",
       "rangeContext": "지금 {value}, 평소 {low}–{high}.",
       "rangeContextTimeOfDay": "지금 {value}, 이 시간대 평소 {low}–{high}.",
-      "shiftContext": "이전엔 약 {before}, 이후엔 {after}."
+      "shiftContext": "이전엔 약 {before}, 이후엔 {after}.",
+      "shiftDays": "이전 {before}일과 이후 {after}일 기준입니다."
     },
     "breathingScreening": {
       "sectionTitle": "수면 중 호흡",
@@ -5160,7 +5275,7 @@
         "changeInSettings": "설정, 계정에서 변경",
         "cta": "확인하고 계속",
         "managedTitle": "내가 돌보는 사람",
-        "managedBody": "이 기록에는 별도의 로그인이 없으며 내 계정에서 관리합니다. 만들려면 내 계정에 2차 인증이 필요합니다.",
+        "managedBody": "이 기록에는 별도의 로그인이 없으며 내 계정에서 관리합니다. 만들려면 내 계정에 2차 인증 또는 패스키가 필요합니다.",
         "managedCreate": "프로필 만들고 마치기",
         "managedLater": "나중에 설정, 공유 접근에서 만들 수도 있습니다.",
         "finishWithoutProfile": "프로필 없이 마치기"
@@ -5285,12 +5400,17 @@
       "groups": {
         "account": "계정",
         "yourData": "내 데이터",
-        "display": "화면",
         "healthProfile": "건강 프로필",
         "ai": "AI",
         "connectivity": "연결",
-        "system": "시스템"
-      }
+        "system": "시스템",
+        "tracking": "기록",
+        "arrangement": "배치",
+        "notifications": "알림",
+        "connections": "연결",
+        "data": "데이터"
+      },
+      "allSections": "모든 항목"
     },
     "sharedRecord": {
       "managedSettings": {
@@ -5402,8 +5522,15 @@
       "unavailableTitle": "이 공유 기록에서는 사용할 수 없어요",
       "unavailableDescription": "다른 사람의 기록을 보는 동안에는 이 설정 영역을 사용할 수 없어요.",
       "integrationStatusDescription": "이 관리 기록의 연결 상태예요.",
-      "integrationStatusDetail": "관리 프로필은 연결된 서비스를 상태로만 보여 줘요. 보호자는 연결, 다시 연결, 동기화, 연결 해제를 할 수 없어요.",
-      "integrationStatusDocs": "공유 방식 알아보기"
+      "integrationStatusDetail": "여기서 연결한 서비스의 데이터는 내 기록이 아니라 {name}의 기록으로 들어가요. 프로필에 자체 앱이 없으면 내 앱을 사용해요.",
+      "integrationStatusDocs": "공유 방식 알아보기",
+      "integrationConnectsFor": "{name}을(를) 위해 연결",
+      "integrationConnectFor": "{name}을(를) 위해 연결하기",
+      "integrationDisconnect": "연결 해제",
+      "integrationDisconnectTitle": "{name}에서 {provider} 연결을 해제할까요?",
+      "integrationDisconnectBody": "새 데이터가 더 이상 들어오지 않아요. 이미 가져온 데이터는 {name}의 기록에 남아요.",
+      "integrationNoClientApp": "{name}과(와) 내 계정 모두 아직 {provider} 앱이 없어요. 먼저 내 통합 설정에서 앱을 설정해 주세요.",
+      "integrationConnectFailed": "{provider} 연결을 시작하지 못했어요."
     },
     "sections": {
       "account": {
@@ -5424,11 +5551,25 @@
         "remindersHeading": "알림",
         "matrixLink": "채널별 알림",
         "channelsLink": "전송 채널",
-        "displayHeading": "휴대폰에서"
+        "displayHeading": "휴대폰에서",
+        "elsewhere": {
+          "title": "해당 위치에서 설정",
+          "description": "이 리마인더는 관련 항목 옆에서 설정합니다.",
+          "doses": {
+            "title": "약 복용",
+            "description": "복용 시간과 리마인더는 각 약에서 설정합니다.",
+            "link": "약 열기"
+          },
+          "cycle": {
+            "title": "주기",
+            "description": "생리와 가임기 리마인더는 알림 표에서 채널별로 켭니다.",
+            "link": "알림 표 열기"
+          }
+        }
       },
       "layout": {
-        "title": "화면 구성",
-        "backToHub": "화면 구성으로 돌아가기",
+        "title": "배치",
+        "backToHub": "배치로 돌아가기",
         "dashboard": {
           "title": "대시보드",
           "description": "타일 배치와 순서."
@@ -5437,7 +5578,7 @@
           "title": "인사이트",
           "description": "개요 섹션과 내비게이션 칩 순서."
         },
-        "subtitle": "대시보드, 인사이트, 기록 모듈에 무엇을 어떤 순서로 보여줄지 정해요.",
+        "subtitle": "대시보드, 인사이트, 기록 목록의 순서와 보기를 정하세요.",
         "medications": {
           "title": "복약",
           "description": "목록 보기와 수동 순서."
@@ -5453,10 +5594,6 @@
         "vorsorge": {
           "title": "건강검진",
           "description": "목록 보기와 알림 순서."
-        },
-        "mood": {
-          "title": "기분 태그",
-          "description": "기분 선택기의 그룹, 태그, 보관된 태그."
         },
         "documents": {
           "title": "문서",
@@ -5601,7 +5738,7 @@
             "passphrasePlaceholder": "암호문구 (12자 이상)",
             "passphraseHelp": "Argon2id로 보관 파일 키를 만들고 AES-256-GCM으로 봉인해요. 파일은 .hlx 확장자로 저장해 주세요.",
             "noRecoveryWarning": "복구 수단이 없어요. 이 암호문구를 잃어버리면 보관 파일을 열 수 없어요. 안전한 곳에 보관해 주세요.",
-            "detail": "주간 자동 백업과 같은 형식이에요. 아직 담기지 않는 기록 유형이 있고, 파일의 매니페스트에 무엇이 들었는지 적혀 있어요.",
+            "detail": "보관하고 읽기 위한 기록의 휴대용 사본이에요. 값은 일반 JSON으로, 문서는 메타데이터만 들어 있어요. 이 서버가 계정을 되돌리려고 보관하는 주간 계정 사본이 아니며, 다른 서버에서 계정을 다시 만들 수 없어요. 아직 포함되지 않는 기록 유형도 있어요. 파일의 매니페스트에 들어 있는 항목이 나와요.",
             "contents": "측정, 복약, 기분, 생리 주기, 검사, 아픈 날 에피소드, 알레르기, 가족력, 영양, 운동, 건강 프로필, 사용자 지표를 JSON 파일 하나에."
           }
         },
@@ -5647,7 +5784,7 @@
             "cycleDaysFailed": "생리 주기 {count}일치를 쓰지 못했어요: {reason}"
           },
           "json": {
-            "title": "JSON 파일",
+            "title": "측정값과 기분 (JSON)",
             "description": "측정과 기분 기록이 담긴 JSON을 붙여 넣거나 .json 파일을 올려 주세요.",
             "pasteLabel": "JSON 붙여 넣기",
             "fileInputLabel": "불러올 JSON 파일 선택",
@@ -5663,8 +5800,11 @@
             "readFailed": "파일을 읽지 못했어요.",
             "resultSummary": "측정 {measurements}개와 기분 기록 {moods}개를 불러왔고, {skipped}개는 건너뛰었어요.",
             "resultSuccess": "측정 {measurements}개와 기분 기록 {moods}개를 불러왔어요",
+            "droppedLinks": "이 계정에 같은 이름의 태그가 없어 다음 태그 없이 가져왔습니다: {keys}",
+            "keptLabels": "이 계정에는 이미 같은 키의 태그나 그룹이 자체 이름으로 있어서 그대로 유지했어요: {keys}",
             "resultNothing": "불러온 게 없어요. {skipped}개 기록을 모두 건너뛰었어요.",
-            "resultEmpty": "그 파일에는 측정도 기분 기록도 없었어요."
+            "resultEmpty": "그 파일에는 측정도 기분 기록도 없었어요.",
+            "limitsHint": "최대 {mb}MB, 목록마다 최대 {rows}개 항목까지 가능해요. 기록에 항목을 추가할 뿐이며, 전체 백업을 복원하지는 않아요."
           },
           "csv": {
             "title": "CSV 파일",
@@ -5810,7 +5950,7 @@
             }
           }
         },
-        "subtitle": "데이터를 내보내거나 백업에서 불러와요."
+        "subtitle": "데이터를 내보내거나, 다른 앱과 파일에서 측정값과 기록을 가져와요."
       },
       "about": {
         "title": "앱 정보",
@@ -5848,7 +5988,28 @@
         },
         "manageIn": "{section}에서 관리",
         "operatorDisabled": "서버 전체에서 꺼짐",
-        "subtitle": "HealthLog가 앱 전체에서 보여 줄 기록 영역을 골라요."
+        "subtitle": "HealthLog가 앱 전체에서 보여 줄 기록 영역을 골라요.",
+        "backToHub": "모듈로 돌아가기",
+        "openModuleSettings": "모듈 설정",
+        "pages": {
+          "medications": {
+            "title": "약",
+            "description": "순환에서 제외할 주사 부위입니다."
+          },
+          "mood": {
+            "title": "기분 태그",
+            "description": "그룹, 직접 만든 태그, 보관된 태그입니다."
+          },
+          "labs": {
+            "title": "검사",
+            "description": "바이오마커와 검사 보고서용 기기 내 텍스트 인식입니다."
+          },
+          "arrangementTitle": "순서와 보기",
+          "arrangementDescription": "이 목록의 정렬과 보기는 배치에서 설정합니다.",
+          "openArrangement": "배치에서 열기",
+          "moduleSettingsTitle": "모듈 설정",
+          "moduleSettingsDescription": "순서와 보기 외의 설정은 모듈의 페이지에 있습니다."
+        }
       },
       "gesundheitsakte": {
         "title": "건강 기록",
@@ -6202,7 +6363,7 @@
         "resetConfirmBody": "순서가 Codex → OpenAI → Anthropic → 로컬 → 관리자 OpenAI로 돌아가요. 저장한 인증 정보는 그대로예요."
       },
       "activeProviderHeading": "사용 중인 제공자",
-      "activeProviderLabel": "기본 제공자",
+      "activeProviderLabel": "설정할 제공자",
       "providerSelect": {
         "codex": "ChatGPT 계정 (Codex)",
         "openai": "OpenAI (내 API 키)",
@@ -6407,9 +6568,10 @@
           "medium": "보통",
           "high": "높음"
         },
-        "coachNote": "코치에서는 코치 설정의 사고 깊이가 적용됩니다."
+        "coachNote": "코치에서는 코치 설정의 사고 깊이가 적용됩니다.",
+        "backgroundNote": "일일 브리핑 같은 백그라운드 작업은 이 설정을 쓰지 않습니다. 최대 보통 수준으로 생각하며, 운영자가 더 낮은 한도를 정하면 그보다 낮게, 절약 단계에서는 전혀 생각하지 않습니다."
       },
-      "providerCardDescription": "HealthLog가 가장 먼저 쓰는 제공자와 그 키, 모델이에요.",
+      "providerCardDescription": "제공자마다 키와 모델을 설정하고, 아래 순서로 HealthLog가 먼저 쓸 제공자를 정해요.",
       "runtimeTitle": "확인 및 새로고침",
       "usage": {
         "title": "AI 사용량",
@@ -6436,6 +6598,14 @@
         "followsDefault": "서버 기본값({level})을 따르고 있어요.",
         "useDefault": "서버 기본값 사용({level})",
         "saveError": "단계를 저장하지 못했어요. 다시 시도해 주세요."
+      },
+      "removeKey": {
+        "label": "API 키 삭제",
+        "title": "저장된 API 키를 삭제할까요?",
+        "body": "HealthLog가 저장된 키를 삭제하며 되돌릴 수 없어요. 계속 쓰려면 키를 다시 입력하세요.",
+        "confirm": "API 키 삭제",
+        "done": "API 키를 삭제했어요.",
+        "failed": "API 키를 삭제하지 못했어요."
       }
     },
     "dashboard": {
@@ -6487,7 +6657,8 @@
       "nocode": "Withings가 인증 코드를 보내지 않았어요. 다시 시도하고 Withings 창에서 접근을 허용해 주세요.",
       "nocreds": "저장된 Withings API 자격 증명이 없어요. 클라이언트 ID와 클라이언트 시크릿을 먼저 저장한 뒤 다시 연결해 주세요.",
       "token": "Withings와의 토큰 교환에 실패했어요. 클라이언트 ID와 클라이언트 시크릿을 확인하고 다시 시도해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 Withings 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Withings 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "withingsSynchronize": "동기화",
     "withingsDisconnect": "연결 해제",
@@ -6526,7 +6697,8 @@
       "nocode": "WHOOP이 인증 코드를 보내지 않았어요. 다시 시도하고 WHOOP 창에서 접근을 허용해 주세요.",
       "nocreds": "WHOOP이 설정되지 않았어요. 위에 WHOOP OAuth 자격 증명을 추가하고 다시 시도해 주세요.",
       "token": "WHOOP과의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 WHOOP 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 WHOOP 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "fitbit": "Fitbit",
     "fitbitTag": "Fitbit & Pixel",
@@ -6605,7 +6777,8 @@
       "nocode": "Google이 인증 코드를 보내지 않았어요. 다시 시도하고 Google 창에서 접근을 허용해 주세요.",
       "nocreds": "Google Health가 설정되지 않았어요. 위에 Google OAuth 자격 증명을 추가하고 다시 시도해 주세요.",
       "token": "Google과의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 Google 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Google 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "fitbitOauthError": {
       "csrf1": "브라우저 쿠키가 없어서 보안 확인에 실패했어요. 같은 브라우저에서 연결을 다시 시작해 주세요.",
@@ -6615,7 +6788,9 @@
       "nocode": "Fitbit이 인증 코드를 보내지 않았어요. 다시 시도하고 Fitbit 창에서 접근을 허용해 주세요.",
       "nocreds": "Fitbit이 설정되지 않았어요. 위에 Fitbit OAuth 자격 증명을 추가하고 다시 시도해 주세요.",
       "token": "Fitbit과의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 생겼어요. 연결을 다시 시작해 주세요.",
+      "retired": "Google이 Fitbit Web API를 종료해서 새 Fitbit 연결을 만들 수 없어요. 같은 기기의 데이터를 읽는 Google Health를 대신 연결해 주세요.",
+      "already_linked": "이 Fitbit 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Fitbit 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "integrations": {
       "withings": {
@@ -6652,27 +6827,20 @@
           "items": {
             "vo2max": "VO2 max",
             "cardio_age": "심혈관 나이",
-            "resilience": "회복탄력성"
+            "resilience": "회복탄력성",
+            "workout": "운동",
+            "heartrate": "심박수"
           }
         }
       }
     },
     "integrationPill": {
-      "connected": "연결됨",
-      "errorReconnect": "오류: 다시 연결",
-      "warningServerError": "동기화 실패 중",
-      "failureCount": "{count}/{threshold}",
-      "parkedReconnect": "일시중지: 다시 연결",
-      "notConnected": "연결 안 됨",
       "justNow": "방금",
       "minutesAgo": "{count}분 전",
       "hoursAgo": "{count}시간 전",
       "daysAgo": "{count}일 전",
       "resumeSuccess": "연동을 다시 시작했어요",
-      "resumeError": "다시 연결하지 못했어요",
-      "stale": "연결됨, 최근 데이터 없음",
-      "stalled": "동기화 멈춤",
-      "pendingSetup": "첫 데이터 기다리는 중"
+      "resumeError": "다시 연결하지 못했어요"
     },
     "integrationFreshness": {
       "title": "받은 데이터",
@@ -6696,7 +6864,14 @@
       "detail": "토큰은 한 번만 표시돼요.",
       "scopeNote": "본인 기록에 새 측정값을 추가하는 것만 할 수 있어요. 데이터를 읽거나, 무언가를 고치거나 지우거나, 다른 토큰을 만들 수는 없어요. 측정값은 외부 기기에서 온 것으로 표시되니 나중에 구분할 수 있고, 언제든 고칠 수 있어요.",
       "createFailed": "토큰을 만들지 못했어요. 다시 시도해 주세요.",
-      "namePlaceholder": "이름 (예: Home Assistant)"
+      "namePlaceholder": "이름 (예: Home Assistant)",
+      "appleHealth": {
+        "label": "측정값을 Apple Health에 기록",
+        "createHint": "그러면 iPhone의 HealthLog 앱이 이 토큰의 측정값을 Apple Health에 추가해요. 나중에 아래 토큰 목록에서 바꿀 수 있어요.",
+        "toggleAria": "{name}의 측정값을 Apple Health에 기록",
+        "updateFailed": "Apple Health 설정을 바꾸지 못했어요. 다시 시도해 주세요.",
+        "unattributed": "이 설정이 생기기 전에 보낸 측정값은 토큰과 연결할 수 없어서 Apple Health에 기록되지 않아요."
+      }
     },
     "workoutsToken": {
       "title": "운동 토큰",
@@ -6753,10 +6928,12 @@
     "deleteAccountCardDescription": "패스키, 감사 로그, 세션까지 함께 계정을 삭제해요.",
     "deleteAccountCta": "계정 삭제",
     "deleteAccountConfirmTitle": "계정을 영구히 삭제할까요?",
-    "deleteAccountConfirmDescription": "계정과 모든 건강 데이터, 패스키, 세션, 감사 기록이 영구히 삭제돼요. 삭제 직후 로그아웃돼요.",
+    "deleteAccountConfirmTitleGrace": "계정을 삭제할까요?",
+    "deleteAccountConfirmDescription": "계정과 모든 건강 데이터, 패스키, 세션, 감사 기록이 영구히 삭제돼요. 삭제 직후 로그아웃돼요. 이 서버 백업에 남은 사본은 보관 기간이 지나면 사라져요.",
     "deleteAccountSuccess": "계정을 삭제했어요. 로그아웃할게요.",
     "deleteAccountFailed": "계정을 삭제하지 못했어요",
     "deleteAccountFinal": "영구 삭제",
+    "deleteAccountFinalGrace": "계정 삭제",
     "saved": "저장됨",
     "savingError": "저장 중 오류",
     "about": {
@@ -6856,7 +7033,7 @@
       "errorRateLimit": "이번 시간의 내보내기 한도에 도달했어요.",
       "errorModuleDisabled": "이 계정에서는 건강 기록 내보내기가 꺼져 있어요.",
       "visitOffer": "{when}에 예정된 진료가 있어요: {what}.",
-      "visitOfferApply": "그날까지로 리포트 만들기"
+      "visitOfferApplyWindow": "이 기간 사용하기"
     },
     "globalExcludedInjectionSitesLabel": "전체 제외 주사 부위",
     "globalExcludedInjectionSitesHint": "약이 선호하더라도 용량을 기록할 때 추천하지 않고 선택도 막아요.",
@@ -6914,7 +7091,9 @@
       "reselectReason": "이 링크는 선택한 적 없는 범위를 제공하고 있어서 닫았어요. 새로 만들고 담을 내용을 골라 주세요.",
       "reselectAction": "새 링크 만들기",
       "createDetail": "토큰은 만들 때 한 번만 보여줘요. 그때 저장해 두세요. 복구할 수 없어요.",
-      "activeDescription": "공유한 링크와 만료 시점, 열람 횟수를 보여줘요."
+      "activeDescription": "공유한 링크와 만료 시점, 열람 횟수를 보여줘요.",
+      "revokedToast": "링크를 해지했어요.",
+      "revokeFailed": "링크를 해지하지 못했어요."
     },
     "genderOther": "기타",
     "nightscout": "Nightscout",
@@ -6966,7 +7145,8 @@
       "nocreds": "이 서버에는 Polar가 설정돼 있지 않아요. 관리자에게 Polar OAuth 자격 증명을 추가해 달라고 요청하세요.",
       "token": "Polar와의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
       "rate_limited": "연결 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 Polar 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Polar 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "oura": "Oura",
     "ouraDescription": "Oura 계정을 연결해 준비도, 수면 단계, 심박변이도, 일일 활동을 동기화해요.",
@@ -6996,25 +7176,24 @@
       "token": "Oura와의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
       "rate_limited": "연결 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.",
       "issuer": "로그인 응답이 Oura의 인증 서버에서 오지 않아서 안전을 위해 연결을 중단했어요. 연결을 다시 시작해 주세요. 계속 발생하면 관리자에게 알려 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 Oura 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Oura 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "integrationSetupGuide": "설정 가이드",
     "coach": {
-      "activate": {
-        "title": "코치 활성화",
-        "description": "코치 버튼과 패널을 표시해요.",
-        "toggleAria": "코치 버튼과 패널 활성화",
-        "savedOn": "코치를 켰어요.",
-        "savedOff": "코치를 숨겼어요.",
-        "saveError": "변경 사항을 저장하지 못했어요. 다시 시도해 주세요."
-      },
       "memory": {
         "edit": "편집",
         "source": {
           "user": "내가 알려 줌",
           "coach": "코치가 기억함"
         }
-      }
+      },
+      "state": {
+        "title": "코치",
+        "description": "코치 버튼과 패널 표시 여부입니다. 스위치는 모듈에 있습니다."
+      },
+      "nudgesMoved": "알림에서 다른 리마인더와 함께 설정합니다.",
+      "openNudges": "알림에서 열기"
     },
     "integrationRedirectGuide": {
       "intro": "직접 만든 {provider} 개발자 앱으로 연결해요. 설정에 5분쯤 걸려요:",
@@ -7101,7 +7280,9 @@
         "lastUsed": "마지막 사용 {date}",
         "neverUsed": "사용한 적 없음",
         "added": "{date} 추가됨",
-        "nameLabel": "보안 키 이름"
+        "nameLabel": "보안 키 이름",
+        "addedToast": "보안 키를 추가했어요.",
+        "removedToast": "보안 키를 삭제했어요."
       },
       "passkeyNudge": {
         "title": "패스키를 추가하면 더 빠르게 로그인해요",
@@ -7147,36 +7328,43 @@
         "profile": "프로필, 병력, 건강 기록 정보",
         "modules": "모듈별 기록: {list}"
       },
+      "workoutRoutes": {
+        "title": "운동 경로",
+        "description": "iPhone 앱과 Apple 건강 내보내기에서 새 운동의 GPS 경로를 저장합니다.",
+        "detail": "새 계정에서는 꺼져 있어요. 경로는 사는 곳, 일하는 곳, 운동하는 곳을 보여 주므로 이 설정을 켠 뒤에만 저장됩니다. 운동 기록은 항상 저장되며, 어떤 AI 기능도 경로를 읽지 않습니다. 끄면 새 경로 저장이 멈추고, 이미 저장된 경로는 운동을 삭제할 때까지 남습니다.",
+        "loadError": "경로 설정을 불러오지 못했습니다."
+      },
       "retention": {
         "title": "보관 기간",
         "description": "자동 정리 전까지 기간이 정해진 기록을 얼마나 보관하는지예요.",
         "coach": "코치 대화: {days}일 보관",
         "audit": "보안 활동 기록: {days}일 보관",
         "delivery": "알림 발송 기록: {days}일 보관",
-        "unavailable": "지금은 보관 기간 정보를 볼 수 없어요."
-      },
-      "export": {
-        "title": "내 데이터 내려받기",
-        "description": "기록을 CSV나 JSON으로, 또는 진료용 전체 건강 기록으로 받을 수 있어요.",
-        "openExport": "내보내기·백업",
-        "openHealthRecord": "건강 기록"
+        "unavailable": "지금은 보관 기간 정보를 볼 수 없어요.",
+        "accountDeletion": "계정, 관리 프로필 또는 모든 데이터 삭제: {days}일 뒤에 완료",
+        "accountDeletionImmediate": "계정, 관리 프로필 또는 모든 데이터 삭제: 즉시 완료"
       },
       "delete": {
         "title": "삭제 또는 초기화",
         "description": "계정을 완전히 없애거나, 계정은 두고 건강 기록만 지워요.",
-        "backupLag": "삭제하면 데이터는 즉시 지워져요. 이 서버가 암호화된 외부 백업을 보관한다면 그 저장소에 있는 데이터 사본도 곧바로 삭제되고, 저장소에 연결할 수 없으면 다음 야간 실행 때 삭제돼요.",
-        "openAdvanced": "삭제 또는 초기화"
+        "openAdvanced": "삭제 또는 초기화",
+        "immediateNotice": "삭제하면 데이터는 즉시 지워져요. 이 서버가 암호화된 외부 백업을 보관한다면 그 저장소에 있는 데이터 사본도 곧바로 삭제되고, 저장소에 연결할 수 없으면 다음 야간 실행 때 삭제돼요. 이 서버 백업에 남은 사본은 보관 기간이 지나면 사라져요.",
+        "graceNotice": "계정을 삭제하면 바로 잠기고 {days}일 뒤에 이 서버가 보관하는 모든 사본, 서버 밖에 암호화해 둔 사본까지 함께 완전히 지워져요. 그때까지는 이 서버의 관리자가 삭제를 취소할 수 있어요. 모든 데이터 삭제도 같은 방식이에요. 기록의 사본이 {days}일 동안 보관되어 관리자가 복원할 수 있어요. 이 서버 백업에 남은 사본은 보관 기간이 지나면 사라져요."
       },
       "posture": {
         "title": "개인정보 보호 수준",
         "description": "AI 기능에 데이터를 어디까지 공유할지 정해요.",
         "openAi": "AI 개인정보 모드"
+      },
+      "sessions": {
+        "title": "세션 및 기기",
+        "description": "로그인된 위치, 2단계 인증을 건너뛰는 기기, 계정의 보안 활동을 확인해요.",
+        "open": "보안 열기"
       }
     },
     "mcp": {
       "enableTitle": "원격 MCP 엔드포인트",
       "enableDescription": "MCP를 지원하는 어시스턴트(Claude.ai, ChatGPT)가 범위가 제한된 토큰으로 건강 데이터를 읽게 해요.",
-      "enableToggleLabel": "MCP 엔드포인트 켜기",
       "endpointLabel": "커넥터 URL",
       "connectDescription": "어시스턴트의 커스텀 커넥터 설정에 이 URL을 붙여 넣고, 아래 토큰으로 인증하거나 안내가 나오면 로그인하세요.",
       "tokensTitle": "커넥터 토큰",
@@ -7195,7 +7383,8 @@
       "connectionRevokeFailed": "어시스턴트 연결을 해제하지 못했어요.",
       "connectionsDetail": "연결을 해지하면 갱신 권한까지 포함해 접근이 즉시 끊겨요.",
       "tokensDetail": "토큰은 한 번만 보여줘요.",
-      "tokenNamePlaceholder": "이름 (예: Claude Desktop)"
+      "tokenNamePlaceholder": "이름 (예: Claude Desktop)",
+      "offKeepsTokens": "끄면 엔드포인트가 일시 중지됩니다. 토큰과 연결은 그대로 남고 다시 켜면 다시 작동합니다."
     },
     "strava": "Strava",
     "stravaDescription": "Strava 계정을 연결해 활동을 운동 기록으로 동기화해요.",
@@ -7224,7 +7413,8 @@
       "nocreds": "이 서버에는 Strava가 설정돼 있지 않아요. 관리자에게 Strava API 자격 증명을 추가해 달라고 요청하세요.",
       "token": "Strava와의 토큰 교환에 실패했어요. 연결을 다시 시작해 주세요.",
       "rate_limited": "연결 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.",
-      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요."
+      "generic": "연결 중 알 수 없는 오류가 났어요. 연결을 다시 시작해 주세요.",
+      "already_linked": "이 Strava 계정은 이미 다른 HealthLog 프로필에 연결되어 있어요. 이 프로필의 Strava 계정으로 로그인하거나, 먼저 다른 프로필에서 연결을 해제해 주세요."
     },
     "appleHealth": {
       "title": "Apple Health",
@@ -7263,8 +7453,10 @@
         "lastReceived": "마지막 수신 {relative}",
         "lastNewValue": "마지막 새 값 {relative}",
         "lastBackground": "마지막 백그라운드 수신 {relative}",
+        "lastDuplicate": "새 값 없이 마지막 재전송 {relative}",
         "never": "아직 수신되지 않음",
-        "lastBackfill": "기록 보충 {relative}"
+        "lastBackfill": "기록 보충 {relative}",
+        "lastEnteredHere": "여기에서 마지막 입력 {relative}"
       }
     },
     "garminInfo": {
@@ -7323,6 +7515,7 @@
     "emailChangePassword": "현재 비밀번호 (이메일 주소를 변경하려면 필요)",
     "reproof": {
       "description": "건강 데이터를 공유하거나 내보내는 작업입니다. 계속하려면 본인임을 확인하세요.",
+      "descriptionChange": "본인만 변경할 수 있어야 하는 항목을 변경합니다. 계속하려면 본인임을 확인하세요.",
       "signInAgain": "다시 로그인한 후 한 번 더 시도하세요. 이 계정에는 여기서 확인할 비밀번호나 패스키가 없습니다.",
       "failed": "확인하지 못했습니다. 입력한 내용을 확인하고 다시 시도하세요."
     },
@@ -7397,6 +7590,10 @@
         "causePermission": "권한",
         "failureStreak": "연속 실패: {threshold}회 중 {count}회",
         "copyFailed": "복사하지 못했어요. 텍스트를 선택해서 직접 복사해 주세요."
+      },
+      "historyEnds": {
+        "horizon": "{type}: {date}까지 가져왔습니다. 그보다 오래된 기록은 가져오기 한도를 넘습니다.",
+        "noProgress": "{type}: {date}까지 가져왔습니다. Google이 더 오래된 기록을 반환하지 않아 가져오기가 여기서 끝났습니다."
       }
     },
     "dawarich": "Dawarich",
@@ -7438,7 +7635,33 @@
       "homePlaceUnknown": "Dawarich 인스턴스에 이 장소가 더 이상 없습니다.",
       "notConnected": "Dawarich가 연결되어 있지 않습니다.",
       "generic": "실패했습니다. 다시 시도하세요."
-    }
+    },
+    "fitbitRetirement": {
+      "ending": "Google이 {date}에 Fitbit Web API를 종료해요. 그 이후로 이 연결은 더 이상 동기화되지 않아요.",
+      "ended": "Google이 {date}에 Fitbit Web API를 종료했어요. 이 연결은 더 이상 동기화되지 않아요.",
+      "move": "Google Health는 같은 Fitbit 및 Pixel 기기의 데이터를 읽어요. 데이터를 계속 받으려면 아래에서 연결해 주세요. Fitbit 연결은 옮길 수 없어서 Google이 동의를 한 번 더 요청해요. 이미 가져온 데이터는 모두 그대로 남아요.",
+      "toCard": "Google Health로 이동",
+      "guide": "Google Health 연결 방법",
+      "badgeEnding": "종료 예정",
+      "badgeEnded": "종료됨"
+    },
+    "passkeyAddedToast": "패스키를 추가했어요.",
+    "passkeyRemovedToast": "패스키를 삭제했어요.",
+    "integrationDisconnected": "{provider} 연결을 해제했어요.",
+    "integrationDisconnectFailed": "{provider} 연결을 해제하지 못했어요.",
+    "timezoneSaved": "시간대를 저장했습니다.",
+    "moduleState": {
+      "on": "켜짐",
+      "off": "꺼짐",
+      "change": "모듈에서 변경"
+    },
+    "timezoneUseDevice": "이 기기의 시간대 사용 ({zone})",
+    "dangerZoneConfirmDescriptionGrace": "기록에 있는 모든 것이 삭제돼요: 측정값, 약, 기분 기록, 검사 결과, 주기 기록, 문서, AI 대화, 모든 연동 연결과 여기서 파생된 데이터, 앞서 삭제한 데이터까지 전부요. 의사에게 준 공유 링크도 바로 작동을 멈춰요. 계정은 그대로 남고, 로그인에 쓰는 자격 증명과 언어·시간대·단위 같은 표시 설정도 유지돼요. 기록의 사본은 {days}일 동안 보관되므로, 그때까지는 이 서버의 관리자가 복원할 수 있어요. 그 후에는 삭제가 최종적으로 확정돼요.",
+    "deleteAccountCardDetailGrace": "계정은 바로 잠기고 {days}일 뒤에 완전히 지워져요. 그때까지는 이 서버의 관리자가 삭제를 취소할 수 있어요.",
+    "deleteAccountConfirmDescriptionGrace": "바로 로그아웃되고 계정이 잠겨요. {days}일 뒤에는 모든 건강 데이터, 패스키, 세션, 감사 기록과 함께 완전히 지워져요. 그때까지는 이 서버의 관리자가 삭제를 취소할 수 있어요. 이 서버 백업에 남은 사본은 보관 기간이 지나면 사라져요.",
+    "deleteAccountScheduled": "계정이 잠겼고 {date}에 완전히 지워져요. 로그아웃하는 중이에요.",
+    "dangerZoneSuccessGrace": "건강 기록이 삭제됐어요. {date}까지는 이 서버의 관리자가 복원할 수 있어요.",
+    "dangerZoneRestoreLimits": "접근 권한도 끝나요: 다른 사람과 공유한 것, 다른 사람이 나와 공유한 것, 보호자 역할 모두요. 복원하면 기록이 지금 상태로 돌아와요. 삭제 후에 추가된 것은 대체되고, 연동 연결, 공유, 보호자 역할, 공유 링크는 돌아오지 않아서 다시 설정해야 해요."
   },
   "admin": {
     "title": "관리자",
@@ -7545,6 +7768,10 @@
     "offlineGeoLabel": "위치 데이터",
     "offlineGeoEnabled": "오프라인 (GeoLite2)",
     "offlineGeoFallback": "온라인 ({host}). GeoLite2 데이터베이스를 마운트하고 GEOLITE2_DIR을 설정하세요",
+    "heapLimitLabel": "힙 한도",
+    "heapLimitValue": "{mb} MB",
+    "heapLimitLow": "{mb} MB, 부족합니다. .env에 APP_MEMORY_LIMIT=1536m을 설정하세요",
+    "memoryBelowFloor": "컨테이너 {mb} MB, 지원 최소치 {floor} MB 미만입니다. .env에 APP_MEMORY_LIMIT={floor}m을 설정하세요",
     "offlineGeoOff": "꺼짐",
     "offlineGeoChosen": "온라인 ({host})",
     "apiGlobal": "API 엔드포인트와 API 토큰을 허용해요.",
@@ -7707,6 +7934,7 @@
     "tokensEmptyTitle": "아직 API 토큰이 없어요",
     "tokensEmptyDescription": "네이티브 클라이언트가 로그인할 때나 설정 → 계정에서 토큰이 발급돼요.",
     "loginOverviewDescription": "모든 계정의 로그인·인증 이벤트예요. 필터링하고 CSV로 내보낼 수 있어요.",
+    "loginOverviewFilterLabel": "이벤트 필터",
     "allAuthEvents": "전체 인증 이벤트",
     "failedOnly": "실패만",
     "loginEmptyDescription": "로그인, 로그아웃, 패스키 변경이 여기에 표시돼요.",
@@ -7835,6 +8063,7 @@
           "admin": "관리자",
           "user": "사용자"
         },
+        "filterLabel": "사용자 필터",
         "forceLogout": "강제 로그아웃",
         "forceLogoutConfirmTitle": "{name} 강제 로그아웃할까요?",
         "forceLogoutConfirmBody": "이 사용자의 활성 세션이 모두 해제돼요. 모든 기기에서 다시 로그인해야 해요.",
@@ -7843,7 +8072,15 @@
         "cannotLogoutSelf": "자기 자신은 강제 로그아웃할 수 없어요",
         "emptyTitle": "이 화면에 사용자가 없어요",
         "emptyDescription": "현재 필터에 맞는 사용자가 없어요.",
-        "emptyResetFilter": "전체 사용자 보기"
+        "emptyResetFilter": "전체 사용자 보기",
+        "deletionPending": "{date} 삭제 예정",
+        "deletionPendingNoDate": "삭제 예정",
+        "undoDeletion": "삭제 취소",
+        "undoDeletionTitle": "{name} 삭제를 취소할까요?",
+        "undoDeletionBody": "{name} 님이 이 계정의 삭제를 요청했고, 유예 기간이 끝나면 지워져요. 취소하면 계정과 그 안의 모든 내용이 그대로 남아요. {name} 님은 다시 로그인할 수 있지만, API 토큰, 공유 링크, 신뢰하는 기기는 계속 취소된 상태라 다시 설정해야 해요.",
+        "undoDeletionBodyGuardian": "보호자가 관리 프로필 {name}을(를) 삭제했고, 유예 기간이 끝나면 지워져요. 취소하면 프로필과 그 안의 모든 내용이 그대로 남고, 보호자들이 다시 접근할 수 있어요. 공유 링크와 토큰은 계속 취소된 상태라 다시 설정해야 해요.",
+        "undoDeletionDone": "{name} 삭제를 취소했어요",
+        "undoDeletionFailed": "삭제를 취소하지 못했어요"
       },
       "invites": {
         "title": "초대",
@@ -7905,8 +8142,8 @@
       },
       "backups": {
         "title": "백업",
-        "subtitle": "PostgreSQL에 저장되는 주간 사용자별 데이터 스냅샷이에요.",
-        "description": "사용자마다 백업 유형별로 최신 스냅샷 하나를 굴려가며 보관해요. 크기는 암호화된 blob 기준이에요. 내려받기는 요청한 관리자에게만 스냅샷을 복호화해 주고, 암호문은 데이터베이스에 그대로 남아요.",
+        "subtitle": "이 서버의 데이터베이스에 보관된 계정 사본으로, 이 서버에서 계정 하나를 되돌릴 때 써요.",
+        "description": "각 계정에는 매주 일요일마다 교체되는 주간 사본 하나와, 여기서 올린 사본, \"모든 데이터 삭제\" 전에 만든 사본이 있어요. 사본은 이 서버에 있는 계정 하나를 되돌려요. 잃어버린 서버를 다시 만들 수는 없어요. 그러려면 데이터베이스 덤프와 암호화 키가 필요해요. 크기는 암호화된 사본 기준이에요. 다운로드하면 요청한 관리자를 위해 복호화되고, 암호문은 데이터베이스에 남아요.",
         "runNow": "지금 백업",
         "runEnqueued": "백업 작업을 큐에 넣었어요",
         "runFailed": "백업을 큐에 넣지 못했어요",
@@ -7916,12 +8153,11 @@
         "emptyDescription": "백업은 매주 일요일 03:00에 자동으로 돌아요. 지금 실행해서 첫 스냅샷을 만들 수도 있어요.",
         "colUser": "사용자",
         "colType": "유형",
-        "typeWeeklyAuto": "주간 (자동)",
+        "typeWeeklyAuto": "주간 계정 사본",
         "typeManual": "수동",
         "colSize": "크기",
         "colCreatedAt": "최근 스냅샷",
         "colActions": "동작",
-        "retentionLabel": "보관 기간: {days}일",
         "scheduleStaleTitle": "주간 백업이 중단되었습니다",
         "scheduleStaleDescription": "가장 최근의 예약 사본이 {days}일 전 것입니다. 정상적으로 도는 주간 실행은 {threshold}일보다 오래된 사본을 남기지 않습니다.",
         "scheduleFailedTitle": "마지막 예약 백업 실행이 실패했습니다",
@@ -7939,7 +8175,7 @@
         "downloadFailed": "다운로드하지 못했어요",
         "downloadStarted": "다운로드를 시작했어요",
         "uploadTitle": "백업 업로드",
-        "uploadDescription": "백업 파일을 검사한 뒤 수동 스냅샷으로 저장해요. 복원은 별도 단계예요.",
+        "uploadDescription": "계정 사본을 확인하고 이 서버의 사본 옆에 저장해요. 사본의 계정이 이 서버에 있어야 해요. 복원은 별도 단계예요.",
         "uploadButton": "파일 업로드",
         "uploadHelp": "HealthLog 백업 파일(.json 또는 .json.gz)이에요. 업로드 전에 압축되며, 압축된 크기는 최대 512 MB까지 가능해요.",
         "uploadSuccess": "백업을 업로드했어요 (기록 {count}개)",
@@ -7999,7 +8235,7 @@
         "restoreSkippedAccountSetting": "계정 설정",
         "restoreMissingTitle": "복원을 중단했어요. 파일이 불완전해요",
         "restoreMissingDescription": "파일의 매니페스트에는 아래 항목이 들어 있다고 적혀 있는데 실제로는 없어요. 아무것도 바꾸지 않았어요. 복원은 해당 기록 전체를 갈아엎기 때문에, 파일에 없는 항목을 되돌리면 그 항목이 통째로 비워졌을 거예요.",
-        "restoreMissingRemedy": "재해 복구용 스냅샷을 쓰거나, 계정을 다시 내보내서 새 파일을 업로드해 주세요. 매니페스트가 처음부터 '빠졌다'고 표시한 항목은 다른 경우라 정상적으로 복원돼요.",
+        "restoreMissingRemedy": "이 서버의 계정 사본이나 서버 밖 사본을 쓰거나, 계정을 다시 내보내 새 파일을 올려요. 매니페스트에서 생략됐다고 밝힌 섹션은 다른 경우이며 정상적으로 복원돼요.",
         "restoreMissingDocuments": "문서",
         "restoreMissingWorkouts": "운동",
         "restoreMissingMentalHealth": "정신 건강 선별 검사",
@@ -8029,6 +8265,9 @@
         "restoreActive": "이 계정의 복원이 이미 진행 중이에요. 끝날 때까지 기다려 주세요.",
         "restoreJobQueuedTitle": "{username} 복원이 시작을 기다리고 있어요",
         "restoreJobQueuedNote": "백그라운드 작업자가 가져가는 즉시 시작돼요.",
+        "restoreJobWaitingBackupNote": "서버에서 실행 중인 백업을 기다리고 있어요. 복원은 백업과 동시에 실행되지 않으며, 백업이 끝나고 1분쯤 뒤에 시작돼요.",
+        "restoreJobWaitingBusyNote": "가져오기나 야간 작업 같은 서버의 큰 작업이 끝나기를 기다리고 있어요. 그 후 1분쯤 뒤에 시작돼요.",
+        "restoreJobQueuedSince": "{when}부터 대기 중이에요.",
         "restoreJobRunningTitle": "{username} 복원 중",
         "restoreJobRunningNote": "복원이 끝날 때까지 계정에는 기존 데이터가 그대로 보여요. 이 페이지를 떠나도 복원은 서버에서 계속돼요.",
         "restoreJobResumed": "서버가 다시 시작된 뒤 복원을 다시 시작했어요.",
@@ -8049,7 +8288,7 @@
         "restoreFailureOwnerMismatch": "백업 안의 파일이 백업 행과 다른 계정의 것이에요.",
         "restoreFailureOwnerMissing": "이 백업이 속한 계정이 더 이상 없어요.",
         "restoreFailureSectionMissing": "파일이 불완전해요. 매니페스트에 적힌 항목이 파일에 없어요.",
-        "restoreFailureDocument": "휴대용 내보내기처럼 내용 없이 문서만 담긴 파일이에요. 재해 복구용 백업을 사용해 주세요.",
+        "restoreFailureDocument": "이 파일에는 휴대용 내보내기처럼 내용 없이 문서만 들어 있어요. 대신 이 서버의 계정 사본이나 서버 밖 사본을 써요.",
         "restoreFailureTimeBudget": "이 백업은 너무 커서 백그라운드 작업의 시간 제한 안에 복원할 수 없어요.",
         "restoreFailureTransaction": "데이터베이스가 복원 도중에 거부해서 모든 변경을 되돌렸어요. 서버 로그에 오류가 나와 있어요.",
         "restoreFailureCauseTimeout": "복원이 데이터베이스가 허용하는 시간보다 오래 걸려서 모든 변경을 되돌렸어요. 데이터베이스 호스트가 바빴다면 한가할 때 다시 시작하세요. 서버 로그에 해당 단계가 나와 있어요.",
@@ -8070,7 +8309,32 @@
         "restoreSkippedMoodLabelCiphertext": "이 서버에 없는 키로 암호화된 기분 태그 또는 그룹 이름(이름 없이 유지됨)",
         "restoreSkippedVisitCiphertext": "이 서버에 없는 키로 암호화된 진료 또는 의료진 텍스트(해당 내용 없이 유지됨)",
         "restoreSkippedVaccinationCiphertext": "이 서버에 없는 키로 암호화된 예방접종 메모(접종 기록은 메모 없이 유지됨)",
-        "restoreSkippedEnvironmentLocationCiphertext": "이 서버에 없는 키로 암호화된 환경 기간 또는 날짜의 위치(암호화된 채 유지되며 해당 날짜는 새로 가져오지 않음)"
+        "restoreSkippedEnvironmentLocationCiphertext": "이 서버에 없는 키로 암호화된 환경 기간 또는 날짜의 위치(암호화된 채 유지되며 해당 날짜는 새로 가져오지 않음)",
+        "typePreWipe": "모든 데이터 삭제 전",
+        "retentionNote": "주간 사본은 매주 일요일에 교체돼요. \"모든 데이터 삭제\" 전에 만든 사본은 {days}일 뒤에 삭제돼요. 올린 사본은 해당 계정이 지워질 때까지 남아요.",
+        "retentionNoteNoGrace": "주간 사본은 매주 일요일에 교체돼요. 올린 사본은 해당 계정이 지워질 때까지 남아요.",
+        "database": {
+          "title": "데이터베이스 덤프",
+          "lastGood": "마지막 정상 덤프 {when}, {size}, {where}.",
+          "whereBoth": "이 서버와 외부 저장소에 보관됨",
+          "whereLocal": "이 서버에 보관됨",
+          "whereOffhost": "외부 저장소에만 있음",
+          "none": "아직 데이터베이스 덤프가 없습니다. 첫 덤프는 오늘 밤에 실행됩니다.",
+          "failedTitle": "마지막 데이터베이스 덤프가 실패했습니다",
+          "failedDescription": "{when}: {reason}",
+          "disabled": "데이터베이스 덤프가 꺼져 있습니다(DB_BACKUP_ENABLED=false). 다른 방법으로 데이터베이스를 백업하세요.",
+          "noDirectoryOffhost": "이 서버는 {dir}에 쓸 수 없어 덤프가 외부 저장소로만 가고 여기에는 보관되지 않습니다. 백업 볼륨을 마운트하세요.",
+          "noDirectory": "이 서버는 {dir}에 쓸 수 없고 외부 저장소도 설정되지 않아 데이터베이스 덤프를 만들 수 없습니다. 백업 볼륨을 마운트하세요.",
+          "retentionLocal": "삭제된 계정은 덤프가 만료될 때까지 덤프에 남습니다. 이 서버에는 최신 야간 덤프 {nights}개가 보관되고, 마지막 업데이트 전에 만든 덤프는 다음 업데이트까지 남습니다.",
+          "retentionOffhost": "버킷의 수명 주기 규칙이 외부 사본을 {days}일 후에 삭제합니다.",
+          "retentionOffhostMissing": "버킷의 어떤 수명 주기 규칙도 database/를 다루지 않아 그곳의 덤프와 그 안의 삭제된 계정이 절대 삭제되지 않습니다. 이 접두사에 대한 규칙을 추가하세요.",
+          "notPersistentOffhost": "{dir}은(는) 영구 저장소에 있지 않습니다(마운트된 볼륨이 아니라 컨테이너 안이나 메모리에 있음). 그래서 여기에 쓴 덤프는 다음 업데이트 때 사라집니다. 덤프는 외부 저장소로만 가며, 여기에는 보관되지 않고 마이그레이션 전에도 만들어지지 않습니다. 백업 볼륨을 마운트하세요.",
+          "notPersistent": "{dir}은(는) 영구 저장소에 있지 않고(마운트된 볼륨이 아니라 컨테이너 안이나 메모리에 있음) 외부 버킷도 설정되지 않아, 데이터베이스 덤프가 어디에도 보관되지 않습니다. 백업 볼륨을 마운트하세요.",
+          "offhostFailedTitle": "최신 데이터베이스 덤프가 외부 버킷에 도달하지 못했습니다",
+          "offhostLastUpload": "버킷에 있는 최신 덤프는 {when}의 것입니다.",
+          "offhostNeverUploaded": "아직 버킷에 도달한 데이터베이스 덤프가 없습니다."
+        },
+        "restorePreWipeLimits": "이 사본은 계정의 데이터를 삭제하기 전에 만들어졌고, 복원하면 사본이 할 수 있는 만큼 그 삭제를 되돌려요: 그 후에 계정에 추가된 것은 대체되고, 연동 연결, 공유, 보호자 접근, 공유 링크는 돌아오지 않아요."
       },
       "danger-zone": {
         "title": "위험 구역",
@@ -8136,7 +8400,10 @@
         "columnsHide": "표 숨기기",
         "columnsShowAll": "열 {count}개 모두 보기",
         "columnsShowWithRows": "행이 있는 열만",
-        "columnsNoneWithRows": "아직 행이 있는 암호화 열이 없어요."
+        "columnsNoneWithRows": "아직 행이 있는 암호화 열이 없어요.",
+        "backupsDumpLocalLine": "키 {key}: 이 서버의 데이터베이스 덤프 {count}개가 이 키로 작성되었습니다. 보존 정책이 덤프를 지울 때까지 필요합니다.",
+        "backupsDumpOffhostLine": "키 {key}: 이 키로 작성된 최신 데이터베이스 덤프가 {when}에 버킷에 저장되었습니다. {until}까지 필요합니다",
+        "backupsDumpOffhostLineUnknown": "키 {key}: 이 키로 작성된 최신 데이터베이스 덤프가 {when}에 버킷에 저장되었습니다. 버킷이 database/를 얼마나 보관하는지 알 수 없으므로 그 덤프가 사라진 것을 확인할 때까지 키를 유지하세요."
       },
       "maintenance": {
         "title": "측정값 테이블 유지 관리",
@@ -8291,47 +8558,6 @@
       "title": "페이지의 이 부분을 표시할 수 없습니다",
       "description": "페이지의 나머지 부분은 계속 작동합니다. 다시 시도하거나 계속 실패하면 새로고침하세요."
     },
-    "keyBackup": {
-      "title": "암호화 키를 백업하세요",
-      "description": "이 키의 사본이 없으면 암호화된 데이터와 이 서버의 백업을 다시는 읽을 수 없습니다.",
-      "loading": "키 백업 상태를 불러오는 중…",
-      "loadError": "키 백업 상태를 불러오지 못했습니다.",
-      "badgeDue": "해야 함",
-      "badgeDone": "백업됨",
-      "keyId": "활성 키 ID",
-      "fingerprint": "지문",
-      "whatIsLost": "키의 사본을 이 서버 밖, 예를 들어 비밀번호 관리자에 보관하세요. 서버가 다른 키로 다시 설치되면 HealthLog는 원래 키가 돌아올 때까지 서비스를 시작하지 않습니다.",
-      "fingerprintHint": "지문은 키의 SHA-256 해시 앞 12자입니다. 키를 드러내지 않고 식별하므로 사본과 비교할 수 있습니다.",
-      "checkLabel": "내 사본 확인",
-      "checkButton": "확인",
-      "checkNote": "붙여넣은 키는 활성 키와 비교한 뒤 버립니다. 저장하거나 기록하지 않습니다.",
-      "checkInsecureNote": "이 페이지는 https://로 제공되지 않으므로 붙여넣은 키가 비밀번호와 마찬가지로 암호화되지 않은 채 네트워크를 지나갑니다. 비교한 뒤 버리며 저장하거나 기록하지 않습니다.",
-      "checkMatches": "사본이 활성 키와 일치합니다.",
-      "checkNoMatch": "사본이 활성 키와 일치하지 않습니다. 전체 값을 복사했는지 확인하세요.",
-      "checkFailed": "확인하지 못했습니다.",
-      "confirmButton": "이 키를 백업했습니다",
-      "confirmed": "키 백업이 확인되었습니다.",
-      "confirmFailed": "확인을 저장하지 못했습니다.",
-      "stale": "이 페이지를 연 뒤 서버의 키가 바뀌었습니다. 새 키 ID와 지문을 확인한 뒤 다시 확인하세요.",
-      "confirmedAt": "{date}에 확인됨.",
-      "confirmedAtBy": "{date}에 {who}님이 확인함.",
-      "dueAgain": "키 {keyId}의 백업이 확인되었지만 서버는 이제 다른 키를 사용합니다. 현재 키를 백업하세요.",
-      "tileLabel": "암호화 키 백업",
-      "tileDue": "확인 안 됨",
-      "tileDone": "확인됨",
-      "platform": {
-        "composeLabel": "Compose",
-        "composeWhere": "키는 docker-compose.yml 옆 .env 파일의 ENCRYPTION_KEY(또는 ENCRYPTION_KEYS)입니다.",
-        "truenasLabel": "TrueNAS",
-        "truenasWhere": "Apps에서 HealthLog를 선택하고 Edit을 누른 뒤 환경 설정에서 ENCRYPTION_KEY를 복사하세요.",
-        "coolifyLabel": "Coolify",
-        "coolifyWhere": "Coolify에서 애플리케이션을 열고 Environment Variables에서 ENCRYPTION_KEY를 복사하세요.",
-        "unraidLabel": "Unraid",
-        "unraidWhere": "Docker 탭에서 HealthLog 컨테이너를 편집하고 템플릿에서, 또는 Compose Manager 스택의 .env에서 ENCRYPTION_KEY를 복사하세요.",
-        "portainerLabel": "Portainer",
-        "portainerWhere": "Portainer에서 HealthLog 스택을 열고 환경 변수에서 ENCRYPTION_KEY를 복사하세요."
-      }
-    },
     "keyMismatch": {
       "title": "HealthLog가 데이터를 열 수 없습니다",
       "body": "이 서버를 시작한 암호화 키가 데이터베이스를 기록할 때 쓴 키와 다릅니다. 데이터를 보호하기 위해 이 문제가 해결될 때까지 HealthLog는 아무것도 제공하지 않습니다.",
@@ -8362,6 +8588,185 @@
       "defaultAboveCeiling": "기본 단계는 최고 단계보다 높을 수 없어요.",
       "gapLabel": "동기화 후 카드 새로 고침 간격(시간, 표준 단계)",
       "gapHint": "1에서 48 사이의 정수 시간이에요. 비워 두면 AI_SYNC_REGEN_GAP_HOURS를, 없으면 6을 사용해요. 현재 적용 값: {hours}시간."
+    },
+    "recoveryKit": {
+      "title": "복구 키트",
+      "description": "이 서버를 복원하는 데 필요한 모든 키를 ID와 지문으로 보여 줍니다.",
+      "intro": "아래 각 키의 사본을 이 서버 밖, 예를 들어 비밀번호 관리자에 보관하세요. 키가 없으면 데이터베이스 덤프도 백업 사본도 다시 읽을 수 없으며, 필요한 키가 없으면 HealthLog는 시작하지 않습니다.",
+      "loading": "복구 키트를 불러오는 중…",
+      "loadError": "복구 키트를 불러오지 못했습니다.",
+      "badgeDue": "해야 함",
+      "badgeDone": "보관됨",
+      "keyId": "ID",
+      "fingerprint": "지문",
+      "noFingerprint": "이 서버에 없음",
+      "kind": {
+        "application": "애플리케이션 키 {id}",
+        "backup": "외부 보관 백업 키",
+        "backupPrevious": "이전 외부 보관 백업 키",
+        "token": "토큰 키"
+      },
+      "need": {
+        "active": "새 데이터를 암호화합니다.",
+        "configured": "이 서버에 있습니다.",
+        "storedCopies": "저장된 사본 {count}개에 필요합니다.",
+        "offhostUntil": "{date}까지 외부 보관 사본에 필요합니다.",
+        "offhostUnknown": "버킷이 외부 보관 사본을 보관하는 동안 필요합니다.",
+        "backupActive": "새 외부 보관 사본을 모두 봉인합니다.",
+        "backupPrevious": "마지막 키 변경 전에 기록된 외부 보관 사본을 엽니다.",
+        "token": "세션, 토큰, 공유 링크에 서명합니다. 이 키가 없으면 모두 로그아웃되지만 데이터는 잃지 않습니다.",
+        "localDumps": "이 서버의 데이터베이스 덤프 {count}개에 필요합니다.",
+        "offhostDumpsUntil": "{date}까지 외부 보관 데이터베이스 덤프에 필요합니다.",
+        "offhostDumpsUnknown": "버킷이 외부 보관 데이터베이스 덤프를 보관하는 동안 필요합니다."
+      },
+      "source": "{variable}에 설정됨.",
+      "status": {
+        "confirmed": "보관됨",
+        "new": "아직 보관 안 됨",
+        "notConfigured": "이 서버에 없음",
+        "unreadable": "유효한 키가 아님"
+      },
+      "notConfiguredHint": "아직 이 키가 필요한 백업이 있지만 이 서버에는 키가 없습니다. 다른 곳에 보관한 사본만 그 백업을 읽을 수 있습니다. 그 사본을 확보한 뒤 키트를 확인하세요.",
+      "unreadableHint": "변수는 설정되어 있지만 유효한 키가 들어 있지 않습니다. 외부 보관 사본에 의존하기 전에 고치세요.",
+      "fingerprintHint": "지문은 키의 SHA-256 해시 앞 12자입니다. 키를 드러내지 않고 식별하므로 사본과 비교할 수 있습니다.",
+      "whereTitle": "키가 설정된 위치",
+      "platform": {
+        "composeLabel": "Compose",
+        "composeWhere": "키는 docker-compose.yml 옆 .env 파일에 있습니다: ENCRYPTION_KEY 또는 ENCRYPTION_KEYS, API_TOKEN_HMAC_KEY, 그리고 외부 보관 사본을 쓰는 경우 BACKUP_ENCRYPTION_KEY.",
+        "truenasLabel": "TrueNAS",
+        "truenasWhere": "Apps에서 HealthLog를 선택하고 Edit을 누르세요. 키는 HealthLog Configuration 아래에 있습니다. YAML로 설치한 앱이라면 환경 설정의 ENCRYPTION_KEY, API_TOKEN_HMAC_KEY, BACKUP_ENCRYPTION_KEY입니다.",
+        "coolifyLabel": "Coolify",
+        "coolifyWhere": "Coolify에서 애플리케이션을 열고 Environment Variables에서 ENCRYPTION_KEY, API_TOKEN_HMAC_KEY, BACKUP_ENCRYPTION_KEY를 복사하세요.",
+        "unraidLabel": "Unraid",
+        "unraidWhere": "Docker 탭에서 HealthLog 컨테이너를 편집하고 템플릿에서, 또는 Compose Manager 스택의 .env에서 ENCRYPTION_KEY, API_TOKEN_HMAC_KEY, BACKUP_ENCRYPTION_KEY를 복사하세요.",
+        "portainerLabel": "Portainer",
+        "portainerWhere": "Portainer에서 HealthLog 스택을 열고 환경 변수에서 ENCRYPTION_KEY, API_TOKEN_HMAC_KEY, BACKUP_ENCRYPTION_KEY를 복사하세요."
+      },
+      "restoreTitle": "이 서버 복원하기",
+      "restoreBody": "같은 키로 HealthLog를 설치하고, 가장 최근의 데이터베이스 덤프를 빈 데이터베이스에 복원한 다음 앱을 시작하세요. 가이드에서 단계별로 안내합니다.",
+      "restoreLink": "재해 복구 가이드",
+      "checkLabel": "내 사본 확인",
+      "checkKeyLabel": "확인할 키",
+      "checkValueLabel": "내가 보관한 키 사본",
+      "checkButton": "확인",
+      "checkNote": "붙여넣은 키는 이 서버의 키와 비교한 뒤 버립니다. 저장하거나 기록하지 않습니다.",
+      "checkInsecureNote": "이 페이지는 https://로 제공되지 않으므로 붙여넣은 키가 비밀번호와 마찬가지로 암호화되지 않은 채 네트워크를 지나갑니다. 비교한 뒤 버리며 저장하거나 기록하지 않습니다.",
+      "checkMatches": "사본이 이 키와 일치합니다.",
+      "checkNoMatch": "사본이 이 키와 일치하지 않습니다. 전체 값을 복사했는지 확인하세요.",
+      "checkFailed": "확인하지 못했습니다.",
+      "confirmButton": "모든 키의 사본을 보관했습니다",
+      "confirmed": "복구 키트가 확인되었습니다.",
+      "confirmFailed": "확인을 저장하지 못했습니다.",
+      "stale": "이 페이지를 연 뒤 키트가 바뀌었습니다. 지금 표시된 키를 확인한 뒤 다시 확인하세요.",
+      "confirmedAt": "{date}에 확인됨.",
+      "confirmedAtBy": "{date}에 {who}님이 확인함.",
+      "dueAgain": "키트는 {date}에 확인되었습니다. 이제 {keys}도 포함되며, 그 확인은 이를 다루지 않았습니다. 각각의 사본을 저장하고 다시 확인하십시오."
+    },
+    "recoveryReadiness": {
+      "title": "복구 준비 상태",
+      "description": "이 서버가 만드는 모든 백업을 기준으로, 서버를 잃었을 때 되살릴 수 있는지 판단합니다.",
+      "loading": "백업을 확인하는 중…",
+      "loadError": "복구 준비 상태를 불러오지 못했습니다.",
+      "state": {
+        "ok": "준비됨",
+        "attention": "확인 필요",
+        "failing": "위험"
+      },
+      "signal": {
+        "database_dump": "데이터베이스 덤프",
+        "weekly_copy": "주간 계정 사본",
+        "offhost_copies": "외부 보관 사본",
+        "restore_drill": "복원 훈련",
+        "offhost_setup": "외부 보관 백업",
+        "recovery_kit": "복구 키트",
+        "dump_retention": "버킷의 덤프"
+      },
+      "at": {
+        "database_dump": "최신 덤프: {date}",
+        "weekly_copy": "가장 오래된 계정 사본: {date}",
+        "offhost_copies": "가장 오래된 외부 보관 사본: {date}",
+        "restore_drill": "마지막 훈련: {date}",
+        "recovery_kit": "확인: {date}"
+      },
+      "dueBy": "{date}까지",
+      "fix": {
+        "database_dump": "백업 열기",
+        "weekly_copy": "백업 열기",
+        "offhost_copies": "백업 열기",
+        "restore_drill": "백업 열기",
+        "offhost_setup": "백업 열기",
+        "recovery_kit": "키트 열기",
+        "dump_retention": "백업 열기"
+      },
+      "reason": {
+        "database_dump": {
+          "not_available": "이 버전은 데이터베이스 덤프를 예약하지 않습니다.",
+          "disabled": "예약된 데이터베이스 덤프가 꺼져 있어 이 서버를 다시 구축할 수 있는 사본이 없습니다. 다시 켜려면 DB_BACKUP_ENABLED를 제거하거나 true로 설정한 뒤 HealthLog를 다시 시작하십시오.",
+          "unreadable": "데이터베이스 덤프 상태를 읽지 못했습니다.",
+          "never_succeeded": "아직 성공한 데이터베이스 덤프가 없으며 마지막 시도도 실패했습니다.",
+          "never_ran": "덤프를 켠 뒤 {hours}시간 동안 데이터베이스 덤프가 기록되지 않았습니다.",
+          "first_pending": "첫 데이터베이스 덤프가 아직 실행되지 않았습니다.",
+          "stale": "최신 데이터베이스 덤프가 {hours}시간 전 것입니다.",
+          "last_failed": "마지막 데이터베이스 덤프가 실패했습니다. 그 전 덤프는 아직 최근 것입니다.",
+          "fresh": "최신 데이터베이스 덤프가 최근 것입니다.",
+          "nowhere_to_write": "덤프 디렉터리 {directory}에 쓸 수 없고 외부 버킷도 설정되어 있지 않아 덤프를 보관할 수 없습니다.",
+          "not_persistent": "덤프 디렉터리 {directory}이(가) 영구 저장소에 있지 않고 외부 버킷도 설정되지 않아, 모든 덤프가 다음 업데이트 때 사라집니다. 백업 볼륨을 마운트하세요.",
+          "fresh_offhost_only": "최신 데이터베이스 덤프는 최근 것이며 외부 버킷에 있습니다. {directory}이(가) 영구 저장소에 있지 않아 이 서버에는 보관되지 않으며, 마이그레이션 전에도 만들어지지 않습니다.",
+          "offhost_failed": "최신 데이터베이스 덤프는 이 서버에 보관되어 있지만 외부 버킷으로의 업로드가 실패했습니다.",
+          "offhost_stale": "{hours}시간 동안 외부 버킷에 도달한 데이터베이스 덤프가 없습니다. 업로드가 계속 실패하고 있습니다. 이 서버를 잃으면 복구에 쓸 최근 덤프가 없습니다.",
+          "offhost_never": "외부 버킷에 도달한 데이터베이스 덤프가 한 번도 없습니다. 업로드가 실패합니다. 이 서버를 잃으면 복구에 쓸 덤프가 없습니다."
+        },
+        "weekly_copy": {
+          "no_accounts": "아직 복사할 계정이 없습니다.",
+          "stale": "가장 오래된 주간 사본이 {days}일 전 것입니다. 뒤처진 계정: {accounts}.",
+          "never": "{days}일 동안 주간 사본이 없는 계정이 있습니다. 뒤처진 계정: {accounts}.",
+          "first_pending": "첫 주간 사본은 일요일 이른 시간에 만들어집니다.",
+          "fresh": "모든 계정에 지난주 사본이 있습니다."
+        },
+        "offhost_copies": {
+          "not_configured": "외부 보관 버킷이 설정되지 않았습니다.",
+          "stale": "외부 보관 사본이 이틀 밤 넘게 뒤처져 있습니다. 뒤처진 계정: {accounts}.",
+          "first_pending": "야간 외부 보관 실행이 아직 어떤 계정에도 도달하지 않았습니다.",
+          "fresh": "모든 계정의 최근 사본이 외부 보관 버킷에 있습니다."
+        },
+        "restore_drill": {
+          "not_configured": "훈련은 외부 보관 버킷을 읽는데, 버킷이 설정되지 않았습니다.",
+          "not_run_yet": "월간 복원 훈련이 아직 실행되지 않았습니다.",
+          "failed": "마지막 복원 훈련이 실패했습니다: 사본 {checked}개 중 {failed}개를 다시 읽지 못했습니다.",
+          "failed_run": "마지막 복원 훈련을 끝까지 마치지 못했습니다.",
+          "passed": "마지막 복원 훈련에서 사본 {checked}개를 다시 읽었습니다.",
+          "nothing_checked": "마지막 복원 훈련이 사본을 하나도 다시 읽기 전에 시간 제한으로 멈췄기 때문에 아무것도 확인하지 못했습니다."
+        },
+        "offhost_setup": {
+          "configured": "사본이 매일 밤 이 서버 밖으로 나갑니다.",
+          "no_admin": "아직 관리자 계정이 없습니다.",
+          "not_configured": "외부 보관 버킷이 설정되지 않아 모든 사본이 이 서버에만 있습니다.",
+          "not_configured_grace": "외부 보관 버킷이 아직 설정되지 않아 모든 사본이 이 서버에만 있습니다."
+        },
+        "recovery_kit": {
+          "confirmed": "복원에 필요한 모든 키의 사본이 보관되어 있습니다.",
+          "out_of_date": "복구 키트에 이제 {keys}도 포함되며, 마지막 확인은 이를 다루지 않았습니다. 고장 난 것은 없습니다. 사본을 저장하고 키트를 다시 확인하십시오.",
+          "no_admin": "아직 관리자 계정이 없습니다.",
+          "not_confirmed": "복원에 필요한 키의 사본을 아무도 확인하지 않았습니다: {keys}.",
+          "not_confirmed_grace": "복원에 필요한 키의 사본을 보관하세요: {keys}."
+        },
+        "dump_retention": {
+          "not_configured": "외부 버킷이 설정되지 않았습니다.",
+          "no_offhost_dumps": "버킷으로 가는 데이터베이스 덤프가 없습니다.",
+          "missing": "버킷의 어떤 수명 주기 규칙도 database/를 다루지 않아 그곳의 덤프와 그 안의 삭제된 계정이 절대 삭제되지 않습니다. 이 접두사에 대한 규칙을 추가하세요.",
+          "configured": "버킷은 {days}일 후에 덤프를 삭제합니다.",
+          "unknown": "버킷이 오래된 덤프를 삭제하는 규칙이 있는지 알려 주지 않습니다. 수명 주기 규칙이 database/를 포함하는지 확인하세요."
+        }
+      },
+      "recovered": {
+        "database_dump": "데이터베이스 덤프가 다시 최신 상태입니다.",
+        "weekly_copy": "모든 계정에 다시 최근 주간 사본이 있습니다.",
+        "offhost_copies": "모든 계정에 다시 최근 외부 보관 사본이 있습니다.",
+        "restore_drill": "복원 훈련을 다시 통과했습니다.",
+        "offhost_setup": "이제 외부 보관 사본이 설정되었습니다.",
+        "recovery_kit": "복구 키트가 다시 확인되었습니다.",
+        "dump_retention": "이제 버킷의 수명 주기 규칙이 데이터베이스 덤프를 포함합니다."
+      }
     }
   },
   "achievements": {
@@ -8675,7 +9080,10 @@
       "offlineGeoUnavailableTitle": "오프라인 위치 데이터베이스가 로드되지 않았어요",
       "offlineGeoUnavailableBody": "HealthLog가 {host}의 온라인 조회로 로그인 위치를 확인하고 있어서, 모든 로그인 IP 주소가 이 서버를 벗어나요. 로컬에서 확인하려면 무료 MaxMind 계정으로 GeoLite2-City와 GeoLite2-ASN 데이터베이스를 내려받아 그 디렉터리를 컨테이너에 마운트하고 GEOLITE2_DIR가 이를 가리키게 하세요. 절차: {docsUrl}",
       "tlsPinChangedTitle": "TLS 리프 인증서 변경: {host}",
-      "tlsPinChangedBody": "{host}가 제공하는 TLS 리프의 SPKI 핀이 이제 {servedPin}인데, 알려진 핀 목록에 없어요. 기존 핀이 사라지면 핀을 검증하는 클라이언트(네이티브 앱)는 연결에 실패해요. 새 리프 핀을 다시 추출해 TLS_LEAF_SPKI_PINS와 네이티브 클라이언트 핀 목록에 추가하고, 이 인증서가 만료되는 {validTo} 전에 빌드를 배포하세요. docs/ops/tls-cert-pin.md를 참고하세요."
+      "tlsPinChangedBody": "{host}가 제공하는 TLS 리프의 SPKI 핀이 이제 {servedPin}인데, 알려진 핀 목록에 없어요. 기존 핀이 사라지면 핀을 검증하는 클라이언트(네이티브 앱)는 연결에 실패해요. 새 리프 핀을 다시 추출해 TLS_LEAF_SPKI_PINS와 네이티브 클라이언트 핀 목록에 추가하고, 이 인증서가 만료되는 {validTo} 전에 빌드를 배포하세요. docs/ops/tls-cert-pin.md를 참고하세요.",
+      "accountErasureRefusedTitle": "계정을 지우지 못했어요: {username}",
+      "accountErasureRefusedBody": "{username} 계정의 삭제 유예 기간이 끝났지만, 이 계정이 관리 프로필의 마지막 활성 보호자라서 지우지 않았어요. 계정은 계속 잠겨 있어요. 프로필에 다른 보호자를 추가하거나, 프로필을 삭제하거나, 관리자의 사용자 화면에서 삭제를 취소해 주세요.",
+      "accountErasureFailedBody": "{username} 계정의 삭제 유예 기간이 끝났지만 계정을 지우지 못했어요. 계정은 계속 잠겨 있고, 삭제할 다른 계정들 다음으로 매시간 다시 시도해요. 오류는 관리자 화면의 실패한 작업 카드에서 볼 수 있어요."
     },
     "user": {
       "telegramTestBody": "HealthLog: 연결에 성공했어요. Telegram 알림이 켜져 있어요."
@@ -8823,6 +9231,18 @@
       "detailedToast": "이제 알림에 건강 수치가 포함됩니다.",
       "genericToast": "이제 알림에 건강 수치가 포함되지 않습니다.",
       "saveError": "저장하지 못했어요. 나중에 다시 시도해 주세요."
+    },
+    "checkupReminders": {
+      "title": "검진 리마인더",
+      "description": "검진 리마인더를 개별로 켜거나 끕니다."
+    },
+    "eventBackupHealth": "백업 상태",
+    "eventBackupHealthDesc": "백업이 멈추거나 뒤처지거나 다시 정상으로 돌아오면 보내요. 관리자에게만 보내요.",
+    "recoveryReadiness": {
+      "titleAttention": "백업에 확인이 필요해요",
+      "titleFailing": "백업이 위험해요",
+      "titleReminder": "백업이 여전히 위험해요",
+      "titleRecovered": "백업이 다시 정상이에요"
     }
   },
   "i18n": {
@@ -8885,6 +9305,7 @@
     "inTarget": "목표 범위 안",
     "aboveTarget": "목표보다 {delta} {unit} 높음",
     "belowTarget": "목표보다 {delta} {unit} 낮음",
+    "systolic": "수축기",
     "diastolic": "이완기",
     "glucoseFasting": "혈당 (공복)",
     "glucosePostprandial": "혈당 (식후)",
@@ -9141,9 +9562,9 @@
     "insights": {
       "headline": {
         "title": "내 주기와 내 몸",
-        "restingHeartRate": "황체기의 안정 시 심박수가 난포기보다 약 {delta}{unit} {dir}.",
-        "heartRateVariability": "황체기의 심박변이도가 난포기보다 약 {delta}{unit} {dir}.",
-        "generic": "황체기의 {metric} 값이 난포기보다 약 {delta}{unit} {dir}.",
+        "restingHeartRate": "황체기의 안정 시 심박수가 난포기보다 약 {delta} {dir}.",
+        "heartRateVariability": "황체기의 심박변이도가 난포기보다 약 {delta} {dir}.",
+        "generic": "황체기의 {metric} 값이 난포기보다 약 {delta} {dir}.",
         "dirHigher": "높아요",
         "dirLower": "낮아요",
         "empty": "아직 주기와 측정값이 부족해서 단계별 패턴을 보여줄 수 없어요. 계속 기록하면 기록이 쌓이면서 채워져요."
@@ -9151,7 +9572,7 @@
       "crosstab": {
         "description": "내 데이터를 기준으로, 각 측정값이 황체기와 난포기에서 어떻게 다른지 비교했어요.",
         "pairLabel": "{metric}: 황체기와 난포기 비교",
-        "detail": "황체기 {lutealAvg}{unit} ({lutealDays}일), 난포기 {follicularAvg}{unit} ({follicularDays}일).",
+        "detail": "황체기 {lutealAvg} ({lutealDays}일), 난포기 {follicularAvg} ({follicularDays}일).",
         "metricRestingHeartRate": "안정 시 심박수",
         "metricHrv": "심박변이도",
         "metricSleepDuration": "수면 시간",
@@ -9161,15 +9582,7 @@
         "metricWristTemperature": "야간 손목 온도",
         "metricSkinTemperature": "피부 온도",
         "metricBloodGlucose": "혈당",
-        "metricMood": "기분",
-        "unitHours": "h",
-        "unitSteps": "걸음",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "unitMood": "점",
-        "confidenceLow": "신뢰도 낮음",
-        "confidenceMedium": "신뢰도 보통",
-        "confidenceHigh": "신뢰도 높음"
+        "metricMood": "기분"
       },
       "title": "주기 인사이트",
       "symptomPatternsTitle": "단계별 증상 패턴",
@@ -9200,7 +9613,8 @@
       "viewDetails": "주기 인사이트 보기"
     },
     "wellnessRing": {
-      "label": "주기"
+      "label": "주기",
+      "loadError": "주기를 불러오지 못했어요."
     },
     "disclaimer": "이 예측은 기록한 데이터로 추정한 설명일 뿐, 피임 방법도 의학적 조언도 아니에요. 피임 없는 성관계가 안전하다는 뜻은 절대 아니에요. 피임이나 의학적 결정은 의료 전문가와 상의해 주세요.",
     "title": "내 주기",
@@ -9605,8 +10019,6 @@
       "description": "측정값을 입력하면 알림이 완료로 표시돼요."
     },
     "manage": {
-      "title": "알림 관리",
-      "description": "알림을 하나씩 켜거나 끌 수 있어요.",
       "empty": "아직 설정할 알림이 없어요."
     },
     "dashboard": {
@@ -9878,6 +10290,17 @@
       "reviewHint": "측정값을 하나씩 확인하고, 남길 항목만 저장하세요.",
       "foundCount": "측정값 {count}개를 찾았어요",
       "pagesCapped": "전체 {total}쪽 중 처음 {read}쪽만 읽었습니다. 이후 쪽의 값은 이 목록에 없습니다.",
+      "stoppedBudget": "결과지를 읽는 도중 오늘의 AI 사용량이 소진되어 나머지 페이지는 읽지 못했어요.",
+      "stoppedUnavailable": "결과지를 읽는 도중 AI가 꺼져서 나머지 페이지는 읽지 못했어요.",
+      "stoppedError": "서버 오류로 스캔을 계속할 수 없어서 나머지 페이지는 읽지 못했어요. 잠시 후 다시 시도해 주세요.",
+      "tooLarge": "한 번에 스캔하기에는 텍스트가 너무 길어요. 결과지를 한 페이지씩 스캔해 주세요.",
+      "truncated": "AI 제공자가 결과지 끝에 닿기 전에 출력 한도에 도달했어요. 그 뒤의 수치가 빠졌을 수 있으니 목록을 결과지와 비교해 주세요.",
+      "truncatedPages": "AI 제공자가 다음 페이지에서 출력 한도에 도달했어요: {pages}. 해당 페이지 아래쪽 수치가 빠졌을 수 있으니 결과지와 비교해 주세요.",
+      "unreadPages": "다음 페이지를 읽지 못해서 해당 수치가 이 목록에 없어요: {pages}.",
+      "unreadParts": "결과지 일부를 읽지 못해서 해당 수치가 이 목록에 없어요.",
+      "rowsCapped": "결과지에 수치가 {found}개 있어요. 한 번 스캔할 때 {kept}개까지 담을 수 있어서 처음 {kept}개만 보여 드려요.",
+      "outputLimit": "AI 제공자가 수치를 하나도 돌려주기 전에 출력 한도에 도달했어요. 한 페이지만 찍은 사진이나 더 긴 답변을 허용하는 모델로 다시 시도해 주세요.",
+      "errorTooLong": "{max}자 이내로 줄여 주세요.",
       "confirmRow": "이 측정값 포함",
       "analyteLabel": "검사 항목",
       "resultLabel": "결과",
@@ -9979,6 +10402,27 @@
       "doneToastFew": "{name}(으)로 합쳤어요, 측정값 {count}개 이동",
       "doneToastOther": "{name}(으)로 합쳤어요, 측정값 {count}개 이동",
       "error": "바이오마커를 합치지 못했어요. 다시 시도해 주세요."
+    },
+    "trend": {
+      "title": "추세",
+      "slope": {
+        "rising": "{since} 이후 {n}개 값에서 1년에 약 {amount} {unit}씩 오르고 있습니다.",
+        "falling": "{since} 이후 {n}개 값에서 1년에 약 {amount} {unit}씩 내려가고 있습니다.",
+        "flat": "{since} 이후 {n}개 값에서 변화가 없습니다."
+      },
+      "projection": {
+        "exits": {
+          "high": "이 직선이 그대로 이어진다면 {date}쯤 참고 범위의 상한에 닿습니다. 이는 연장선일 뿐 예측이 아닙니다.",
+          "low": "이 직선이 그대로 이어진다면 {date}쯤 참고 범위의 하한에 닿습니다. 이는 연장선일 뿐 예측이 아닙니다."
+        },
+        "beyond_horizon": "이 속도라면 {years}년 넘게 참고 범위 안에 머뭅니다. 측정값이 다루는 기간입니다.",
+        "beyond_horizon_capped": "이 속도라면 {years}년 넘게 참고 범위 안에 머뭅니다. 연장선이 내다보는 최대 기간입니다.",
+        "no_exit": "직선이 참고 범위의 경계에서 멀어지고 있습니다.",
+        "already_outside": "직선이 이미 참고 범위 밖에 있습니다.",
+        "no_clear_trend": "이 값들에서는 변화가 '변화 없음'과 뚜렷이 구별되지 않아 연장선을 그리지 않습니다.",
+        "stale": "가장 최근 값은 {date}로 1년이 넘었습니다. 직선은 그 시점 기준으로 표시하며 예측은 하지 않습니다."
+      },
+      "interval": "연간 변화의 95% 구간: {lo}~{hi} {unit}."
     }
   },
   "modules": {
@@ -10199,6 +10643,8 @@
       "yellow-fever": "황열",
       "japanese-encephalitis": "일본뇌염",
       "cholera": "콜레라",
+      "dengue": "뎅기열",
+      "tuberculosis": "결핵",
       "td": "Td(파상풍, 디프테리아)",
       "tdap": "Tdap(파상풍, 디프테리아, 백일해)",
       "tdap-ipv": "Tdap-IPV(4종 혼합)",
@@ -10392,6 +10838,7 @@
     "vital": {
       "RESTING_HEART_RATE": "안정 시 심박수",
       "HEART_RATE_VARIABILITY": "심박변이도",
+      "HRV_RMSSD": "심박변이도 (RMSSD)",
       "RECOVERY_SCORE": "회복",
       "OXYGEN_SATURATION": "산소포화도",
       "BODY_TEMPERATURE": "체온",
@@ -10715,25 +11162,15 @@
       "who5": "웰빙 점검, 5문항",
       "sci": "수면 점검, 8문항"
     },
-    "options": {
-      "0": "전혀 방해 받지 않았다",
-      "1": "며칠 동안 방해 받았다",
-      "2": "7 일 이상 방해 받았다",
-      "3": "거의 매일 방해 받았다"
-    },
-    "functionalTitle": "만일 당신이 위의 문제 중 하나 이상 \"예\" 라고 응답하셨으면, 이러한 문제들로 인해서 당신은 일을 하거나 가정일을 돌보거나 다른 사람과 어울리는 것이 얼마나 어려웠습니까?",
-    "functional": {
-      "0": "전혀 어렵지 않았다",
-      "1": "약간 어려웠다",
-      "2": "많이 어려웠다",
-      "3": "매우 많이 어려웠다"
-    },
     "functionalOptionalHint": "선택 사항이에요. 이 문항에 답하지 않아도 제출할 수 있어요.",
     "result": {
       "title": "내 결과",
       "totalLabel": "총점",
       "bandLabel": "이 검사의 구간",
-      "takeAnother": "다른 점검 하기"
+      "takeAnother": "다른 점검 하기",
+      "scoreOf": "/ {max}",
+      "firstCheckIn": "이 설문의 첫 결과예요. 다음 결과부터 여기에 변화가 표시돼요.",
+      "nextStep": "변화를 보려면 2주 뒤나 그 이후에 다시 해 볼 수 있어요. 걱정되는 점이 있으면 언제든 전문가와 상담하세요."
     },
     "band": {
       "PHQ9": {
@@ -10774,45 +11211,6 @@
       "ifDanger": "당장 위험한 상황이라면 지금 {emergency}로 전화하세요.",
       "resourcesTitle": "도움을 줄 수 있는 곳"
     },
-    "items": {
-      "phq9": {
-        "1": "일 또는 여가 활동을 하는 데 흥미나 즐거움을 느끼지 못함",
-        "2": "기분이 가라앉거나, 우울하거나, 희망이 없음",
-        "3": "잠이 들거나 계속 잠을 자는 것이 어려움, 또는 잠을 너무 많이 잠",
-        "4": "피곤하다고 느끼거나 기운이 거의 없음",
-        "5": "입맛이 없거나 과식을 함",
-        "6": "자신을 부정적으로 봄 — 혹은 자신이 실패자라고 느끼거나 자신 또는 가족을 실망시킴",
-        "7": "신문을 읽거나 텔레비전 보는 것과 같은 일에 집중하는 것이 어려움",
-        "8": "다른 사람들이 주목할 정도로 너무 느리게 움직이거나 말을 함. 또는 반대로 평상시보다 많이 움직여서, 너무 안절부절 못하거나 들떠 있음",
-        "9": "자신이 죽는 것이 더 낫다고 생각하거나 어떤 식으로든 자신을 해칠 것이라고 생각함"
-      },
-      "gad7": {
-        "1": "초조하거나 불안하거나 조마조마하게 느낀다",
-        "2": "걱정하는 것을 멈추거나 조절할 수가 없다",
-        "3": "여러 가지 것들에 대해 걱정을 너무 많이 한다",
-        "4": "편하게 있기가 어렵다",
-        "5": "너무 안절부절못해서 가만히 있기가 힘들다",
-        "6": "쉽게 짜증이 나거나 쉽게 성을 내게 된다",
-        "7": "마치 끔찍한 일이 생길 것처럼 두렵게 느껴진다"
-      },
-      "who5": {
-        "1": "나는 즐겁고 기분이 좋다.",
-        "2": "나는 평온하고 느긋하다.",
-        "3": "나는 의욕적이고 활기차다.",
-        "4": "나는 자고 일어나면 상쾌하고 푹 쉬었다는 느낌이 든다.",
-        "5": "나의 일상생활은 흥미로운 일들로 가득하다."
-      },
-      "sci": {
-        "1": "… how long does it take you to fall asleep?",
-        "2": "… if you then wake up during the night … how long are you awake for in total? (add all the wakenings up)",
-        "3": "… how many nights a week do you have a problem with your sleep?",
-        "4": "… how would you rate your sleep quality?",
-        "5": "… affected your mood, energy, or relationships?",
-        "6": "… affected your concentration, productivity, or ability to stay awake?",
-        "7": "… troubled you in general?",
-        "8": "… how long have you had a problem with your sleep?"
-      }
-    },
     "crisisResource": {
       "telefonSeelsorge": {
         "name": "TelefonSeelsorge (24시간 연중무휴, 무료, 비밀 보장)"
@@ -10840,6 +11238,18 @@
       },
       "crisisTextLine": {
         "name": "Crisis Text Line"
+      },
+      "cvv": {
+        "name": "CVV, Centro de Valorização da Vida (브라질, 24시간 연중무휴, 무료, 비밀 보장)"
+      },
+      "samu": {
+        "name": "SAMU 응급의료 서비스 (브라질)"
+      },
+      "sns24": {
+        "name": "SNS 24 심리 상담 (포르투갈, 24시간 연중무휴, 4번 선택)"
+      },
+      "sosVozAmiga": {
+        "name": "SOS Voz Amiga (포르투갈, 매일 15:30~00:30)"
       }
     },
     "instrumentDescription": {
@@ -10848,7 +11258,6 @@
       "who5": "5문항 웰빙 점검이에요. 지난 2주를 기준으로 답해 주세요. 숫자가 클수록 웰빙이 좋아요.",
       "sci": "8문항 수면 점검이에요. 대부분 지난 한 달을 묻고, 점수가 높을수록 수면이 좋아요."
     },
-    "progress": "{current} / {total}",
     "next": "다음",
     "lastResult": "최근 검사",
     "lastScore": "최근 결과",
@@ -10860,66 +11269,63 @@
       "who5": "웰빙 점수가 50점 이하라면 좀 더 살펴볼 만해요. 원한다면 이 페이지의 PHQ-9 점검이 기분을 더 자세히 살펴봐요. 진단이 아니라 가벼운 제안이에요.",
       "sci": "이 설문의 바탕이 된 연구에서는 16점 이하가 불면증 가능성과 관련이 있었어요. 수면 문제가 계속 힘들게 한다면 전문가와 이야기해 보는 게 도움이 될 수 있어요. 진단은 아니에요."
     },
-    "validatedInEnglishNote": "이 설문은 영어로 검증된 도구예요. 문항은 원문 영어 표현 그대로 보여줘요.",
-    "who5Options": {
-      "0": "전혀 그렇지 않다.",
-      "1": "가끔 그렇다.",
-      "2": "절반 미만이 그렇다.",
-      "3": "절반 이상이 그렇다.",
-      "4": "거의 그렇다.",
-      "5": "항상 그렇다."
-    },
-    "sciOptions": {
-      "duration": {
-        "0": "≥ 61 min",
-        "1": "46–60 min",
-        "2": "31–45 min",
-        "3": "16–30 min",
-        "4": "0–15 min"
-      },
-      "nights": {
-        "0": "5–7",
-        "1": "4",
-        "2": "3",
-        "3": "2",
-        "4": "0–1"
-      },
-      "quality": {
-        "0": "Very poor",
-        "1": "Poor",
-        "2": "Average",
-        "3": "Good",
-        "4": "Very good"
-      },
-      "impact": {
-        "0": "Very much",
-        "1": "Much",
-        "2": "Somewhat",
-        "3": "A little",
-        "4": "Not at all"
-      },
-      "problemDuration": {
-        "0": "> 1 year",
-        "1": "7–12 months",
-        "2": "3–6 months",
-        "3": "1–2 months",
-        "4": "I don't have a problem / < 1 month"
-      }
-    },
-    "stems": {
-      "who5": {
-        "period": "지난 2주 동안"
-      },
-      "sci": {
-        "night": "Thinking about a typical night in the last month …",
-        "impact": "Thinking about the past month, to what extent has poor sleep …",
-        "finally": "Finally …"
-      }
-    },
     "openDetail": "자세히 보기",
     "historyLoadError": "검사 기록을 불러오지 못했어요",
     "historyLoadErrorHint": "결과가 없다는 뜻은 아니에요. 목록을 가져오지 못했을 뿐이에요. 다시 시도해 주세요.",
-    "privacyNote": "답변은 암호화되어 저장되고, AI 코치에게는 전달되지 않아요."
+    "privacyNote": "답변은 암호화되어 저장되고, AI 코치에게는 전달되지 않아요.",
+    "trend": {
+      "sincePrevious": "{date} 이전 체크인 이후: {change}점.",
+      "sinceFirst": "{date} 첫 체크인 이후: {change}점.",
+      "verdict": {
+        "improved": "연구에서 의미 있다고 보는 {threshold}점 변화에 도달했고, 좋아지는 방향입니다.",
+        "worsened": "연구에서 의미 있다고 보는 {threshold}점 변화에 도달했고, 덜 좋은 방향입니다.",
+        "within_threshold": "연구에서 의미 있다고 보는 {threshold}점 변화보다 작습니다."
+      }
+    },
+    "wizard": {
+      "progressLabel": "{total}개 중 {current}번째 질문",
+      "followUpLabel": "추가 질문(선택)",
+      "keyboardHint": "숫자 키 1부터 {count}까지로 답을 고를 수 있어요.",
+      "allAnswered": "{total}개 질문에 모두 답했어요"
+    },
+    "review": {
+      "title": "답변 확인",
+      "description": "제출하기 전에는 아무것도 저장되지 않으며, 모든 답변을 아직 바꿀 수 있어요.",
+      "change": "변경",
+      "changeLabel": "{number}번 질문의 답변 변경",
+      "notAnswered": "답하지 않음",
+      "open": "답변 확인"
+    },
+    "bandMeaning": {
+      "PHQ9": {
+        "minimal": "지난 2주 동안 우울 증상이 거의 또는 전혀 없었던 것으로 보여요.",
+        "mild": "지난 2주 동안 가벼운 우울 증상이 있었던 것으로 보여요.",
+        "moderate": "지난 2주 동안 중간 정도의 우울 증상이 있었던 것으로 보여요.",
+        "modSevere": "지난 2주 동안 다소 심한 우울 증상이 있었던 것으로 보여요.",
+        "severe": "지난 2주 동안 심한 우울 증상이 있었던 것으로 보여요."
+      },
+      "GAD7": {
+        "minimal": "지난 2주 동안 불안 증상이 거의 또는 전혀 없었던 것으로 보여요.",
+        "mild": "지난 2주 동안 가벼운 불안 증상이 있었던 것으로 보여요.",
+        "moderate": "지난 2주 동안 중간 정도의 불안 증상이 있었던 것으로 보여요.",
+        "severe": "지난 2주 동안 심한 불안 증상이 있었던 것으로 보여요."
+      },
+      "WHO5": {
+        "low": "지난 2주 동안의 웰빙이 WHO-5가 좋다고 보는 범위보다 낮았어요.",
+        "good": "지난 2주 동안의 웰빙이 WHO-5가 좋다고 보는 범위에 있었어요."
+      },
+      "SCI": {
+        "belowThreshold": "지난 한 달 동안의 수면이 이 설문의 바탕이 된 연구에서 불면증 가능성이 높다고 본 범위에 있었어요.",
+        "aboveThreshold": "지난 한 달 동안의 수면이 그 연구가 불면증과 연결한 범위 밖에 있었어요."
+      }
+    },
+    "wording": {
+      "unvalidatedNote": "이 번역은 과학적으로 검증되지 않았어요. 결과는 참고용으로만 봐 주세요.",
+      "showOriginal": "영어 원문 보기",
+      "showTranslation": "번역 보기",
+      "resultUnvalidated": "과학적으로 검증되지 않은 번역으로 답했어요. 결과는 참고용으로만 봐 주세요.",
+      "historyUnvalidated": "과학적으로 검증되지 않은 번역으로 답함"
+    }
   },
   "records": {
     "aiInclusion": {
@@ -11446,7 +11852,8 @@
     "toast": {
       "duplicate": "이미 저장돼 있어요. 기존 문서를 표시해요.",
       "deleted": "문서를 삭제했어요",
-      "restoreFailed": "문서를 복구하지 못했어요."
+      "restoreFailed": "문서를 복구하지 못했어요.",
+      "deletedHint": "삭제한 문서는 {days}일 동안 최근 삭제됨에 남아 있어요."
     },
     "timeline": {
       "loadingMore": "더 불러오는 중…",
@@ -11491,7 +11898,8 @@
           "raster-failed": "PDF 페이지를 읽기용으로 렌더링하지 못했어요. 스캔 팩스 압축 형식이 흔한 원인이에요.",
           "provider-error": "지난번에 AI 제공자가 이 문서를 읽지 못했어요.",
           "pdf-needs-anthropic": "설정된 AI 제공자는 PDF 파일을 읽을 수 없어요. Claude 제공자나 로컬 OCR로는 읽을 수 있어요.",
-          "empty-transcription": "AI 제공자가 이 문서에서 텍스트를 찾지 못했어요."
+          "empty-transcription": "AI 제공자가 이 문서에서 텍스트를 찾지 못했어요.",
+          "resource-limit": "이 PDF는 너무 크거나 복잡해서 여기서 읽을 수 없습니다. 파일 자체는 정상이며 계속 열 수 있습니다."
         }
       },
       "loadError": "이 문서를 불러오지 못했어요.",
@@ -11563,7 +11971,7 @@
       "dismiss": "닫기",
       "empty": "이 문서에서 읽어낼 내용이 없었어요.",
       "unavailableBody": "AI 제공자를 설정하면 제목·종류·날짜를 추천해요.",
-      "unavailableLocalOcr": "AI 설정에서 로컬 OCR을 켜면 이 기기에서 이미지를 읽어요.",
+      "unavailableLocalOcr": "설정 → 모듈 → 검사에서 “이 기기에서 스캔 읽기”를 켜면 이 기기에서 이미지를 읽어요.",
       "unavailableAction": "AI 설정 열기",
       "errorGeneric": "문서를 읽지 못했어요. 다시 시도해 주세요.",
       "errorOcr": "이 이미지에서 텍스트를 읽지 못했어요.",
@@ -11575,11 +11983,13 @@
       "errorPdfNeedsVision": "PDF를 읽으려면 Claude 비전 제공자가 필요해요.",
       "errorFileType": "이 파일 형식은 읽을 수 없어요.",
       "errorNotIndexed": "문서를 먼저 읽은 뒤에 추출해 주세요.",
-      "errorLocalOcrDisabled": "AI 설정에서 로컬 OCR을 먼저 켜 주세요.",
+      "errorOutputLimit": "AI 제공자가 값을 하나도 돌려주기 전에 출력 한도에 도달했어요. 더 긴 답변을 허용하는 모델로 다시 시도해 주세요.",
+      "errorLocalOcrDisabled": "설정 → 모듈 → 검사에서 “이 기기에서 스캔 읽기”를 먼저 켜 주세요.",
       "errorProvider": "이 작업에 쓸 AI 제공자가 설정돼 있지 않아요.",
       "errorTextImageOnly": "로컬 OCR은 이미지만 읽어요. 이 파일은 읽을 수 없어요.",
       "errorConsent": "AI로 문서를 읽으려면 먼저 동의가 필요합니다.",
-      "errorUnavailable": "지금 여기에서는 AI로 문서를 읽을 수 없습니다."
+      "errorUnavailable": "지금 여기에서는 AI로 문서를 읽을 수 없습니다.",
+      "unavailableLocalOcrAction": "검사 설정 열기"
     },
     "summary": {
       "summarise": "요약하기",
@@ -11635,6 +12045,7 @@
       "extracting": "추출 중…",
       "extractHint": "이 문서에서 이미 읽은 텍스트를 사용해요. 추출한 값은 검토를 기다리며, 자동으로 저장되지 않아요.",
       "extractEmpty": "이 문서에서 추출할 수 있는 값이 없었어요.",
+      "extractIncomplete": "문서 일부를 끝까지 읽지 못해서 빠진 값이 있을 수 있어요. 목록을 문서와 비교해 주세요.",
       "failUnitRequired": "숫자 값을 저장하려면 단위가 필요해요.",
       "failUnitMismatch": "기재된 단위가 이 지표에 저장된 단위와 달라요. 수정한 뒤 검토를 다시 완료해 주세요.",
       "failGeneric": "이 값을 저장하지 못했어요.",
@@ -11656,7 +12067,6 @@
     },
     "chat": {
       "title": "이 문서에 대해 대화",
-      "openAria": "이 문서에 대해 코치에게 묻기",
       "openButton": "코치에게 묻기"
     },
     "readingConsent": {
@@ -11683,6 +12093,7 @@
       "loadMore": "더 불러오기",
       "stateImported": "HealthLog에 있음",
       "stateDeleted": "HealthLog에서 삭제됨",
+      "stateInTrash": "최근 삭제됨에 있음",
       "selectedCount": "최대 {max}개 중 {count}개 선택",
       "importAction": "{count}개 가져오기",
       "importing": "문서를 하나씩 가져오는 중…",
@@ -11696,7 +12107,9 @@
         "importedLinked": "가져오고 연결함",
         "duplicate": "이미 HealthLog에 있음",
         "duplicateLinked": "이미 HealthLog에 있음, 이제 연결됨",
-        "deleted": "HealthLog에서 삭제됨, 그대로 둠"
+        "deleted": "HealthLog에서 삭제됨, 그대로 둠",
+        "restored": "최근 삭제됨에서 복구했어요",
+        "restoredLinked": "최근 삭제됨에서 복구하고 연결했어요"
       },
       "errors": {
         "unavailable": "이 서버에서는 문서 보관함이 활성화되어 있지 않습니다.",
@@ -11740,8 +12153,32 @@
     "deleteConfirm": {
       "titleOne": "이 문서를 삭제할까요?",
       "titleMany": "문서 {count}개를 삭제할까요?",
-      "body": "삭제 직후에는 되돌릴 수 있습니다. 30일이 지나면 완전히 삭제됩니다.",
+      "body": "삭제한 문서는 {days}일 동안 최근 삭제됨에 남아 있다가 완전히 삭제됩니다.",
       "action": "삭제"
+    },
+    "trash": {
+      "title": "최근 삭제됨",
+      "subtitle": "삭제한 문서는 {days}일 동안 여기 남아 있다가 완전히 삭제됩니다.",
+      "back": "문서",
+      "entryLabel": "최근 삭제됨 ({count})",
+      "loadError": "최근 삭제됨을 불러오지 못했어요.",
+      "emptyTitle": "최근 삭제됨이 비어 있어요",
+      "emptyDescription": "삭제한 문서는 완전히 삭제되기 전까지 {days}일 동안 여기서 기다려요.",
+      "count": "삭제한 문서 ({count})",
+      "restoreAll": "모두 복구",
+      "restore": "복구",
+      "purge": "지금 삭제",
+      "deletedOn": "{date}에 삭제함.",
+      "removesIn": "{days}일 후 완전히 삭제됩니다.",
+      "removesSoon": "하루 안에 완전히 삭제됩니다.",
+      "restored": "문서를 복구했어요",
+      "openRestored": "열기",
+      "restoreDuplicate": "같은 문서가 이미 저장되어 있어서 이 사본은 복구할 수 없어요.",
+      "restorePartial": "{total}개 중 {failed}개를 복구하지 못했어요",
+      "purged": "문서를 완전히 삭제했어요",
+      "purgeFailed": "문서를 삭제하지 못했어요.",
+      "purgeConfirmTitle": "이 문서를 완전히 삭제할까요?",
+      "purgeConfirmBody": "대기 기간이 끝나기 전에 지금 삭제되며 복구할 수 없습니다."
     }
   },
   "selfDescription": {
@@ -11883,10 +12320,12 @@
       }
     },
     "hydration": {
-      "referenceMeta": "권장 섭취량 {value} {unit}/일 (EFSA)"
+      "referenceMeta": "권장 섭취량 {value} {unit}/일 (EFSA)",
+      "loadError": "수분을 불러오지 못했어요."
     },
     "caffeine": {
-      "ceilingMeta": "안전 상한 {value} {unit}/일 (EFSA)"
+      "ceilingMeta": "안전 상한 {value} {unit}/일 (EFSA)",
+      "loadError": "카페인을 불러오지 못했어요."
     },
     "micronutrients": {
       "title": "비타민·미네랄",
@@ -11995,6 +12434,8 @@
       "logDose": "복용 기록",
       "reconnect": "다시 연결",
       "viewCheckups": "건강검진 보기",
+      "viewAppointment": "예약 보기",
+      "viewAppointments": "예약 목록 보기",
       "checkinKeep": "계속하기",
       "checkinAdjust": "조정",
       "checkinLetGo": "놓아주기",
@@ -12174,7 +12615,10 @@
     "leafVisits": "진료",
     "leafSurgicalHistory": "수술 이력",
     "leafImmunizations": "예방접종",
-    "leafEmergency": "응급 정보 (혈액형, 연락처, 사전지시)"
+    "leafEmergency": "응급 정보 (혈액형, 연락처, 사전지시)",
+    "leafMedicationEffect": "각 약 시작 전후의 변화 (약 목록 필요)",
+    "leafWorkouts": "운동(종목별 요약)",
+    "leafHrvSdnn": "심박변이도 (SDNN)"
   },
   "recordSharing": {
     "banner": {
@@ -12260,7 +12704,7 @@
       "errorFailed": "초대를 보내지 못했어요. 다시 시도해 주세요.",
       "errorScope": "그 섹션들은 그렇게 공유할 수 없어요. 섹션을 하나 이상 고르거나 기록 전체를 공유하세요.",
       "errorManageBrowserOnly": "관리 권한은 브라우저에서만 줄 수 있어요.",
-      "errorStepUp": "2단계 인증을 확인한 뒤 다시 시도해 주세요.",
+      "errorStepUp": "2단계 인증 또는 패스키를 확인한 뒤 다시 시도해 주세요.",
       "errorOffline": "서버에 닿지 못했어요. 초대 내용은 그대로 있으니 연결을 확인하고 다시 시도해 주세요."
     },
     "given": {
@@ -12303,8 +12747,7 @@
       "loadError": "활동 내역을 불러오지 못했어요.",
       "opened": "{name} 님이 내 기록을 {count}번 열었어요",
       "acted": "{name} 님이 내 기록을 수정했어요",
-      "deletedAccount": "삭제된 계정",
-      "truncated": "이 목록은 최근 활동만 보여줘요. 전부는 아니에요."
+      "deletedAccount": "삭제된 계정"
     },
     "delegate": {
       "addOnlyNote": "이 기록에 추가할 수 있어요. 수정과 삭제는 {name} 님만 할 수 있어요."
@@ -12337,7 +12780,7 @@
       "create": "프로필 만들기",
       "creating": "만드는 중…",
       "created": "{name} 님 프로필을 만들었어요. 계정 메뉴에서 그 기록으로 전환할 수 있어요.",
-      "errorStepUp": "2단계 인증을 확인한 뒤 다시 시도해 주세요.",
+      "errorStepUp": "2단계 인증 또는 패스키를 확인한 뒤 다시 시도해 주세요.",
       "errorOffline": "서버에 닿지 못했어요. 바뀐 것은 없으니 연결을 확인하고 다시 시도해 주세요.",
       "errorInvalid": "서버가 그 내용을 거절했어요. 이름과 날짜, 시간대를 확인해 주세요.",
       "errorFailed": "프로필을 만들지 못했어요.",
@@ -12376,7 +12819,7 @@
       "guardianErrorNoAccount": "이 인스턴스에 그 이름이나 이메일을 쓰는 계정이 없어요.",
       "guardianErrorRateLimit": "최근 한 시간 동안 초대가 너무 많았어요. 잠시 기다렸다 다시 시도해 주세요.",
       "guardianErrorFailed": "초대를 보내지 못했어요.",
-      "errorMfaRequired": "여기에는 2단계 인증이 필요한데 계정에 아직 없어요. 설정 → 보안에서 등록한 뒤 다시 시도해 주세요.",
+      "errorMfaRequired": "여기에는 2단계 인증 또는 패스키가 필요한데 계정에 아직 둘 다 없어요. 설정 → 보안에서 하나를 등록한 뒤 다시 시도해 주세요.",
       "rosterLoadError": "이 기록을 돌보는 사람을 불러오지 못했어요.",
       "errorRateLimit": "최근 한 시간 동안 만든 프로필이 너무 많아요. 잠시 기다렸다 다시 시도해 주세요.",
       "handover": {
@@ -12420,7 +12863,8 @@
         "entryHint": "{name} 님이 이 기록을 직접 관리할 준비가 되었을 때.",
         "methodSso": "{name}님은 링크를 사용할 때 통합 로그인(SSO)으로 로그인합니다.",
         "methodBoth": "{name}님은 비밀번호를 정하거나 통합 로그인(SSO)으로 로그인할 수 있습니다."
-      }
+      },
+      "deleteBodyGrace": "{name} 님에 대해 기록한 모든 것이 프로필과 함께 사라져요. 측정값, 약, 문서, 메모 전부요. 프로필은 바로 잠기고 {days}일 뒤에 완전히 지워져요. 그때까지는 이 서버의 관리자가 삭제를 취소할 수 있어요."
     },
     "toast": {
       "savedTo": "{name} 님의 기록에 저장했어요"
@@ -12475,6 +12919,7 @@
       "practitionerContactRestore": "{name} 님이 주소록 항목을 복원했어요",
       "illnessDayLogUpsert": "{name} 님이 아픈 날 하루를 기록했어요",
       "medicationUpdate": "{name} 님이 약을 수정했어요",
+      "medicationCourseEnd": "{name} 님이 복용 기간을 끝냈어요",
       "medicationDelete": "{name} 님이 약을 삭제했어요",
       "medicationGlp1Update": "{name} 님이 GLP-1 요법을 수정했어요",
       "medicationScheduleCreate": "{name} 님이 복용 일정을 추가했어요",
@@ -12522,6 +12967,9 @@
       "rejectedDoseUpdate": "{name} 님이 복용 기록을 수정하려다 거절됐어요",
       "rejectedDoseImport": "{name} 님이 복용 기록을 불러오려다 거절됐어요",
       "rejectedTrackedValue": "{name} 님이 추적 값을 기록하려다 거절됐어요",
+      "rejectedTrackedValueTypeCreate": "{name} 님이 추적 값 종류를 추가하려다 거절됐어요",
+      "rejectedTrackedValueTypeUpdate": "{name} 님이 추적 값 종류를 수정하려다 거절됐어요",
+      "rejectedMedicationLayout": "{name} 님이 약 목록 순서를 바꾸려다 거절됐어요",
       "deniedDoseImport": "{name} 님이 시작한 복용 기록 불러오기를 대기열에 넣지 못했어요",
       "anamnesisFactCreate": "{name} 님이 건강 배경 항목을 추가했어요",
       "customMetricCreate": "{name} 님이 추적 값 종류를 추가했어요",
@@ -12720,6 +13168,13 @@
       "noMatchTitle": "이 필터에 맞는 항목이 없습니다",
       "clearFilter": "필터 지우기",
       "loadError": "시술 목록을 불러올 수 없습니다."
+    },
+    "preparation": {
+      "practitioner": "{date} {name} 마지막 방문 이후",
+      "specialty": "{date} 마지막 {specialty} 방문 이후",
+      "kind": "{date} 같은 유형({kind})의 마지막 방문 이후",
+      "default": "최근 {days}일",
+      "defaultReason": "같은 병원, 진료과 또는 유형의 이전 방문이 없어요."
     }
   },
   "checkups": {
@@ -12824,7 +13279,8 @@
     "backgroundScan": "백그라운드에서 읽고 있어요. 느린 모델이면 몇 분 걸릴 수 있어요.",
     "waitingForWorker": "백그라운드 작업자를 기다리고 있어요. 계속 그대로라면 서버의 작업자가 실행 중이 아닐 수 있어요.",
     "errorWorkerUnavailable": "지금은 백그라운드 작업자를 사용할 수 없어요. 잠시 후 다시 시도하거나 서버 운영자에게 확인을 요청하세요.",
-    "errorTimedOut": "AI 응답 시간 설정보다 읽기가 오래 걸렸어요. 다시 시도하거나 AI 설정에서 응답 시간을 늘려 주세요."
+    "errorTimedOut": "AI 응답 시간 설정보다 읽기가 오래 걸렸어요. 다시 시도하거나 AI 설정에서 응답 시간을 늘려 주세요.",
+    "errorReaderBusy": "문서 판독기가 다른 작업으로 바빠요. 1분 후에 다시 시도하세요."
   },
   "symptoms": {
     "add": "새 증상",
@@ -12905,7 +13361,7 @@
     },
     "episode": {
       "title": "기록된 증상",
-      "filed": "이 질병과 함께 기록됨"
+      "during": "{illness} 중"
     }
   },
   "day": {
@@ -12969,7 +13425,6 @@
     "meanOfReadingsFew": "측정 {count}회 평균",
     "meanOfReadingsOther": "측정 {count}회 평균",
     "sinceLastVisit": {
-      "title": "{date} 마지막 방문 이후",
       "countOne": "기록 1개",
       "countFew": "기록 {count}개",
       "countOther": "기록 {count}개",
@@ -12978,7 +13433,8 @@
       "allOther": "{count}개 모두 보기",
       "fewer": "줄여 보기",
       "note": "평가 없이 기록에서 모았어요. 날짜를 누르면 그날 전체가 열려요.",
-      "report": "{date}부터 오늘까지 진료 보고서"
+      "report": "{date}부터 오늘까지 진료 보고서",
+      "loadError": "지난 방문 이후의 기록을 불러오지 못했어요."
     },
     "travel": "여행 중",
     "event": {
@@ -13187,7 +13643,7 @@
       "empty": "{from}~{to} 기록 없음",
       "emptySingle": "{period} 기록 없음",
       "ended": "{label} 끝남",
-      "afterDaysOne": "{count}일 후",
+      "afterDaysOne": "1일 후",
       "afterDaysFew": "{count}일 후",
       "afterDaysOther": "{count}일 후",
       "notable": {
@@ -13211,7 +13667,7 @@
       "apply": "적용"
     },
     "item": {
-      "labValuesOne": "검사 수치 {count}개",
+      "labValuesOne": "검사 수치 1개",
       "labValuesFew": "검사 수치 {count}개",
       "labValuesOther": "검사 수치 {count}개"
     }
@@ -13347,6 +13803,219 @@
       "targetLower": "내 목표 하한",
       "clinicalUpper": "임상 기준 상한",
       "clinicalLower": "임상 기준 하한"
+    }
+  },
+  "activityCalendar": {
+    "title": "활동 캘린더",
+    "periodLabel": "캘린더 기간",
+    "period": {
+      "week": "주",
+      "month": "월"
+    },
+    "weekRange": "{start} ~ {end}",
+    "previous": "이전 기간",
+    "next": "다음 기간",
+    "metricLabel": "날짜 색상 기준",
+    "metric": {
+      "steps": "걸음 수",
+      "activeMinutes": "활동 시간(분)",
+      "load": "운동 부하"
+    },
+    "empty": "이 기간에는 아직 걸음 수, 활동 시간, 운동 기록이 없습니다.",
+    "loadError": "활동 캘린더를 불러오지 못했습니다.",
+    "weekGoalsColumn": "주간 목표",
+    "weekGoalsMet": "주간 목표를 모두 달성함",
+    "weekGoalsNotMet": "주간 목표를 모두 달성하지는 못함",
+    "cell": {
+      "steps": "{value}걸음",
+      "activeMinutes": "활동 {value}분",
+      "workouts": "운동 {value}회: {sports}"
+    },
+    "level": {
+      "none": "데이터 없음",
+      "unrated": "아직 기록이 충분하지 않음",
+      "low": "평소보다 훨씬 적음",
+      "below": "평소보다 적음",
+      "usual": "평소와 비슷함",
+      "above": "평소보다 많음",
+      "high": "평소보다 훨씬 많음",
+      "in_progress": "오늘, 아직 진행 중"
+    },
+    "legend": "이전 12주와 비교:",
+    "noBaseline": "데이터가 있는 날이 14일이 되면 평소 범위가 표시됩니다.",
+    "summary": {
+      "steps": "{value}걸음",
+      "activeMinutes": "활동 {value}분",
+      "workouts": "운동 {value}회",
+      "load": "평균 운동 부하 {value}",
+      "usual": "이 시점까지의 평소 값: {value}",
+      "noUsual": "비교할 이전 주나 달이 아직 충분하지 않습니다.",
+      "usualThroughYesterday": "어제까지 {value}, 그때까지의 평소 {usual}",
+      "firstDay": "첫날이 끝나면 평소와 비교합니다."
+    },
+    "sportCount": "{sport}: {count}",
+    "goal": {
+      "workoutsPerWeek": "주당 운동 횟수",
+      "activeMinutesPerWeek": "주당 활동 시간(분)",
+      "stepsPerWeek": "주당 걸음 수",
+      "stepsPerMonth": "월간 걸음 수"
+    },
+    "goalOf": "{target} 중 {value}",
+    "setGoals": "목표 설정",
+    "editGoals": "목표 변경",
+    "goalsSheet": {
+      "title": "활동 목표",
+      "description": "목표를 두지 않으려면 칸을 비워 두세요.",
+      "none": "목표 없음",
+      "invalid": "{min}부터 {max}까지의 정수를 입력하세요.",
+      "saveError": "목표를 저장하지 못했습니다."
+    },
+    "crossLink": {
+      "title": "활동 캘린더",
+      "body": "주 또는 월 단위의 걸음 수를 내 평소 값과 비교합니다.",
+      "cta": "캘린더 열기"
+    }
+  },
+  "sourceProvenance": {
+    "title": "값의 출처",
+    "description": "날마다 어떤 소스가 값을 보냈고, 소스 우선순위가 어느 것을 쓰는지 보여 줍니다.",
+    "metric": "측정 항목",
+    "day": "날짜",
+    "dayTitle": "이 날의 소스",
+    "loadError": "소스를 불러오지 못했습니다.",
+    "dayEmpty": "이 날에는 이 항목의 값이 없습니다.",
+    "reason": {
+      "only_source": "이 날의 소스는 {source}뿐입니다.",
+      "highest_on_ladder": "{source}을(를) 사용합니다. 이 날의 소스 중 소스 우선순위가 가장 높습니다.",
+      "name_tiebreak": "{source}을(를) 사용합니다. 이 날의 소스가 모두 우선순위에 없어 이름으로 정했습니다.",
+      "not_ranked": "이 항목에는 소스 우선순위가 없어 모든 소스의 값이 반영됩니다."
+    },
+    "pass": {
+      "lower_on_ladder": "소스 우선순위에서 더 아래에 있습니다.",
+      "not_on_ladder": "이 항목의 소스 우선순위에 없습니다.",
+      "name_tiebreak": "사용한 소스와 순위가 같아 이름으로 정했습니다."
+    },
+    "used": "사용됨",
+    "readings": "측정 {count}회, 기기: {devices}",
+    "ladder": "이 항목의 순서: {ladder}",
+    "utcNote": "소스는 차트와 같은 방식으로 UTC 자정부터 자정까지 하루 단위로 선택됩니다.",
+    "openSettings": "소스 우선순위에서 순서 변경",
+    "compareTitle": "두 소스 비교",
+    "range": "기간",
+    "rangeDays": "{days}일",
+    "compareNeedsTwo": "이 기간에는 한 소스에만 이 항목의 값이 있습니다.",
+    "side": {
+      "a": "첫 번째 소스",
+      "b": "두 번째 소스"
+    },
+    "daysBoth": "둘 다 있는 날",
+    "meanOf": "{source} 평균",
+    "meanAbsDiff": "평균 차이",
+    "pickedDays": "사용된 날 (첫 번째 / 두 번째)",
+    "pickedSplit": "{a} / {b}",
+    "compareNote": "평균은 두 소스 모두 값이 있는 날만 계산하여 같은 조건으로 비교합니다. 굵은 값이 차트에 쓰이는 값입니다.",
+    "settingsHint": "이 순서가 날마다 무엇을 정하는지 보려면:",
+    "settingsHintLink": "값의 출처",
+    "metricLink": "이 값의 출처"
+  },
+  "recordImport": {
+    "title": "스프레드시트에서 검사 결과와 약 가져오기",
+    "description": "수년간의 검사 결과나 약 목록을 CSV 파일에서 가져옵니다.",
+    "detail": "어떤 열에 무엇이 있는지 직접 고르면, HealthLog가 모든 행을 먼저 확인하고 확인 전에는 아무것도 가져오지 않습니다. 이미 있는 행은 건너뜁니다.",
+    "kind": {
+      "labs": "검사 결과",
+      "medications": "약"
+    },
+    "sheetTitle": {
+      "labs": "검사 결과 가져오기",
+      "medications": "약 가져오기"
+    },
+    "sheetDescription": {
+      "labs": "마커는 내 마커에 연결되고, 변환 방법을 아는 경우 단위가 변환됩니다.",
+      "medications": "이름, 용량, 매일 복용 시간, 필요시, 시작일과 종료일. 다른 주기는 나중에 앱에서 설정합니다."
+    },
+    "file": "CSV 파일",
+    "template": "템플릿 다운로드",
+    "mapping": "각 열의 내용",
+    "required": "(필수)",
+    "notInFile": "파일에 없음",
+    "column": "{n}열",
+    "delimiter": "구분자",
+    "delimiterOption": {
+      "comma": "쉼표",
+      "semicolon": "세미콜론",
+      "tab": "탭"
+    },
+    "decimal": "소수점",
+    "decimalOption": {
+      "dot": "마침표 (5.4)",
+      "comma": "쉼표 (5,4)"
+    },
+    "dateOrder": "날짜 형식",
+    "dateOrderOption": {
+      "iso": "2025-03-01",
+      "dmy": "01.03.2025 (일 먼저)",
+      "mdy": "03/01/2025 (월 먼저)"
+    },
+    "header": "첫 행에 열 이름이 있음",
+    "reminders": "가져온 약의 알림 켜기",
+    "timezoneNote": "시간대가 없는 시간은 계정의 시간대로 읽습니다. 시간이 없는 날짜는 그 날짜 그대로 저장됩니다.",
+    "missing": "아직 선택할 항목: {fields}",
+    "check": "파일 확인",
+    "runIdle": "가져오기",
+    "run": "{count}행 가져오기",
+    "close": "닫기",
+    "summaryCheck": "{rows}행 읽음: {inserted}행 가져오기 가능, {duplicates}행 이미 있음, {failed}행 문제 있음.",
+    "summaryDone": "{inserted}행을 가져왔습니다. 이미 있던 {duplicates}행과 문제가 있는 {failed}행은 건너뛰었습니다.",
+    "markersMatched": "내 마커에 연결됨:",
+    "markersCreated": "새 마커:",
+    "line": "{line}행",
+    "errorsTruncated": "처음 500개의 문제만 표시됩니다.",
+    "error": {
+      "tooLarge": "파일이 16MB보다 큽니다.",
+      "rateLimited": "지난 한 시간 동안 가져오기가 너무 많았습니다. 나중에 다시 시도하세요.",
+      "invalid": "파일이나 열 선택을 읽을 수 없습니다.",
+      "failed": "가져오기에 실패했습니다. 다시 시도하세요."
+    },
+    "reason": {
+      "missing_value": "필수 칸이 비어 있음",
+      "invalid_number": "숫자가 아님",
+      "ambiguous_number": "숫자를 두 가지로 읽을 수 있음. 소수점을 확인하세요",
+      "missing_unit": "숫자에는 단위가 필요함",
+      "invalid_date": "선택한 형식의 날짜가 아님",
+      "invalid_time": "시간이 아님",
+      "ambiguous_date": "날짜를 두 가지로 읽을 수 있음. 네 자리 연도와 선택한 형식을 쓰세요",
+      "future_date": "날짜가 미래임",
+      "text_too_long": "텍스트가 너무 김",
+      "unit_mismatch": "이 단위는 마커의 단위로 변환할 수 없음",
+      "invalid_reference_range": "참고 범위를 읽을 수 없음",
+      "invalid_times": "시간을 읽을 수 없음 (예: 08:00 20:00)",
+      "missing_times": "복용 시간을 넣거나 필요시 약으로 표시하세요",
+      "invalid_yes_no": "예 또는 아니오로 쓰세요",
+      "as_needed_with_times": "필요시 약에는 정해진 시간이 없음",
+      "end_before_start": "종료일이 시작일보다 앞섬",
+      "invalid_medication": "이대로는 약을 저장할 수 없음",
+      "oversized_row": "행이 너무 길거나 넓음",
+      "row_limit": "한 번에 가져올 수 있는 행 수를 넘음",
+      "duplicate": "이미 있어 건너뜀"
+    },
+    "field": {
+      "analyte": "마커",
+      "value": "결과",
+      "unit": "단위",
+      "date": "날짜",
+      "time": "시간",
+      "referenceRange": "참고 범위",
+      "referenceLow": "참고 하한",
+      "referenceHigh": "참고 상한",
+      "panel": "그룹",
+      "note": "메모",
+      "name": "이름",
+      "dose": "용량",
+      "times": "시간",
+      "asNeeded": "필요시",
+      "startsOn": "시작",
+      "endsOn": "종료"
     }
   }
 }

@@ -11,10 +11,11 @@ import {
   reportStatValue,
 } from "../doctor-report/stat-display";
 import type { MeasurementType } from "@/generated/prisma/client";
-import { MEASUREMENT_TYPE_LABEL_KEYS } from "../measurements/type-label-keys";
+import { reportMeasurementLabelKey } from "../report-selection/catalogue";
 import {
   getBmiClassificationKey,
   getBpClassificationKey,
+  COMPACT_SPARKLINE_TYPES,
   SPARKLINE_TYPES,
 } from "./clinical-summary";
 import {
@@ -183,6 +184,80 @@ function groupSubHeadRow(label: string): VitalTableRow {
   ];
 }
 
+/**
+ * Per-context glucose rows. Values are stored canonically in mg/dL and print
+ * in the owner's unit, in the precision their readings carry.
+ */
+function glucoseContextTableRows(
+  context: DoctorReportPdfRenderContext,
+  glucoseUnit: ReturnType<typeof resolveGlucoseUnit>,
+): string[][] {
+  const { data, t, num } = context;
+  const rows: string[][] = [];
+  for (const ctx of GLUCOSE_CONTEXTS) {
+    const s = data.glucoseStats?.[ctx];
+    if (!s) continue;
+    const digits = reportStatFractionDigits("BLOOD_GLUCOSE", s, glucoseUnit);
+    const show = (v: number) => num(convertGlucose(v, glucoseUnit), digits);
+    rows.push([
+      t(GLUCOSE_LABEL_KEYS[ctx]),
+      `${show(s.latest)} ${glucoseUnit}`.trim(),
+      `${show(s.avg)} ${glucoseUnit}`.trim(),
+      show(s.min),
+      show(s.max),
+      String(s.count),
+    ]);
+  }
+  return rows;
+}
+
+/**
+ * A row's label. A screener total answered in a translation that has not
+ * been validated carries a mark, which the line under the table explains.
+ */
+function vitalRowLabel(
+  context: DoctorReportPdfRenderContext,
+  type: string,
+): string {
+  const label = context.t(reportMeasurementLabelKey(type as MeasurementType));
+  return context.data.screenerUnvalidatedTranslations?.[type]
+    ? `${label} *`
+    : label;
+}
+
+/** One line under the table per marked screener: how many, of how many. */
+function drawScreenerTranslationNotes(
+  context: DoctorReportPdfRenderContext,
+  startY: number,
+): number {
+  const { doc, data, t, margin, pageWidth, ensureSpace } = context;
+  const notes = Object.entries(data.screenerUnvalidatedTranslations ?? {})
+    .filter(([type, count]) => count > 0 && data.stats[type])
+    .map(([type, count]) =>
+      t("doctorReport.screenerUnvalidated", {
+        label: t(reportMeasurementLabelKey(type as MeasurementType)),
+        count,
+        total: data.stats[type].count,
+      }),
+    );
+  if (notes.length === 0) return startY;
+  let y = startY;
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "italic");
+  doc.setTextColor(110, 110, 110);
+  for (const note of notes) {
+    for (const line of doc.splitTextToSize(
+      `* ${note}`,
+      pageWidth - 2 * margin,
+    )) {
+      y = ensureSpace(y, 4);
+      doc.text(line, margin, y);
+      y += 4;
+    }
+  }
+  return y + 4;
+}
+
 export function buildMeasurementsChartsSection(
   context: DoctorReportPdfRenderContext,
   state: DoctorReportPdfCursorState,
@@ -218,25 +293,9 @@ export function buildMeasurementsChartsSection(
   // leaf that was withheld or has no reading — the table cannot over-serve.
   const vitalRows: VitalTableRow[] = [];
 
-  // Per-context glucose rows. Values stored canonically in mg/dL — convert to
-  // the user's display unit. They belong under the glucose group heading with
-  // the raw series, not appended after the whole table.
+  // Per-context glucose rows, in the owner's unit, under the glucose heading.
   const glucoseUnit = resolveGlucoseUnit(data.glucoseUnit ?? null);
-  const glucoseContextRows: string[][] = [];
-  for (const ctx of GLUCOSE_CONTEXTS) {
-    const s = data.glucoseStats?.[ctx];
-    if (!s) continue;
-    const digits = reportStatFractionDigits("BLOOD_GLUCOSE", s, glucoseUnit);
-    const show = (v: number) => num(convertGlucose(v, glucoseUnit), digits);
-    glucoseContextRows.push([
-      t(GLUCOSE_LABEL_KEYS[ctx]),
-      `${show(s.latest)} ${glucoseUnit}`.trim(),
-      `${show(s.avg)} ${glucoseUnit}`.trim(),
-      show(s.min),
-      show(s.max),
-      String(s.count),
-    ]);
-  }
+  const glucoseContextRows = glucoseContextTableRows(context, glucoseUnit);
 
   for (const group of vitalGroups) {
     const groupRows: string[][] = [];
@@ -252,7 +311,7 @@ export function buildMeasurementsChartsSection(
       const show = (v: number) =>
         num(reportStatValue(type, v, glucoseUnit), digits);
       groupRows.push([
-        t(MEASUREMENT_TYPE_LABEL_KEYS[type as MeasurementType] ?? ""),
+        vitalRowLabel(context, type),
         `${show(s.latest)} ${unit}`.trim(),
         `${show(s.avg)} ${unit}`.trim(),
         show(s.min),
@@ -305,6 +364,8 @@ export function buildMeasurementsChartsSection(
       (doc as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable
         .finalY + 8;
   }
+
+  y = drawScreenerTranslationNotes(context, y);
 
   // v1.18.0 — clinical glucose panel (TIR / GMI / eA1C / mean / CV%). The
   // server already computes this (`data.glucoseClinical`) by the one
@@ -433,7 +494,13 @@ export function buildMeasurementsChartsSection(
     const chartTypes = SPARKLINE_TYPES.filter(
       (type) => (data.measurements[type]?.length ?? 0) >= 2,
     );
-    if (chartTypes.length > 0) {
+    // v1.44 — the wearable series (sleep, both HRV statistics, steps) draw at
+    // half width, two to a row: a clinician reads their direction, and four
+    // full-width charts would push the medication blocks a page further.
+    const compactTypes = COMPACT_SPARKLINE_TYPES.filter(
+      (type) => (data.measurements[type]?.length ?? 0) >= 2,
+    );
+    if (chartTypes.length > 0 || compactTypes.length > 0) {
       // Keep the heading with at least the first chart.
       y = ensureSpace(y, 6 + SPARKLINE_HEIGHT + 4);
       doc.setFontSize(12);
@@ -446,9 +513,7 @@ export function buildMeasurementsChartsSection(
         // A chart never tears across a page boundary — break before drawing
         // it whole.
         y = ensureSpace(y, SPARKLINE_HEIGHT + 4);
-        const label = t(
-          MEASUREMENT_TYPE_LABEL_KEYS[type as MeasurementType] ?? "",
-        );
+        const label = t(reportMeasurementLabelKey(type as MeasurementType));
         y = drawSparkline(doc, {
           x: margin,
           y,
@@ -460,6 +525,32 @@ export function buildMeasurementsChartsSection(
           dateShort: (iso) => dateShort(iso),
         });
         y += 4;
+      }
+      const columnGap = 6;
+      const halfWidth = (pageWidth - 2 * margin - columnGap) / 2;
+      for (let i = 0; i < compactTypes.length; i += 2) {
+        y = ensureSpace(y, SPARKLINE_HEIGHT + 4);
+        let rowBottom = y;
+        for (const [column, type] of compactTypes.slice(i, i + 2).entries()) {
+          // Plotted in the unit the table prints (sleep in hours, not the
+          // stored minutes), so the min/max labels match the row above.
+          const points = (data.measurements[type] ?? []).map((p) => ({
+            measuredAt: p.measuredAt,
+            value: reportStatValue(type, p.value, glucoseUnit),
+          }));
+          const bottom = drawSparkline(doc, {
+            x: margin + column * (halfWidth + columnGap),
+            y,
+            width: halfWidth,
+            label: t(reportMeasurementLabelKey(type)),
+            points,
+            num,
+            unit: unitFor(type),
+            dateShort: (iso) => dateShort(iso),
+          });
+          rowBottom = Math.max(rowBottom, bottom);
+        }
+        y = rowBottom + 4;
       }
       y += 2;
     }

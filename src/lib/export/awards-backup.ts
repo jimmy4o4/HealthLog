@@ -77,6 +77,7 @@
  * sections. This builder therefore takes no `purpose`: a parameter that
  * changes nothing would advertise a distinction the file does not have.
  */
+import { isLegacyRmssdRow } from "@/lib/export/legacy-rmssd";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type {
   MeasurementSource,
@@ -183,12 +184,12 @@ export async function buildAwardsBackupSection(
   const [recordRows, achievementRows] = await Promise.all([
     prisma.personalRecord.findMany({
       where: { userId },
-      orderBy: { achievedAt: "asc" },
+      orderBy: [{ achievedAt: "asc" }, { id: "asc" }],
       select: PERSONAL_RECORD_BACKUP_SELECT,
     }),
     prisma.userAchievement.findMany({
       where: { userId },
-      orderBy: { unlockedAt: "asc" },
+      orderBy: [{ unlockedAt: "asc" }, { id: "asc" }],
       select: USER_ACHIEVEMENT_BACKUP_SELECT,
     }),
   ]);
@@ -292,9 +293,20 @@ export async function restoreAwardsData(
   ]);
 
   const danglingMeasurementRefs: string[] = [];
-  if (payload.personalRecords.length > 0) {
+  // A file written before migration 0420 can hold an SDNN best that a
+  // Fitbit or Google Health RMSSD reading set. The migration deleted those
+  // (that series keeps no records, and the detector re-derives the SDNN bests
+  // from what remains), so the restore leaves them out too.
+  const records = payload.personalRecords.filter(
+    (entry) =>
+      !isLegacyRmssdRow({
+        type: entry.metricType,
+        source: entry.source ?? null,
+      }),
+  );
+  if (records.length > 0) {
     await tx.personalRecord.createMany({
-      data: payload.personalRecords.map((entry) => {
+      data: records.map((entry) => {
         let sourceMeasurementId = entry.sourceMeasurementId ?? null;
         if (sourceMeasurementId && !measurementIds.has(sourceMeasurementId)) {
           danglingMeasurementRefs.push(sourceMeasurementId);

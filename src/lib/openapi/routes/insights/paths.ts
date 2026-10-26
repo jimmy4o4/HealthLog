@@ -12,6 +12,7 @@ import {
   idempotentWrite,
   recordRefusal,
   stdResponses,
+  listEnvelope,
 } from "../shared";
 import {
   aiCheckFailedResponse,
@@ -273,6 +274,15 @@ export const insightsPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         "503": {
           description:
             "Every provider in the chain failed for a reason that is not a rate limit — auth, timeout or an upstream 5xx. A dated failure marker is written, so the read GET reports the briefing as held rather than fresh. Also: the `briefing` capability could not be resolved (`meta.errorCode` = `ai.unavailable`, `meta.reason` = `check_failed`); nothing was generated.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
+        "413": {
+          description: "The request body is over 16 KB. Nothing was generated.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
+        "502": {
+          description:
+            "The generated briefing did not pass the outbound safety screen and was discarded (`meta.errorCode` = `insights.generate.outboundScreened`). Regenerating may succeed.",
           content: { "application/json": { schema: errorEnvelope } },
         },
         "401": stdResponses["401"],
@@ -892,7 +902,7 @@ export const insightsPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           description: "The ECG recording list (possibly empty).",
           content: {
             "application/json": {
-              schema: dataEnvelope(ecgListResponse, "EcgListResponseEnvelope"),
+              schema: listEnvelope(ecgListResponse, "EcgListResponseEnvelope"),
             },
           },
         },
@@ -985,7 +995,7 @@ export const insightsPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           description: "The device-flagged event timeline (possibly empty).",
           content: {
             "application/json": {
-              schema: dataEnvelope(
+              schema: listEnvelope(
                 rhythmEventsResponse,
                 "RhythmEventsResponseEnvelope",
               ),

@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Loader2, Plus, RefreshCw, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { QueryErrorCard } from "@/components/ui/query-error-card";
 import { QueryErrorRow } from "@/components/ui/query-error-row";
@@ -33,6 +33,7 @@ import {
   useCycleInsights,
   useCycleProfile,
 } from "./use-cycle";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
 
 /**
  * v1.15.0 — the cycle vertical's client orchestrator.
@@ -72,15 +73,15 @@ const BbtChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="bg-card border-border rounded-xl border py-6">
-        <div className="px-6">
+      <Card>
+        <CardHeader>
           <Skeleton className="h-5 w-44" />
-        </div>
-        <div className="mt-6 px-6">
-          <Skeleton className="mb-2 h-4 w-64" />
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Skeleton className="h-4 w-64" />
           <Skeleton className="h-[210px] w-full rounded-md" />
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     ),
   },
 );
@@ -362,9 +363,10 @@ export function CycleView() {
                   // Inside the calendar card already — a borderless row keeps
                   // it in line with the plain loading line above it (§3/§6).
                   <QueryErrorRow
+                    inset
+                    error={calendar.error}
                     message={t("cycle.loadError")}
                     onRetry={() => void calendar.refetch()}
-                    className="border-0 bg-transparent p-0"
                   />
                 ) : (
                   <>
@@ -405,6 +407,7 @@ export function CycleView() {
           <TabsContent value="predictions" className="mt-4 space-y-4">
             {calendarError ? (
               <QueryErrorCard
+                error={calendar.error}
                 title={t("cycle.loadError")}
                 onRetry={() => void calendar.refetch()}
               />
@@ -413,9 +416,13 @@ export function CycleView() {
                 <PredictionsPanel
                   prediction={calendar.data?.prediction ?? null}
                   rawChartMode={calendar.data?.profile.rawChartMode ?? false}
-                  history={history.data}
+                  history={history.data?.data}
                 />
-                <CycleHistoryChart history={history.data} animate={play} />
+                <CycleHistoryChart
+                  history={history.data?.data}
+                  animate={play}
+                />
+                <ListCapNotice cap={history.data?.cap} />
                 <BbtChart
                   days={calendar.data?.days ?? []}
                   today={today}
@@ -435,6 +442,7 @@ export function CycleView() {
           <TabsContent value="insights" className="mt-4 space-y-4">
             {insights.isError ? (
               <QueryErrorCard
+                error={insights.error}
                 title={t("cycle.loadError")}
                 onRetry={() => void insights.refetch()}
               />
@@ -454,6 +462,7 @@ export function CycleView() {
           <TabsContent value="settings" className="mt-4">
             {profileQuery.isError ? (
               <QueryErrorCard
+                error={profileQuery.error}
                 title={t("cycle.loadError")}
                 onRetry={() => void profileQuery.refetch()}
               />

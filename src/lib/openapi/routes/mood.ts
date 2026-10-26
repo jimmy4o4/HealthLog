@@ -222,7 +222,7 @@ const moodTagLayoutResolved = z
   .object({
     groupOrder: z.array(z.string()),
     placements: z.record(z.string(), z.array(z.string())),
-    // v1.32.22 (M2) — optimistic-concurrency token echoed on GET / PUT.
+    // v1.32.22 — optimistic-concurrency token echoed on GET / PUT.
     updatedAt: updatedAtTokenField,
   })
   .meta({
@@ -231,7 +231,7 @@ const moodTagLayoutResolved = z
       "The stored layout merged over defaults: `groupOrder` fully resolved against the user's effective category set, `placements` as stored. `updatedAt` is the optimistic-concurrency token — echo it as `baseUpdatedAt` on the next PUT.",
   });
 
-// v1.32.22 (M2) — the PUT request extends the layout schema with the base
+// v1.32.22 — the PUT request extends the layout schema with the base
 // token (stripped pre-Zod at runtime).
 const moodTagLayoutPutRequest = moodTagLayout
   .extend({ baseUpdatedAt: baseUpdatedAtField })
@@ -1192,6 +1192,12 @@ const moodAggregatesResponse = z
             .array(z.object({ x: z.number(), y: z.number() }))
             .describe("Mood (x) versus metric (y), paired by day."),
           n: z.number().int().describe("Paired-day count."),
+          suppressed: z
+            .enum(["insufficientPairs", "notSignificant"])
+            .optional()
+            .describe(
+              "Why `result` is null: too few paired days, or a pairing that did not reach significance. Absent when `result` is set.",
+            ),
         }),
       )
       .describe(

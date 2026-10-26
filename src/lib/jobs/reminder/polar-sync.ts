@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — Polar poll-cohort sync handler.
+ * v1.17.0 — Polar poll-cohort sync handler.
  * v1.32.15 — the per-user arm now runs BOTH Polar legs: vitals
  * (`syncUserPolar`) then exercises/workouts (`syncUserPolarWorkouts`).
  *
@@ -13,6 +13,7 @@
  * reminder-worker.ts — no new queue: the workout leg rides the existing hourly
  * `polar-sync` tick (one extra request per connected user per hour).
  */
+import { ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import { recordPolarSyncFailure, syncUserPolar } from "@/lib/polar/sync";
 import { syncUserPolarWorkouts } from "@/lib/polar/sync-workouts";
 import type { SyncWriteResult } from "@/lib/outcome/written-outcome";
@@ -23,8 +24,9 @@ export type PolarSyncPayload = PollCohortPayload;
 /**
  * Run both Polar legs for one user with INDEPENDENT attribution on the shared
  * `polar` ledger. Sequentially awaited (not `Promise.all`) so a workouts error
- * stays attributable. Each leg records its own failure; the vitals leg owns the
- * single success write. A failure in either leg is isolated — both legs are
+ * stays attributable, and so the vitals leg can tell the workouts leg whether
+ * the token just worked (a 403 on exercises is then a per-type refusal). Each
+ * leg records its own failure and its own success. A failure in either leg is isolated — both legs are
  * always attempted, so a workouts-leg failure can never mask a vitals success
  * and vice versa — then the FIRST error is rethrown so the cohort handler warns
  * and skips this user's success accounting without losing the error.
@@ -45,18 +47,20 @@ export async function syncUserPolarLegs(
   // it has to be carried explicitly — otherwise a run in which four of five
   // collections failed reads exactly like a clean one.
   let partial = false;
+  let tokenProven = false;
 
   try {
     const vitals = await syncUserPolar(userId);
     total += vitals.imported;
     partial = vitals.failed;
+    tokenProven = vitals.tokenProven;
   } catch (err) {
     firstError = err;
     hadError = true;
   }
 
   try {
-    total += await syncUserPolarWorkouts(userId);
+    total += await syncUserPolarWorkouts(userId, { tokenProven });
   } catch (err) {
     if (!hadError) {
       firstError = err;
@@ -72,7 +76,7 @@ export const handlePolarSync = makePollCohortHandler({
   taskName: "job.polar_sync",
   findCohort: async (prisma) => {
     const users = await prisma.user.findMany({
-      where: { polarAccessTokenEncrypted: { not: null } },
+      where: { polarAccessTokenEncrypted: { not: null }, ...ACTIVE_ACCOUNT },
       select: { id: true },
     });
     return users.map((u) => u.id);

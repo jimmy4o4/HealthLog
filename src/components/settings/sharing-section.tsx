@@ -23,21 +23,12 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toastWrittenOutcome } from "@/components/outcome/outcome-toast";
 import { FileText, KeyRound, Link2, List, Trash2 } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QueryErrorCard } from "@/components/ui/query-error-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,6 +44,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { apiDelete, apiGet } from "@/lib/api/api-fetch";
+import { showErrorToast } from "@/lib/errors/error-toast";
 
 export function SharingSection() {
   // v1.18.7 — the visible heading + subtitle come from the shared settings
@@ -111,6 +103,7 @@ function ShareLinksCard() {
   const {
     data: links,
     isError,
+    error,
     isLoading,
     refetch,
   } = useQuery({
@@ -126,7 +119,12 @@ function ShareLinksCard() {
     mutationFn: (id: string) => apiDelete(`/api/share-links/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.shareLinks() });
+      toastWrittenOutcome("success", t("settings.sharing.revokedToast"));
     },
+    // A refused revoke leaves the link working; that has to be said, since
+    // the dialog that asked has already closed.
+    onError: (failure) =>
+      showErrorToast(t("settings.sharing.revokeFailed"), { cause: failure }),
   });
 
   const activeLinks = useMemo(
@@ -168,7 +166,7 @@ function ShareLinksCard() {
         {isError ? (
           // A read failure must not read as "no active links" on a clinical
           // sharing surface — that is the §6 fall-through this card must avoid.
-          <QueryErrorCard onRetry={() => refetch()} />
+          <QueryErrorCard error={error} onRetry={() => refetch()} />
         ) : isLoading ? (
           <div className="space-y-2" data-testid="share-links-loading">
             <Skeleton className="h-24 w-full rounded-lg" />
@@ -247,38 +245,21 @@ function ShareLinksCard() {
                       {/* §12 — a right-aligned row action, not a full-width
                         destructive strip stacked once per link (which reads as
                         an alarm wall on a list of shares). */}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="ml-auto flex min-h-11 w-fit sm:min-h-9"
-                          >
-                            <Trash2 className="mr-2 h-3.5 w-3.5" />
-                            {t("settings.sharing.revoke")}
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              {t("settings.sharing.revoke")}
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {t("settings.sharing.revokeDescription")}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>
-                              {t("common.cancel")}
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => revokeMutation.mutate(link.id)}
-                            >
-                              {t("settings.sharing.revoke")}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <ConfirmButton
+                        label={t("settings.sharing.revoke")}
+                        title={t("settings.sharing.revoke")}
+                        body={t("settings.sharing.revokeDescription")}
+                        confirmLabel={t("settings.sharing.revoke")}
+                        onConfirm={() => revokeMutation.mutate(link.id)}
+                        pending={
+                          revokeMutation.isPending &&
+                          revokeMutation.variables === link.id
+                        }
+                        size="sm"
+                        className="ml-auto flex min-h-11 w-fit sm:min-h-9"
+                        icon={<Trash2 className="h-3.5 w-3.5" />}
+                        destructive
+                      />
                     </li>
                   ))}
                 </ul>

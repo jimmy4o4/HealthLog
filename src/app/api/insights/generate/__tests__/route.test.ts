@@ -44,7 +44,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: vi.fn(async () => ({
         insightsPrivacyMode: "aggregated",
         insightsCachedAt: null,
-        insightsCachedText: null,
+        insightsCachedTextEncrypted: null,
         locale: "en",
       })),
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -52,7 +52,7 @@ vi.mock("@/lib/db", () => ({
     // The newest reading per signal type (`readSignalLastSeen`).
     measurement: { groupBy: vi.fn(async () => []) },
     auditLog: {
-      // v1.4.16 A7: route now evicts stale per-status cache rows
+      // v1.4.16: route now evicts stale per-status cache rows
       // (`insights.<scope>-status.<locale>`) on every successful
       // generation. The test prisma mock has to surface the call so
       // the cache-invalidation test can assert against it.
@@ -71,6 +71,9 @@ vi.mock("@/lib/db", () => ({
     consentReceipt: {
       findFirst: vi.fn(async () => ({ id: "receipt-1" })),
     },
+    // The provider health ledger the chain walk reads. Nothing benched by
+    // default; the bench case below seeds a row.
+    providerHealth: { findMany: vi.fn(async () => []) },
   },
 }));
 
@@ -91,7 +94,7 @@ vi.mock("@/lib/ai/provider", async () => {
   return {
     ...actual,
     resolveProvider: vi.fn(),
-    // v1.4.16 phase B5b: the route consults the multi-provider chain
+    // v1.4.16: the route consults the multi-provider chain
     // first; the existing single-provider mocks return an empty chain
     // so the route falls through to `resolveProvider()` and the legacy
     // test fixtures keep behaving exactly as before.
@@ -160,6 +163,8 @@ vi.mock("@/lib/i18n/server-locale", () => ({
   resolveServerLocale: vi.fn(async () => "en"),
 }));
 
+import { NextRequest } from "next/server";
+
 import { GET, POST, resolveInsightsRateLimit } from "../route";
 import { enqueueStatusRefillForUser } from "@/lib/insights/comprehensive-generate";
 import { resolveProvider } from "@/lib/ai/provider";
@@ -175,6 +180,13 @@ import {
 import { annotate } from "@/lib/logging/context";
 import { buildUserPrompt } from "@/lib/ai/prompts/insight-system-prompt";
 import { AiUnavailableError } from "@/lib/ai/capabilities/refusal";
+import {
+  openInsightsCachedText,
+  sealInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
+
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -274,6 +286,51 @@ describe("POST /api/insights/generate — daily token ceiling", () => {
     // stays intact and the card does not blank.
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
     expect(enqueueStatusRefillForUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/insights/generate — a provider the health ledger benched", () => {
+  // #1279 — "Re-run analysis" is a person waiting on the answer. Background
+  // work leaves a benched provider out; this call walks it at the tail of
+  // the chain, so it reaches the provider and reports what the provider
+  // said, not a connection failure that never happened.
+  it("still asks the benched provider and reports its own refusal", async () => {
+    const now = Date.now();
+    vi.mocked(prisma.providerHealth.findMany).mockResolvedValueOnce([
+      {
+        id: "ph-1",
+        userId: "u-1",
+        providerType: "admin-openai",
+        lastResult: "auth_failed",
+        lastStatus: 401,
+        consecutiveFailures: 1,
+        lastOkAt: null,
+        lastFailureAt: new Date(now),
+        nextRetryAt: new Date(now + 60 * 60 * 1000),
+        updatedAt: new Date(now),
+      },
+    ]);
+    const err = Object.assign(new Error("OpenAI request failed (401)"), {
+      httpStatus: 401,
+    });
+    makeProviderThatThrows(err);
+    const provider = await vi.mocked(resolveProvider)("u-1");
+    const body = JSON.stringify({ force: true });
+    const request = new NextRequest("http://localhost/api/insights/generate", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(body.length),
+      },
+      body,
+    });
+
+    const res = await POST(request);
+
+    expect(provider.generateCompletion).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(422);
+    const envelope = (await res.json()) as ApiErrorEnvelope;
+    expect(envelope.error).toMatch(/AI provider rejected/i);
   });
 });
 
@@ -455,7 +512,7 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     const args = vi.mocked(prisma.user.updateMany).mock.calls[0][0] as {
       data: Record<string, unknown>;
     };
-    expect(args.data.insightsCachedText).toEqual(expect.any(String));
+    expect(openInsightsCachedText(args.data)).toEqual(expect.any(String));
     // SHA-256 hex digest of the compacted feature snapshot.
     expect(args.data.insightsSnapshotHash).toMatch(/^[0-9a-f]{64}$/);
     // The cache row records the language it was written in, so a reader
@@ -468,7 +525,7 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     const user = {
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       locale: "en",
       unitPreference: "imperial",
       glucoseUnit: "mmol/L",
@@ -523,7 +580,7 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       insightsExcludeMetrics: ["sleep"],
       locale: "en",
       dateOfBirth: null,
@@ -560,7 +617,7 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       insightsExcludeMetrics: [],
       locale: "en",
     } as never);
@@ -592,11 +649,13 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify({
-        changed: "still fresh",
-        dailyBriefing: { paragraph: "ok", keyFindings: [] },
-        briefingGeneratedAt: new Date().toISOString(),
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          changed: "still fresh",
+          dailyBriefing: { paragraph: "ok", keyFindings: [] },
+          briefingGeneratedAt: new Date().toISOString(),
+        }),
+      ),
       locale: "en",
     } as never);
 
@@ -632,11 +691,13 @@ describe("POST /api/insights/generate — cache write (v1.16.8)", () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify({
-        changed: "still fresh",
-        dailyBriefing: { paragraph: "ok", keyFindings: [] },
-        briefingGeneratedAt: new Date().toISOString(),
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          changed: "still fresh",
+          dailyBriefing: { paragraph: "ok", keyFindings: [] },
+          briefingGeneratedAt: new Date().toISOString(),
+        }),
+      ),
       locale: "en",
     } as never);
 
@@ -669,10 +730,12 @@ describe("POST /api/insights/generate — briefingless fresh cache (v1.28.30)", 
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({
-        changed: "fresh but no briefing",
-        dailyBriefing: null,
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          changed: "fresh but no briefing",
+          dailyBriefing: null,
+        }),
+      ),
       insightsExcludeMetrics: [],
       locale: "en",
     } as never);
@@ -682,10 +745,12 @@ describe("POST /api/insights/generate — briefingless fresh cache (v1.28.30)", 
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsPrivacyMode: "aggregated",
       insightsCachedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: { paragraph: "today", keyFindings: [] },
-        briefingGeneratedAt: new Date().toISOString(),
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: { paragraph: "today", keyFindings: [] },
+          briefingGeneratedAt: new Date().toISOString(),
+        }),
+      ),
       locale: "en",
     } as never);
 
@@ -754,7 +819,7 @@ describe("POST /api/insights/generate — briefingless fresh cache (v1.28.30)", 
   });
 });
 
-// v1.4.36 QA H1 — when both the raw-mode extraction AND the aggregated
+// v1.4.36 — when both the raw-mode extraction AND the aggregated
 // retry cross the 5 MB ceiling, the route used to throw uncaught → 500.
 // It now wraps the retry, downgrades further via the exclude filter,
 // and on a third failure returns 422 with an annotate event for ops.
@@ -766,7 +831,7 @@ describe("POST /api/insights/generate — payload-size hard downgrade (H1)", () 
       // wide shape; the retry asks for the aggregated shape.
       insightsPrivacyMode: "raw",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       insightsExcludeMetrics: [],
       locale: "en",
     } as never);
@@ -813,7 +878,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     };
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify(cached),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify(cached),
+      ),
       locale: "en",
     } as never);
 
@@ -838,7 +905,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const stale = new Date(Date.now() - 48 * 60 * 60 * 1000);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: stale,
-      insightsCachedText: JSON.stringify({ dailyBriefing: null }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: null }),
+      ),
       locale: "en",
     } as never);
 
@@ -863,7 +932,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const cached = { dailyBriefing: { paragraph: "Deutsch", keyFindings: [] } };
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify(cached),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify(cached),
+      ),
       insightsCachedLocale: "de",
       locale: "en",
     } as never);
@@ -892,7 +963,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     };
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify(cached),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify(cached),
+      ),
       insightsCachedLocale: "en",
       locale: "en",
     } as never);
@@ -914,10 +987,12 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const yesterday = new Date(Date.now() - 30 * 60 * 60 * 1000);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(Date.now() - 60_000),
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: { paragraph: "Yesterday's read.", keyFindings: [] },
-        briefingGeneratedAt: yesterday.toISOString(),
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: { paragraph: "Yesterday's read.", keyFindings: [] },
+          briefingGeneratedAt: yesterday.toISOString(),
+        }),
+      ),
       insightsCachedLocale: "en",
       locale: "en",
       timezone: "UTC",
@@ -940,29 +1015,31 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
   it("serves today's signals with deltas at display precision", async () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: {
-          paragraph: "ok",
-          keyFindings: [],
-          signalsOfDay: [
-            {
-              sourceMetric: "sleep",
-              tone: "info",
-              headline: "Shorter night",
-              nudge: "An earlier night.",
-              delta: null,
-            },
-            {
-              sourceMetric: "pulse",
-              tone: "watch",
-              headline: "Pulse up",
-              nudge: "Rest.",
-              delta: "+33.72 bpm vs your 30-day average",
-            },
-          ],
-        },
-        briefingGeneratedAt: new Date().toISOString(),
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: {
+            paragraph: "ok",
+            keyFindings: [],
+            signalsOfDay: [
+              {
+                sourceMetric: "sleep",
+                tone: "info",
+                headline: "Shorter night",
+                nudge: "An earlier night.",
+                delta: null,
+              },
+              {
+                sourceMetric: "pulse",
+                tone: "watch",
+                headline: "Pulse up",
+                nudge: "Rest.",
+                delta: "+33.72 bpm vs your 30-day average",
+              },
+            ],
+          },
+          briefingGeneratedAt: new Date().toISOString(),
+        }),
+      ),
       insightsCachedLocale: "en",
       locale: "en",
       timezone: "UTC",
@@ -994,7 +1071,7 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     vi.mocked(hasUsableStatusProvider).mockResolvedValueOnce(false);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: null,
-      insightsCachedText: null,
+      insightsCachedTextEncrypted: null,
       locale: "en",
     } as never);
 
@@ -1023,7 +1100,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const cached = { dailyBriefing: { paragraph: "old", keyFindings: [] } };
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: stale,
-      insightsCachedText: JSON.stringify(cached),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify(cached),
+      ),
       locale: "en",
     } as never);
 
@@ -1050,7 +1129,9 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const cachedAt = new Date(Date.now() - 60 * 60 * 1000);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: cachedAt,
-      insightsCachedText: JSON.stringify({ dailyBriefing: null }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({ dailyBriefing: null }),
+      ),
       locale: "en",
     } as never);
     // Marker newer than the last successful generation (written right
@@ -1082,9 +1163,11 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
     const cachedAt = new Date(Date.now() - 60 * 60 * 1000);
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: cachedAt,
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: { paragraph: "held", keyFindings: [] },
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: { paragraph: "held", keyFindings: [] },
+        }),
+      ),
       locale: "en",
     } as never);
     vi.mocked(prisma.auditLog.findFirst).mockResolvedValueOnce({
@@ -1105,9 +1188,11 @@ describe("GET /api/insights/generate — read-only advisor read", () => {
   it("reports hasProvider: true on a normal cached read", async () => {
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify({
-        dailyBriefing: { paragraph: "ok", keyFindings: [] },
-      }),
+      insightsCachedTextEncrypted: sealInsightsCachedText(
+        JSON.stringify({
+          dailyBriefing: { paragraph: "ok", keyFindings: [] },
+        }),
+      ),
       locale: "en",
     } as never);
 

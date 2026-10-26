@@ -41,6 +41,8 @@ import type {
 import { useDateFormatPreference, useTranslations } from "@/lib/i18n/context";
 import { SCORE_PILLAR_LABEL_KEYS } from "@/lib/score-config/labels";
 import { cn } from "@/lib/utils";
+import { InlineAction } from "@/components/ui/inline-action";
+import { ScorePill } from "@/components/ui/score-pill";
 
 /**
  * The Health Score panel: the hero band's right-hand column.
@@ -129,7 +131,7 @@ const PANEL_CHROME_CLASS =
 const PANEL_RESERVE_CLASS = "min-h-[28rem]";
 
 /**
- * v1.21.2 (A5) — readiness contributor keys the Tension Verdict surfaces.
+ * v1.21.2 — readiness contributor keys the Tension Verdict surfaces.
  * Kept as a local string union so the client never imports the server
  * derived-engine types. Localised through the existing
  * `insights.derived.composite.READINESS.component.{key}` labels.
@@ -138,7 +140,7 @@ export type ReadinessContributorKey =
   "rhr" | "hrv" | "sleep" | "respiratory" | "mood";
 
 /**
- * v1.21.2 (A5) — readiness contributor key → existing localised label key.
+ * v1.21.2 — readiness contributor key → existing localised label key.
  * Reuses the score-anatomy contributor labels so the Tension Verdict reads the
  * same names the wellness ring's anatomy view renders — no new keys.
  */
@@ -151,7 +153,7 @@ const TENSION_CONTRIBUTOR_LABEL_KEY: Record<ReadinessContributorKey, string> = {
 };
 
 /**
- * v1.21.2 (A6) — `MeasurementType` → existing localised metric-name key
+ * v1.21.2 — `MeasurementType` → existing localised metric-name key
  * (`measurements.type*`). Only the salient deviation vitals the
  * return-to-baseline detector scans need an entry; an unmapped type falls back
  * to a prettified raw form so a new type never blanks.
@@ -243,7 +245,7 @@ function reasonOf(report: HealthScoreReport, id: string): string {
 export interface HealthScoreCardProps {
   report: HealthScoreReport;
   /**
-   * v1.21.2 (A5) — Tension Verdict, server-resolved + locale-agnostic. `band`
+   * v1.21.2 — Tension Verdict, server-resolved + locale-agnostic. `band`
    * is the readiness composite's band; `positive` / `negative` carry the
    * readiness contributor KEYS. Null on a coherent day (or under a clinical
    * red-flag suppress).
@@ -254,7 +256,7 @@ export interface HealthScoreCardProps {
     negative: ReadinessContributorKey[];
   } | null;
   /**
-   * v1.21.2 (A6) — return-to-baseline, server-resolved + locale-agnostic.
+   * v1.21.2 — return-to-baseline, server-resolved + locale-agnostic.
    * `metricType` is a `MeasurementType` this card maps to its localised metric
    * name. Null when no salient metric returned from a genuine prior
    * out-of-band run.
@@ -433,22 +435,24 @@ export function HealthScoreCard({
         </p>
         <div className="flex shrink-0 items-center gap-2">
           {report.delta != null && report.delta > 0 ? (
-            <span
+            <ScorePill
+              tone="success"
+              numeric
               data-slot="health-score-card-delta-chip"
-              className="bg-success/15 text-success shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
             >
               +{report.delta}
-            </span>
+            </ScorePill>
           ) : null}
           {/* v1.42 — the way to the score's course over time. */}
-          <Link
-            href="/insights/health-score"
-            data-slot="health-score-history-link"
-            className="text-foreground/80 hover:text-foreground focus-visible:ring-ring/50 -my-3 inline-flex items-center gap-1 rounded-md py-3 text-xs underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:outline-none"
-          >
-            <History className="size-3.5" aria-hidden="true" />
-            {t("insights.healthScore.historyLink")}
-          </Link>
+          <InlineAction asChild tone="foreground">
+            <Link
+              href="/insights/health-score"
+              data-slot="health-score-history-link"
+            >
+              <History className="size-3.5" aria-hidden="true" />
+              {t("insights.healthScore.historyLink")}
+            </Link>
+          </InlineAction>
         </div>
       </div>
 
@@ -856,14 +860,14 @@ function PillarRow({
       data-status="ok"
       className="grid grid-cols-[minmax(0,7rem)_1fr_2rem_auto] items-center gap-2 text-xs"
     >
-      {/* The label truncates; the row never grows. `minmax(0,…)` plus
-          `min-w-0 truncate` is what makes that structural rather than a
-          promise — drop either and the track grows to the longest word and
-          pushes the row. Widening the column does not rescue the long names:
-          the longest label in five of the six locales overruns any column
-          this panel can afford, so the extra width would come off the fill
-          bar and buy a few more characters of one language. */}
-      <span className="text-muted-foreground min-w-0 truncate">
+      {/* The label wraps inside a fixed track; the row grows a line rather
+          than cutting the name. `minmax(0,…)` plus `min-w-0` keeps the track
+          from growing to the longest word, and `hyphens-auto` splits a
+          compound ("Körperfett-verteilung") at a syllable instead of ending
+          it in an ellipsis. Widening the column does not rescue the long
+          names: the longest label in most locales overruns any column this
+          panel can afford, and the width would come off the fill bar. */}
+      <span className="text-muted-foreground min-w-0 break-words hyphens-auto">
         {t(PILLAR_LABEL_KEY[pillar.id])}
       </span>
       <div

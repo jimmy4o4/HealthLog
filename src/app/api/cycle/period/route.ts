@@ -18,12 +18,8 @@ import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
 import { overwriteDetails } from "@/lib/sharing/audit-details";
-import {
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { requireCycleEnabled } from "@/lib/cycle/gate";
 import { withIdempotency } from "@/lib/idempotency";
 import { cyclePeriodSchema } from "@/lib/validations/cycle";
@@ -63,25 +59,21 @@ async function postPeriod(request: NextRequest): Promise<Response> {
   const gate = await requireCycleEnabled(user.id, user.gender);
   if (!gate.enabled) return gate.response;
 
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, cyclePeriodSchema, {
     maxBytes: 64 * 1024,
+    errorCode: "cycle.period.invalid",
+    onInvalid: (error, rawBody) => {
+      const shape = unstableExternalIdShape(rawBody);
+      annotate({
+        action: { name: "cycle.period.validation-failed" },
+        meta: {
+          issue_count: error.issues.length,
+          ...(shape ? unstableExternalIdMeta("cycle.period", [shape]) : {}),
+        },
+      });
+    },
   });
-  if (jsonError) return jsonError;
-
-  const parsed = cyclePeriodSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    const shape = unstableExternalIdShape(rawBody);
-    annotate({
-      action: { name: "cycle.period.validation-failed" },
-      meta: {
-        issue_count: parsed.error.issues.length,
-        ...(shape ? unstableExternalIdMeta("cycle.period", [shape]) : {}),
-      },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "cycle.period.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const { action, date, externalId, loggedAt } = parsed.data;
   const tz = user.timezone ?? DEFAULT_TIMEZONE;
@@ -170,7 +162,7 @@ async function postPeriod(request: NextRequest): Promise<Response> {
   await auditLog("cycle.period.boundary", {
     userId: user.id,
     ipAddress: getClientIp(request),
-    // C4 — the dates this boundary moved on the neighbouring cycles. They are
+    // The dates this boundary moved on the neighbouring cycles. They are
     // the only unrecoverable part of the write: the day log it upserts is a
     // row, the re-anchoring is an overwrite of two columns on somebody else's
     // cycle history.

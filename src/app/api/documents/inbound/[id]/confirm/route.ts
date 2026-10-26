@@ -1,5 +1,5 @@
 /**
- * v1.25 (W-DOCS-IN) — review-then-confirm: commit the user's decisions.
+ * v1.25 — review-then-confirm: commit the user's decisions.
  *
  * The ONLY write path out of the staging area. The user approves or rejects
  * each staged fact; an approved fact is committed to its structured store
@@ -17,13 +17,8 @@
 import { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma } from "@/lib/db";
 import { commitApprovedFact, FactCommitError } from "@/lib/documents/commit";
@@ -56,13 +51,10 @@ async function confirmDocument(
     });
   }
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, inboundConfirmSchema, {
     maxBytes: 64 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = inboundConfirmSchema.safeParse(body);
-  if (!parsed.success) return returnAllZodIssues(parsed.error, 422);
+  if (!parsed.ok) return parsed.error;
 
   const approved: { factId: string; recordType: string; recordId: string }[] =
     [];
@@ -100,7 +92,7 @@ async function confirmDocument(
     }
 
     try {
-      // v1.43 (D1223) — an OBSERVATION may name the marker the person chose
+      // v1.43 — an OBSERVATION may name the marker the person chose
       // on the review screen; the label is then remembered as its alias.
       const ref = await commitApprovedFact(user.id, fact, {
         biomarkerId: decision.biomarkerId,

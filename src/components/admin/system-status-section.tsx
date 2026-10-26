@@ -13,6 +13,7 @@ import {
   Key,
   Loader2,
   Map,
+  MemoryStick,
   Server,
   Users,
 } from "lucide-react";
@@ -28,8 +29,9 @@ import {
   useSystemStatus,
   type FailingQueue,
 } from "./_shared";
+import { EmptyState } from "@/components/ui/empty-state";
 
-// v1.4.16 phase B3: Recharts is ~108 KiB Brotli — defer-load the host
+// v1.4.16: Recharts is ~108 KiB Brotli — defer-load the host
 // metrics chart so the system-status page only ships it when an admin
 // actually opens this view. Splitting at the wrapper boundary (instead
 // of per-primitive) keeps Recharts' `findAllByType` reconciliation
@@ -88,12 +90,14 @@ export function FailingJobsCard({
         description={t("admin.failingJobs.description")}
       />
       {failingJobs.queues.length === 0 ? (
-        <p
+        <EmptyState
+          variant="plain"
+          size="compact"
+          title={t("admin.failingJobs.none", {
+            hours: failingJobs.windowHours,
+          })}
           data-testid="failing-jobs-none"
-          className="text-muted-foreground text-sm"
-        >
-          {t("admin.failingJobs.none", { hours: failingJobs.windowHours })}
-        </p>
+        />
       ) : (
         <ul data-testid="failing-jobs-list" className="space-y-3">
           {failingJobs.queues.map((queue) => (
@@ -127,7 +131,7 @@ export function FailingJobsCard({
 export function SystemStatusSection() {
   const { t } = useTranslations();
   const fmt = useFormatters();
-  const { data: status, isError, refetch } = useSystemStatus();
+  const { data: status, isError, error, refetch } = useSystemStatus();
 
   return (
     <div className="space-y-6">
@@ -155,6 +159,27 @@ export function SystemStatusSection() {
                   : t("admin.databaseError")
               }
               tone={status.database === "connected" ? "success" : "destructive"}
+            />
+            <StatusItem
+              icon={MemoryStick}
+              label={t("admin.heapLimitLabel")}
+              value={
+                status.memory.belowFloor && status.memory.containerLimitMb
+                  ? t("admin.memoryBelowFloor", {
+                      mb: status.memory.containerLimitMb,
+                      floor: status.memory.floorMb,
+                    })
+                  : status.memory.low
+                    ? t("admin.heapLimitLow", { mb: status.memory.heapLimitMb })
+                    : t("admin.heapLimitValue", {
+                        mb: status.memory.heapLimitMb,
+                      })
+              }
+              tone={
+                status.memory.belowFloor || status.memory.low
+                  ? "warning"
+                  : undefined
+              }
             />
             <StatusItem
               icon={Clock}
@@ -236,7 +261,7 @@ export function SystemStatusSection() {
                 tone="success"
               />
             )}
-            {/* v1.4.27 R5 — offline GeoLite2 availability, read from the
+            {/* v1.4.27 — offline GeoLite2 availability, read from the
                 admin status rather than the public /api/version. */}
             <StatusItem
               icon={Map}
@@ -266,6 +291,8 @@ export function SystemStatusSection() {
           // transient 500 (rolling deploy, DB blip) doesn't require a
           // full page reload to recover.
           <QueryErrorRow
+            inset
+            error={error}
             message={t("admin.systemStatusLoadError")}
             onRetry={() => void refetch()}
             retryLabel={t("admin.systemStatusRetry")}

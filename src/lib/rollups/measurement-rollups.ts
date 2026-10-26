@@ -34,8 +34,10 @@
  * took. Nothing here reads both tiers; the rollup replaces the legacy read and
  * falls back to live SQL only on a coverage miss.
  */
+import { activeAccountSql } from "@/lib/account-deletion/active-account";
 import { prisma } from "@/lib/db";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
+import { enqueueWhenBossReady } from "@/lib/jobs/boss-ready";
 import { annotate } from "@/lib/logging/context";
 import {
   readCanonicalRollupBuckets,
@@ -126,6 +128,17 @@ export const ROLLUP_FULL_BACKFILL_QUEUE = "rollup-full-backfill";
 /** Boot-fold worker concurrency. Serial so we don't crowd the pool. */
 export const ROLLUP_FULL_BACKFILL_CONCURRENCY = 1;
 
+/**
+ * The full fold's expiry: an hour. One fold is four granularities, each an
+ * aggregate held to the connection's statement timeout (60 s by default) and
+ * a persist transaction of up to 120 s, so the worst case under the defaults
+ * is close to thirteen minutes, too near pg-boss's fifteen-minute default to
+ * rely on, and an operator who raises `DATABASE_STATEMENT_TIMEOUT_MS` (or
+ * sets it to 0) lifts that bound altogether. Past the expiry pg-boss retries
+ * the job, and the retry folded the same account a second time.
+ */
+export const ROLLUP_FULL_BACKFILL_EXPIRE_SECONDS = 60 * 60;
+
 /** Payload the boot-time backfill helper enqueues. */
 export interface RollupFullBackfillPayload {
   userId: string;
@@ -165,7 +178,7 @@ interface RollupRow {
   sd: number | null;
   slope: number | null;
   r2: number | null;
-  // v1.20.0 F6 — per-bucket OLS regression accumulators (epoch-day x-axis).
+  // v1.20.0 — per-bucket OLS regression accumulators (epoch-day x-axis).
   // See `MeasurementRollup.sumX` doc in schema.prisma. These let the
   // windowed slope / r² / sd compose from summed accumulators across DAY
   // buckets with bit-identical parity to live REGR_*/STDDEV_POP.
@@ -173,6 +186,10 @@ interface RollupRow {
   sum_xy: number | null;
   sum_xx: number | null;
   sum_yy: number | null;
+  // The extremes of the readings' own `value`, without the per-row range
+  // `min_value` / `max_value` widen to. See `MeasurementRollup.readingMinValue`.
+  reading_min_value: number | null;
+  reading_max_value: number | null;
 }
 
 /**
@@ -203,8 +220,14 @@ export async function recomputeUserRollups(
      * statement group, so it ends with it.
      */
     statementTimeoutMs?: number;
+    /**
+     * Asked before each granularity: a fold that runs under a job's budget
+     * (`jobBudget`) stops between granularities, each of which commits on
+     * its own, and reports `stopped`.
+     */
+    shouldStop?: () => boolean;
   } = {},
-): Promise<{ rowsUpserted: number; durationMs: number }> {
+): Promise<{ rowsUpserted: number; durationMs: number; stopped?: true }> {
   const startedAt = Date.now();
   const granularities = opts.granularities ?? ALL_GRANULARITIES;
   const fiveYearsAgo = new Date(Date.now() - ROLLUP_FOLD_WINDOW_MS);
@@ -214,6 +237,13 @@ export async function recomputeUserRollups(
   let rowsUpserted = 0;
 
   for (const granularity of granularities) {
+    if (opts.shouldStop?.()) {
+      return {
+        rowsUpserted,
+        durationMs: Date.now() - startedAt,
+        stopped: true,
+      };
+    }
     // Snap the window out to whole buckets before aggregating. The
     // aggregate filters rows by `measured_at` but GROUPS by
     // `date_trunc(<granularity>, measured_at)`, and `persistRollupRows`
@@ -335,11 +365,170 @@ export async function recomputeBucketsForMeasurement(
 }
 
 /**
- * Best-effort pg-boss enqueue. Silent no-op when no boss is attached
- * (route is running in a context without the worker — typically the
- * test suite). The reader-side fall-through still produces fresh
- * data on a cache miss, so missing the enqueue is at-most a one-read
- * cost rather than a correctness bug.
+ * UTC wall-clock literals for a `timestamp[]` parameter. `measured_at` and
+ * `bucket_start` are naive UTC timestamps, so the instants they are compared
+ * with must be too: a `timestamptz[]` parameter is converted through the
+ * session time zone, and in any zone but UTC neither the day filter nor the
+ * keyed delete matched a single day, so a refold left its buckets stale.
+ */
+function utcStamps(dates: readonly Date[]): string[] {
+  return dates.map((d) => d.toISOString().replace("Z", ""));
+}
+
+/** Keys one set-based DAY refold carries; bounds the statement's arrays. */
+const KEYED_REFOLD_CHUNK = 500;
+
+/**
+ * The set-based sibling of {@link recomputeBucketsForMeasurement}, for a write
+ * that touched many `(type, day)` buckets at once (a sync, an import, a batch).
+ *
+ * The per-key hook costs an aggregate, a transaction and three queue sends per
+ * bucket, so a sync that re-read two years of history paid that seven thousand
+ * times over. Here the DAY tier is refolded for exactly the touched buckets in
+ * one aggregate and one transaction per chunk, and the coarser tiers are
+ * enqueued once per contiguous run of buckets rather than once per day. The
+ * result is the one the per-key loop produced: every touched day re-derived
+ * from its live rows, a day left empty dropped, untouched days left alone.
+ */
+export async function recomputeBucketsForKeys(
+  userId: string,
+  rows: Array<{ type: MeasurementType; measuredAt: Date }>,
+): Promise<void> {
+  // Sorted on (type, day), the order every upsert of the tier takes its row
+  // locks in (`persistRollupRows` sorts the same way), and chunked small, so
+  // a keyed refold racing the full fold or another refold holds a short,
+  // deterministic slice and waits rather than interleaving lock orders.
+  const keys = collapseToTypeDayKeys(rows).sort((a, b) =>
+    a.type !== b.type
+      ? a.type < b.type
+        ? -1
+        : 1
+      : a.measuredAt.getTime() - b.measuredAt.getTime(),
+  );
+  for (let i = 0; i < keys.length; i += KEYED_REFOLD_CHUNK) {
+    await refoldDayBuckets(userId, keys.slice(i, i + KEYED_REFOLD_CHUNK));
+  }
+  for (const granularity of ASYNC_GRANULARITIES) {
+    for (const run of bucketRuns(keys, granularity)) {
+      await enqueueRollupRecompute({ userId, granularity, ...run });
+    }
+  }
+}
+
+async function refoldDayBuckets(
+  userId: string,
+  keys: Array<{ type: MeasurementType; measuredAt: Date }>,
+): Promise<void> {
+  if (keys.length === 0) return;
+  const types = [...new Set(keys.map((k) => k.type))];
+  const days = [...new Set(keys.map((k) => k.measuredAt.getTime()))].sort(
+    (a, b) => a - b,
+  );
+  const wanted = new Set(
+    keys.map((k) => `${k.type}|${k.measuredAt.getTime()}`),
+  );
+  const aggregate = await runRollupAggregate({
+    userId,
+    types,
+    granularity: "DAY",
+    from: new Date(days[0]!),
+    to: new Date(days[days.length - 1]! + 24 * 60 * 60 * 1000),
+    days: days.map((d) => new Date(d)),
+  });
+  // The day filter is per day, not per (type, day): another touched type's
+  // day comes back too. Its aggregate would be right, but it was not touched,
+  // so it is not rewritten.
+  const ordered = aggregate
+    .filter((r) =>
+      wanted.has(`${r.type}|${new Date(r.bucket_start).getTime()}`),
+    )
+    .sort((a, b) =>
+      a.type !== b.type
+        ? a.type < b.type
+          ? -1
+          : 1
+        : a.source !== b.source
+          ? a.source < b.source
+            ? -1
+            : 1
+          : a.bucket_start.getTime() - b.bucket_start.getTime(),
+    );
+  // Delete exactly the touched buckets (every source, so a source that left a
+  // day does not strand its row, and a day that emptied out is dropped), then
+  // upsert the fresh aggregate, in one transaction like `persistRollupRows`.
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(
+        `DELETE FROM measurement_rollups
+          WHERE user_id = $1
+            AND granularity = 'DAY'::"measurement_rollup_granularity"
+            AND (type, bucket_start) IN (
+              SELECT k.t::"measurement_type", k.b
+                FROM unnest($2::text[], $3::timestamp[]) AS k(t, b)
+            )`,
+        userId,
+        keys.map((k) => k.type),
+        utcStamps(keys.map((k) => k.measuredAt)),
+      );
+      for (let i = 0; i < ordered.length; i += 500) {
+        const { sql, params } = buildRollupUpsert(
+          userId,
+          "DAY",
+          ordered.slice(i, i + 500),
+        );
+        await tx.$executeRawUnsafe(sql, ...params);
+      }
+    },
+    { maxWait: 10_000, timeout: 120_000 },
+  );
+}
+
+/**
+ * The coarse buckets the touched days fall in, merged per type into runs of
+ * adjacent buckets: one recompute job per run, each covering whole buckets.
+ */
+function bucketRuns(
+  keys: Array<{ type: MeasurementType; measuredAt: Date }>,
+  granularity: RollupGranularity,
+): Array<{ type: MeasurementType; from: Date; to: Date }> {
+  const spans = new Map<
+    string,
+    { type: MeasurementType; from: Date; to: Date }
+  >();
+  for (const k of keys) {
+    const span = bucketSpan(k.measuredAt, granularity);
+    spans.set(`${k.type}|${span.from.getTime()}`, { type: k.type, ...span });
+  }
+  const sorted = [...spans.values()].sort((a, b) =>
+    a.type !== b.type
+      ? a.type < b.type
+        ? -1
+        : 1
+      : a.from.getTime() - b.from.getTime(),
+  );
+  const runs: Array<{ type: MeasurementType; from: Date; to: Date }> = [];
+  for (const span of sorted) {
+    const last = runs[runs.length - 1];
+    if (
+      last &&
+      last.type === span.type &&
+      last.to.getTime() === span.from.getTime()
+    ) {
+      last.to = span.to;
+    } else {
+      runs.push({ ...span });
+    }
+  }
+  return runs;
+}
+
+/**
+ * Best-effort pg-boss enqueue. A write that lands while the process is still
+ * bringing its boss up is sent once the boss is bound (`enqueueWhenBossReady`)
+ * instead of being dropped; with no boss coming at all (a context without
+ * the worker, typically the test suite) it is a silent no-op. The
+ * reader-side fall-through still produces fresh data on a cache miss, so a
+ * missed enqueue is at most a one-read cost rather than a correctness bug.
  */
 export async function enqueueRollupRecompute(input: {
   userId: string;
@@ -348,8 +537,6 @@ export async function enqueueRollupRecompute(input: {
   from: Date;
   to: Date;
 }): Promise<void> {
-  const boss = getGlobalBoss();
-  if (!boss) return;
   const payload: RollupRecomputePayload = {
     userId: input.userId,
     type: input.type,
@@ -358,25 +545,36 @@ export async function enqueueRollupRecompute(input: {
     to: input.to.toISOString(),
     enqueuedAt: new Date().toISOString(),
   };
-  await boss.send(ROLLUP_RECOMPUTE_QUEUE, payload, {
-    retryLimit: 3,
-    retryDelay: 30,
-    retryBackoff: true,
-    // Coalesce duplicate enqueues for the same bucket key — multiple
-    // measurements landing on the same day shouldn't each spawn a
-    // separate worker run. The singleton key uses bucket-start so
-    // two writes inside the same week share one queued job.
-    //
-    // The key only does that because the queue carries the `short` policy
-    // (see `reminder/register-rollup.ts`); under pg-boss's default `standard`
-    // policy nothing indexes `singleton_key` and this key coalesced nothing,
-    // which is how a large sync came to fan out thousands of jobs re-deriving
-    // byte-identical rows. `short` collapses sends only while an identical job
-    // is still QUEUED — safe here precisely because the handler re-reads the
-    // bucket's live rows when it starts, so the queued job still sees writes
-    // that land after it was enqueued.
-    singletonKey: `${input.userId}|${input.type}|${input.granularity}|${input.from.toISOString()}`,
-  });
+  await enqueueWhenBossReady("rollup-recompute", (boss) =>
+    boss.send(ROLLUP_RECOMPUTE_QUEUE, payload, {
+      retryLimit: 3,
+      retryDelay: 30,
+      retryBackoff: true,
+      // Coalesce duplicate enqueues for the same bucket key — multiple
+      // measurements landing on the same day shouldn't each spawn a
+      // separate worker run. The singleton key uses bucket-start so
+      // two writes inside the same week share one queued job.
+      //
+      // The key only does that because the queue carries the `short` policy
+      // (see `reminder/register-rollup.ts`); under pg-boss's default `standard`
+      // policy nothing indexes `singleton_key` and this key coalesced nothing,
+      // which is how a large sync came to fan out thousands of jobs re-deriving
+      // byte-identical rows. `short` collapses sends only while an identical job
+      // is still QUEUED — safe here precisely because the handler re-reads the
+      // bucket's live rows when it starts, so the queued job still sees writes
+      // that land after it was enqueued.
+      //
+      // A job covering a run of several buckets (`recomputeBucketsForKeys`)
+      // carries its end in the key too: under the bare start it would collapse
+      // into a queued single-bucket job and the rest of the run would be lost.
+      singletonKey:
+        `${input.userId}|${input.type}|${input.granularity}|${input.from.toISOString()}` +
+        (bucketSpan(input.from, input.granularity).to.getTime() ===
+        input.to.getTime()
+          ? ""
+          : `|${input.to.toISOString()}`),
+    }),
+  );
 }
 
 /**
@@ -456,10 +654,21 @@ async function runRollupAggregate(
     granularity: RollupGranularity;
     from: Date;
     to: Date;
+    /**
+     * Only the readings of these UTC days, inside `[from, to)`. A keyed
+     * refold (`recomputeBucketsForKeys`) passes the touched days so a handful
+     * spread across years does not aggregate everything in between.
+     */
+    days?: Date[];
   },
   db: Pick<typeof prisma, "$queryRawUnsafe"> = prisma,
 ): Promise<RollupRow[]> {
   if (input.types && input.types.length === 0) return [];
+  // Bound as the fourth parameter, never spliced.
+  const dayFilter = input.days
+    ? `AND date_trunc('day', m."measured_at") = ANY($4::timestamp[])`
+    : "";
+  const dayParams = input.days ? [utcStamps(input.days)] : [];
 
   // Postgres rejects `date_trunc($1::text, m."measured_at")` in a
   // GROUP BY because the planner sees the parameterised expression
@@ -522,13 +731,16 @@ async function runRollupAggregate(
         SUM(${REBASED_X})::double precision                       AS sum_x,
         SUM(${REBASED_X} * m."value")::double precision           AS sum_xy,
         SUM(${REBASED_X} * ${REBASED_X})::double precision        AS sum_xx,
-        SUM(m."value" * m."value")::double precision              AS sum_yy
+        SUM(m."value" * m."value")::double precision              AS sum_yy,
+        MIN(m."value")::double precision                          AS reading_min_value,
+        MAX(m."value")::double precision                          AS reading_max_value
       FROM measurements m
       WHERE m."user_id" = $1
         AND m."type" IN (${typeList})
         AND m."measured_at" >= $2
         AND m."measured_at" <  $3
         AND m."deleted_at" IS NULL
+        ${dayFilter}
       GROUP BY m."type", m."source", ${dateTrunc}
     `;
     return applyHourlyMeanDay(
@@ -539,6 +751,7 @@ async function runRollupAggregate(
         input.userId,
         input.from,
         input.to,
+        ...dayParams,
       ),
     );
   }
@@ -570,12 +783,15 @@ async function runRollupAggregate(
       SUM(${REBASED_X})::double precision                       AS sum_x,
       SUM(${REBASED_X} * m."value")::double precision           AS sum_xy,
       SUM(${REBASED_X} * ${REBASED_X})::double precision        AS sum_xx,
-      SUM(m."value" * m."value")::double precision              AS sum_yy
+      SUM(m."value" * m."value")::double precision              AS sum_yy,
+      MIN(m."value")::double precision                          AS reading_min_value,
+      MAX(m."value")::double precision                          AS reading_max_value
     FROM measurements m
     WHERE m."user_id" = $1
       AND m."measured_at" >= $2
       AND m."measured_at" <  $3
       AND m."deleted_at" IS NULL
+      ${dayFilter}
     GROUP BY m."type", m."source", ${dateTrunc}
   `;
   return applyHourlyMeanDay(
@@ -586,6 +802,7 @@ async function runRollupAggregate(
       input.userId,
       input.from,
       input.to,
+      ...dayParams,
     ),
   );
 }
@@ -611,6 +828,7 @@ async function applyHourlyMeanDay(
     granularity: RollupGranularity;
     from: Date;
     to: Date;
+    days?: Date[];
   },
   rows: RollupRow[],
 ): Promise<RollupRow[]> {
@@ -661,6 +879,11 @@ async function applyHourlyMeanDay(
           AND m."measured_at" >= $2
           AND m."measured_at" <  $3
           AND m."deleted_at" IS NULL
+          ${
+            input.days
+              ? `AND date_trunc('day', m."measured_at") = ANY($4::timestamp[])`
+              : ""
+          }
         GROUP BY m."type", m."source", date_trunc('hour', m."measured_at")
       ) h
       GROUP BY 1, 2, 3
@@ -670,6 +893,7 @@ async function applyHourlyMeanDay(
     input.userId,
     input.from,
     input.to,
+    ...(input.days ? [utcStamps(input.days)] : []),
   );
   const byKey = new Map(
     means.map((m) => [
@@ -773,9 +997,9 @@ async function persistRollupRows(
     : null;
 
   if (rows.length === 0) {
-    // Nothing to write. With a prune scope there is still work to do: the
-    // window is authoritatively empty, so every bucket in it must go. No
-    // transaction needed — there is no insert leg that could leave a gap.
+    // Nothing to write. With a prune scope the window is authoritatively
+    // empty and every bucket in it goes; no insert leg, so no transaction.
+    // account-deletion: `pruneWhere` is the one account this fold was handed.
     if (!pruneWhere) return 0;
     await prisma.measurementRollup.deleteMany({ where: pruneWhere });
     return 0;
@@ -828,20 +1052,18 @@ async function persistRollupRows(
   // COMMITTED lets a later statement see it — without aborting the
   // batch.
   //
-  // Transaction sizing: one call covers ONE granularity, so the worst
-  // case is the full 5-year DAY fold of a multi-source power user —
-  // tens of thousands of rows in 500-row chunks, well inside Postgres
-  // limits but potentially slow on self-host disks. A per-type
-  // transaction was considered and rejected: it would re-open the
-  // committed-delete gap between types sharing the bucket range. The
-  // 120 s timeout (Prisma default: 5 s) covers the chunk round-trips
-  // with headroom; the incremental hook path is a single sub-500-row
-  // chunk and finishes far inside it.
+  // Transaction sizing: one call covers ONE granularity, so the worst case
+  // is a multi-source power user's 5-year DAY fold: tens of thousands of
+  // rows in 500-row chunks, slow on self-host disks. A per-type transaction
+  // would re-open the committed-delete gap between types sharing the bucket
+  // range. The 120 s timeout (Prisma default: 5 s) covers the round-trips;
+  // the incremental hook path is a single sub-500-row chunk.
   let touched = 0;
   await prisma.$transaction(
     async (tx) => {
       if (statementTimeoutMs)
         await applyStatementBudget(tx, statementTimeoutMs);
+      // account-deletion: `deleteWhere` is the one account this fold was handed.
       await tx.measurementRollup.deleteMany({ where: deleteWhere });
       for (let i = 0; i < ordered.length; i += CHUNK) {
         const slice = ordered.slice(i, i + CHUNK);
@@ -883,7 +1105,7 @@ function buildRollupUpsert(
       row.mean ?? 0,
       row.min_value ?? 0,
       row.max_value ?? 0,
-      // v1.4.39 W-SUM — populate for every type. Cumulative read paths
+      // v1.4.39 — populate for every type. Cumulative read paths
       // (steps, flights, distance, daylight, active-energy) consume this
       // column directly; spot metrics carry it for free because the
       // underlying SUM aggregator runs in the same query as AVG/MIN/MAX.
@@ -891,26 +1113,30 @@ function buildRollupUpsert(
       row.sd,
       row.slope,
       row.r2,
-      // v1.20.0 F6 — persist the regression accumulators alongside the
+      // v1.20.0 — persist the regression accumulators alongside the
       // existing stats; they ride the same aggregate (no extra round-trip).
       row.sum_x ?? null,
       row.sum_xy ?? null,
       row.sum_xx ?? null,
       row.sum_yy ?? null,
+      row.reading_min_value ?? null,
+      row.reading_max_value ?? null,
       computedAt,
     );
     tuples.push(
       `($${base + 1}, $${base + 2}::"measurement_type", $${base + 3}::"measurement_rollup_granularity", ` +
         `$${base + 4}::timestamptz, $${base + 5}::"measurement_source", $${base + 6}::int, ` +
         `$${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, ` +
-        `$${base + 13}, $${base + 14}, $${base + 15}, $${base + 16}, $${base + 17}, $${base + 18}::timestamptz)`,
+        `$${base + 13}, $${base + 14}, $${base + 15}, $${base + 16}, $${base + 17}, $${base + 18}, ` +
+        `$${base + 19}, $${base + 20}::timestamptz)`,
     );
   }
   const sql = `
     INSERT INTO measurement_rollups
       (user_id, type, granularity, bucket_start, source, count, mean,
        min_value, max_value, sum_value, sd, slope, r2,
-       sum_x, sum_xy, sum_xx, sum_yy, computed_at)
+       sum_x, sum_xy, sum_xx, sum_yy, reading_min_value, reading_max_value,
+       computed_at)
     VALUES ${tuples.join(", ")}
     ON CONFLICT (user_id, type, granularity, bucket_start, source)
     DO UPDATE SET
@@ -926,6 +1152,8 @@ function buildRollupUpsert(
       sum_xy      = EXCLUDED.sum_xy,
       sum_xx      = EXCLUDED.sum_xx,
       sum_yy      = EXCLUDED.sum_yy,
+      reading_min_value = EXCLUDED.reading_min_value,
+      reading_max_value = EXCLUDED.reading_max_value,
       computed_at = EXCLUDED.computed_at
   `;
   return { sql, params };
@@ -1071,7 +1299,7 @@ async function ensureUserRollupsFreshImpl(
     return { recomputed: true };
   } catch (err) {
     // Best-effort — never block the read path on a populator failure.
-    // v1.4.36 QA H3 — surface the failure so ops can spot a silent
+    // v1.4.36 — surface the failure so ops can spot a silent
     // populator regression. `annotate` is a no-op when there's no
     // request context (worker calls, tests); `console.error` carries
     // the same shape through the worker log pipeline so the regression
@@ -1177,7 +1405,9 @@ export async function enqueueBootTimeRollupBackfill(
     //      catches up — mirrors the v1.4.39 sum_value rollout, which the
     //      v1.4.41 note confirms converged via this same boot queue. Bounded
     //      to the fold window so days outside it (un-foldable by design)
-    //      never re-flag a user on every boot.
+    //      never re-flag a user on every boot. The same arm refills the
+    //      reading extremes of migration 0417 (`reading_min_value IS NULL`);
+    //      the extremes reader treats a NULL as uncovered until it lands.
     const users = await prisma.$queryRaw<Array<{ id: string }>>`
       SELECT DISTINCT id FROM (
         SELECT DISTINCT mt."user_id" AS id
@@ -1203,8 +1433,9 @@ export async function enqueueBootTimeRollupBackfill(
         FROM measurement_rollups r
         WHERE r."granularity" = 'DAY'
           AND r."bucket_start" >= ${foldWindowStart}
-          AND r."sum_xy" IS NULL
+          AND (r."sum_xy" IS NULL OR r."reading_min_value" IS NULL)
       ) discovered
+      WHERE ${activeAccountSql('discovered."id"')}
     `;
 
     if (users.length === 0) {
@@ -1219,6 +1450,7 @@ export async function enqueueBootTimeRollupBackfill(
         enqueuedAt: new Date().toISOString(),
       };
       const jobId = await boss.send(ROLLUP_FULL_BACKFILL_QUEUE, payload, {
+        expireInSeconds: ROLLUP_FULL_BACKFILL_EXPIRE_SECONDS,
         retryLimit: 3,
         retryDelay: 60,
         retryBackoff: true,

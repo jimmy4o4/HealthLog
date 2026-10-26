@@ -42,21 +42,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { stripComments, walkSourceFiles } from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
 /** The shared statistic: the helper, or the type set it is keyed on. */
 const HELPER_IMPORT =
   /from\s+["'](?:@\/lib\/measurements\/|\.\/)day-(?:mean|statistic)["']/;
-
-/** Comments go first: a mean named in prose is not a mean computed. */
-function stripComments(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/^\s*--.*$/gm, "");
-}
 
 /**
  * Database means over a measurement value: SQL `AVG(value)`, the per-day folds
@@ -70,7 +62,9 @@ const SQL_MEAN =
 const TS_MEAN =
   /\.reduce\(\s*\(\s*\w+\s*,\s*\w+\s*\)\s*=>\s*\w+\s*\+\s*[\w.]+\s*,\s*0\s*\)\s*\/\s*[\w.]+\.length|\bavgInWindow\s*\(|\bsummarize\s*\(|\bbucketWeekly\s*\(|\bbuildDailyValueRows\s*\(|\bapplyPayloadBudget\s*\(/g;
 
-const NAMES_PULSE = /\bPULSE\b/;
+// The stored type, or the series route's `kind === "pulse"` (its readers name
+// the wire kind, not the type).
+const NAMES_PULSE = /\bPULSE\b|===\s*"pulse"/;
 
 /**
  * A day folded from its hours' means with every hour weighing one: SQL
@@ -93,7 +87,6 @@ const HELPER: Entry = { helper: true };
 
 /** Files with a database mean over values. */
 const SQL_READERS: Record<string, Entry> = {
-  "app/api/measurements/series/route.ts": HELPER,
   "lib/ai/coach/tools/availability.ts": HELPER,
   "lib/analytics/summaries-slice.ts": HELPER,
   "lib/doctor-report/dense-buckets.ts": HELPER,
@@ -102,13 +95,19 @@ const SQL_READERS: Record<string, Entry> = {
   // The dry run's hour means, weighed by both methods through the helper.
   "lib/jobs/pulse-day-mean.ts": HELPER,
   "lib/measurements/daily-series-read.ts": HELPER,
+  // The series route's long-window dense read.
+  "lib/measurements/dense-series-read.ts": HELPER,
   "lib/rollups/measurement-rollups.ts": HELPER,
   "lib/rollups/tiered-context.ts": HELPER,
+  "lib/insights/correlation-channel-series.ts": {
+    exempt:
+      "the one SQL mean is the room-climate hour mean, over INDOOR_CO2 / INDOOR_TEMPERATURE / INDOOR_HUMIDITY only; pulse reaches the correlation channels through `dayValueRows` and the rollup compose",
+  },
 };
 
 /** Files that name pulse and hold an in-memory mean or a mean-making fold. */
 const TS_READERS: Record<string, Entry> = {
-  "app/api/measurements/series/route.ts": HELPER,
+  "lib/measurements/series/read-raw.ts": HELPER,
   "lib/doctor-report/collect.ts": HELPER,
   "lib/doctor-report-pdf/clinical-summary.ts": HELPER,
   "lib/insights/comprehensive-generate.ts": HELPER,
@@ -123,7 +122,7 @@ const TS_READERS: Record<string, Entry> = {
       /applyPayloadBudget\(\s*pulsePoints\s*,\s*\{[^}]*type\s*:\s*"PULSE"/,
   },
   "lib/insights/signals-of-day.ts": {
-    via: "lib/insights/features.ts",
+    via: "lib/insights/feature-window.ts",
     passes: /byType\(\s*"PULSE"\s*\)[\s\S]{0,80}type\s*:\s*"PULSE"/,
   },
   "lib/ai/coach/snapshot-blocks/core-metrics-block.ts": {
@@ -134,14 +133,14 @@ const TS_READERS: Record<string, Entry> = {
     exempt:
       "means several readings of a type the day route sends one by one (weight, blood pressure, glucose); pulse arrives as one server-side day value (`dayValueShape` in lib/day/values.ts)",
   },
-  "components/charts/health-chart.tsx": {
+  "components/charts/health-chart/series-math.ts": {
     exempt:
       "a rolling average over the points the chart draws: display smoothing, not a stated figure",
   },
   "lib/analytics/correlations-fast-path.ts": {
     exempt: "mood mean; pulse enters as the resting series, never a day mean",
   },
-  "app/api/dashboard/summary/route.ts": {
+  "lib/dashboard/summary/cards.ts": {
     exempt:
       "places a card's seven-day sparkline mean against its band for the trend verdict; each sparkline point is already one rollup day value, so the mean weighs every day once",
   },
@@ -155,10 +154,6 @@ const TS_READERS: Record<string, Entry> = {
   "lib/insights/mood-aggregates.ts": { exempt: "the mood series only" },
   "lib/insights/narrative/period-narrative.ts": {
     exempt: "means of day-keyed series, already one value per day",
-  },
-  "lib/mcp/rich-reads.ts": {
-    exempt:
-      "changepoints over rollup bucket means, which weigh pulse days once (readCanonicalRollupBuckets)",
   },
   "lib/medications/efficacy/build-efficacy.ts": {
     exempt: "means of the day-mean series (readDayMeanSeries)",
@@ -174,7 +169,7 @@ const TS_READERS: Record<string, Entry> = {
   "app/api/insights/cards/route.ts": {
     exempt: "pulse is summarised from day means (readDayMeanSeries)",
   },
-  "app/api/insights/comprehensive/route.ts": {
+  "lib/insights/comprehensive-overview/build.ts": {
     exempt: "summarises the mood series only",
   },
 };

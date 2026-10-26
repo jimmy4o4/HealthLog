@@ -1,13 +1,8 @@
 import { prisma } from "@/lib/db";
 import { apiHandler, requireAdmin } from "@/lib/api-handler";
 import { auditLog } from "@/lib/auth/audit";
-import {
-  apiSuccess,
-  apiError,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiSuccess, apiError, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { encrypt } from "@/lib/crypto";
 import { adminSettingsSchema } from "@/lib/validations/admin";
@@ -89,7 +84,7 @@ export const GET = apiHandler(async () => {
       settings?.documentQuotaBytes !== undefined
         ? Number(settings.documentQuotaBytes)
         : 1_073_741_824,
-    // v1.4.25 W7 — null means "fall back to Europe/Berlin in the
+    // v1.4.25 — null means "fall back to Europe/Berlin in the
     // resolver"; surfacing the raw value lets the admin UI render
     // an empty picker placeholder until they opt in.
     defaultUserTimezone: settings?.defaultUserTimezone ?? null,
@@ -109,16 +104,10 @@ export const PUT = apiHandler(async (request: NextRequest) => {
   const { user } = await requireAdmin();
   annotate({ action: { name: "admin.settings.update" } });
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, adminSettingsSchema, {
     maxBytes: 64 * 1024,
   });
-
-  if (jsonError) return jsonError;
-  const parsed = adminSettingsSchema.safeParse(body);
-  if (!parsed.success) {
-    // v1.4.43 W6 — multi-issue 422.
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const data = parsed.data;
   const updates: Record<string, unknown> = {};
@@ -244,7 +233,7 @@ export const PUT = apiHandler(async (request: NextRequest) => {
     auditDetails.documentQuotaBytes = data.documentQuotaBytes;
   }
 
-  // v1.4.25 W7 — server-default timezone for new signups.
+  // v1.4.25 — server-default timezone for new signups.
   // Empty string clears the override (resolver falls back to
   // Europe/Berlin); a non-empty string must pass Intl validation
   // upstream of the column write.

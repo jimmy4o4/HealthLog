@@ -22,7 +22,7 @@ import {
 import { aiCapabilityState } from "./profile";
 import { isoDateTime } from "@/lib/validations/datetime";
 
-// v1.4.25 W16b — typed workout batch ingest response envelope. Mirrors
+// v1.4.25 — typed workout batch ingest response envelope. Mirrors
 // the measurements batch shape but reports the `workouts` count rather
 // than the entries count. `skipped` carries the entries the server
 // refused: an unusable external id, or a `samples` array that failed
@@ -110,6 +110,61 @@ const workoutListEntry = z
   })
   .meta({ id: "WorkoutListEntry" });
 
+const trainingLoadPoint = z.object({
+  day: z.string(),
+  ctl: z.number(),
+  atl: z.number(),
+  tsb: z.number(),
+  rated: z
+    .boolean()
+    .describe(
+      "False for a day that could not be rated: no stored impulse and no activity data (steps, heart rate, active energy), or a workout that was never scored. The averages held through it rather than counting it as rest. A day with activity data and no workout is rest (impulse 0).",
+    ),
+});
+
+const trainingLoad = z
+  .union([
+    z.object({
+      status: z.literal("ok"),
+      asOf: z
+        .string()
+        .describe(
+          "The last rated UTC day, at most yesterday; the figures are those of this day. The series runs on to yesterday, so a later stretch without data shows as unrated days.",
+        ),
+      ctl: z.number().describe("Fitness: 42-day exponentially weighted TRIMP."),
+      atl: z.number().describe("Fatigue: 7-day exponentially weighted TRIMP."),
+      tsb: z.number().describe("Form: fitness minus fatigue at `asOf`."),
+      daysCovered: z.number().int(),
+      trainingDays: z.number().int(),
+      recentRatedDays: z
+        .number()
+        .int()
+        .describe(
+          "Rated days of the trailing `recentDays` (42 up to yesterday, or fewer when covered less): a stored impulse, or activity data without a workout.",
+        ),
+      recentDays: z.number().int(),
+      warmingUp: z
+        .boolean()
+        .describe("True below 42 covered days: both averages start at zero."),
+      series: z
+        .array(trainingLoadPoint)
+        .describe(
+          "The trailing 90 days, oldest first; `tsb` is form going into the day.",
+        ),
+    }),
+    z.object({
+      status: z.literal("insufficient"),
+      reason: z.enum(["no_impulse_history", "too_little_history"]),
+      daysCovered: z.number().int(),
+      trainingDays: z.number().int(),
+    }),
+  ])
+  .meta({
+    id: "WorkoutTrainingLoad",
+    description:
+      "v1.44 — the fitness-fatigue model over the stored daily heart-rate training impulse (Banister TRIMP; a day with activity data but no training is 0, a day with no data or an unscored workout is not rated and the averages hold through it). Needs 28 days and three training days. TRIMP units: comparable with the person's own past only.",
+  });
+
 const workoutListResponse = z
   .object({
     workouts: z.array(workoutListEntry),
@@ -119,13 +174,32 @@ const workoutListResponse = z
       offset: z.number().int().nonnegative(),
       droppedDuplicates: z.number().int().nonnegative(),
     }),
+    trainingLoad: trainingLoad
+      .optional()
+      .describe(
+        "v1.44 — on the first page (`offset=0`) only, account-wide whatever the filter. Absent on later pages and older servers.",
+      ),
   })
   .meta({ id: "WorkoutListResponse" });
 
 const workoutRouteGeometry = z
   .object({
     geometry: z.unknown(),
-    sampleTimestamps: z.array(z.string()).nullable(),
+    sampleTimestamps: z
+      .array(
+        z.union([
+          isoDateTime(),
+          z.object({
+            t: isoDateTime(),
+            speedMs: z.number().optional(),
+            hr: z.number().int().optional(),
+          }),
+        ]),
+      )
+      .nullable()
+      .describe(
+        "One entry per geometry point, as the track was stored: a bare instant, or (from the workout batch and the Apple Health export) an object with its instant and, where recorded, speed (m/s) and heart rate (bpm).",
+      ),
   })
   .meta({ id: "WorkoutRouteGeometry" });
 
@@ -276,7 +350,7 @@ export const workoutPaths: NonNullable<ZodOpenApiObject["paths"]> = {
       tags: ["Measurements"],
       summary: "List workouts (v1.4.32)",
       description:
-        "Paginated workout list with cross-source canonical-row dedup. The picker reads the per-user source-priority ladder and buckets by `(startedAt 5 min slot, sportType)` — twin workouts (Apple Watch + Withings ScanWatch) collapse to a single canonical row per cluster. Field names mirror the iOS handoff contract: `distanceM`, `activeEnergyKcal`, `avgHr`, `maxHr`.",
+        "Paginated workout list with cross-source canonical-row dedup. The picker reads the per-user source-priority ladder and clusters workouts of one sport whose starts lie less than five minutes after the cluster's first start — twin workouts (Apple Watch + Withings ScanWatch) collapse to a single canonical row per cluster. A twin just outside `since` / `until` still decides which row inside the range is canonical, so the list agrees with `canonicalId` on the detail. Field names mirror the iOS handoff contract: `distanceM`, `activeEnergyKcal`, `avgHr`, `maxHr`.",
       requestParams: {
         query: z.object({
           limit: z.coerce.number().int().min(1).max(200).optional(),

@@ -9,7 +9,11 @@
  * field opens focused and debounces into the source's own name search. Tag and
  * date are filters beside it, not the entry point. Each result says what
  * HealthLog already holds under that source key: already imported, deleted
- * here (not offered again: a deletion was a decision), or new.
+ * here, or new. A deleted one can be ticked too, and that is the person
+ * deciding again: one still in Recently deleted is restored (nothing is
+ * fetched), one already removed for good is imported afresh. The import sends
+ * `revive` only for those rows; an importer's upload never can, so a deletion
+ * still holds against every automatic re-send.
  *
  * The import runs one document per request, in order, so every row can show
  * its own progress and result, and one failure does not hide the others. A
@@ -59,7 +63,6 @@ import { apiGet, apiPost } from "@/lib/api/api-fetch";
 import {
   DOCUMENT_PICKER_MAX_SELECTION,
   slugForSystem,
-  type DocumentImportOutcome,
   type DocumentPickerLinkKind,
   type DocumentPickerSystem,
   type DocumentSourceImportDto,
@@ -73,16 +76,24 @@ import { cn } from "@/lib/utils";
 import type { InboundDocumentKindValue } from "@/lib/validations/inbound-documents";
 
 import { WrittenOutcomeLine } from "@/components/outcome/written-outcome-line";
-import type { WrittenOutcome } from "@/lib/outcome/written-outcome";
 
-import { formatBytes } from "../vault-utils";
+import { formatBytes } from "@/lib/format/bytes";
 import {
   errorCodeOf,
   isStoppingError,
   sourceErrorMessage,
 } from "./source-errors";
-import { SegmentedChoice } from "./segmented-choice";
+import { Segmented } from "@/components/ui/segmented";
 import { systemName } from "./use-document-sources";
+import { InlineAction } from "@/components/ui/inline-action";
+import {
+  deletedSourceIds,
+  heldBadgeLabel,
+  isPickable,
+  runLabel,
+  runOutcome,
+  type RowRun,
+} from "./picker-rows";
 
 export interface DocumentPickerLink {
   kind: DocumentPickerLinkKind;
@@ -101,12 +112,6 @@ export interface DocumentSourcePickerProps {
   /** Hand the vault ids to a form that links them on its own save. */
   onImported?: (documentIds: string[]) => void;
 }
-
-type RowRun =
-  | { state: "waiting" }
-  | { state: "working" }
-  | { state: DocumentImportOutcome; linked: boolean }
-  | { state: "failed"; message: string };
 
 const SEARCH_DEBOUNCE_MS = 300;
 const IMPORT_TIMEOUT_MS = 120_000;
@@ -241,11 +246,9 @@ export function DocumentSourcePicker({
     return out;
   }, [search.data]);
 
-  // An already imported document is worth picking only when the pick does
-  // something with it: link it, or hand it to the form.
   const canTakeImported = Boolean(link || onImported);
   const selectable = (row: DocumentSourceResultDto) =>
-    row.state === "new" || (row.state === "imported" && canTakeImported);
+    isPickable(row, canTakeImported);
 
   const toggle = (row: DocumentSourceResultDto) => {
     if (running || finished || !selectable(row)) return;
@@ -268,6 +271,7 @@ export function DocumentSourcePicker({
     setRunning(true);
     setStopMessage(null);
     const order = [...selected.keys()];
+    const revive = deletedSourceIds(results);
     setRuns(new Map(order.map((id) => [id, { state: "waiting" }])));
     const handed: string[] = [];
     const mark = (id: string, run: RowRun) => {
@@ -286,6 +290,7 @@ export function DocumentSourcePicker({
             sourceId,
             ...(kind ? { kind } : {}),
             ...(link ? { link } : {}),
+            ...(revive.has(sourceId) ? { revive: true } : {}),
           },
           // The server may take up to a minute to fetch a large file from
           // the source; the default 15 s client timeout would abandon it.
@@ -323,7 +328,7 @@ export function DocumentSourcePicker({
     let present = 0;
     let failed = 0;
     for (const run of runs.values()) {
-      if (run.state === "imported") imported += 1;
+      if (run.state === "imported" || run.state === "restored") imported += 1;
       else if (run.state === "duplicate" || run.state === "deleted")
         present += 1;
       else if (run.state === "failed") failed += 1;
@@ -408,13 +413,16 @@ export function DocumentSourcePicker({
     >
       <div className="space-y-3" data-slot="document-source-picker">
         {systems.length > 1 && active ? (
-          <SegmentedChoice
-            options={systems}
+          <Segmented
+            options={systems.map((system) => ({
+              value: system,
+              label: systemName(system),
+            }))}
             value={active}
             onChange={switchSystem}
             label={t("documents.sourcePicker.sourceLabel")}
             disabled={running}
-            renderOption={systemName}
+            className="self-start"
           />
         ) : null}
 
@@ -485,19 +493,19 @@ export function DocumentSourcePicker({
           </div>
         </div>
         {hasFilters ? (
-          <button
-            type="button"
+          <InlineAction
+            tone="muted"
             onClick={() => {
               startOver();
               setTag("");
               setFrom("");
               setTo("");
             }}
-            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex min-h-8 items-center gap-1 rounded-sm text-xs underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:outline-none"
+            className="min-h-8"
           >
             <X className="size-3.5" aria-hidden />
             {t("documents.sourcePicker.clearFilters")}
-          </button>
+          </InlineAction>
         ) : null}
 
         {finished ? (
@@ -552,6 +560,7 @@ export function DocumentSourcePicker({
           </div>
         ) : search.isError ? (
           <QueryErrorRow
+            error={search.error}
             message={sourceErrorMessage(t, errorCodeOf(search.error))}
             onRetry={() => void search.refetch()}
             slot="document-source-error"
@@ -638,9 +647,7 @@ export function DocumentSourcePicker({
                     </span>
                     {row.state !== "new" && !run ? (
                       <Badge variant="outline" className="shrink-0">
-                        {row.state === "imported"
-                          ? t("documents.sourcePicker.stateImported")
-                          : t("documents.sourcePicker.stateDeleted")}
+                        {heldBadgeLabel(t, row)}
                       </Badge>
                     ) : null}
                   </button>
@@ -671,41 +678,6 @@ export function DocumentSourcePicker({
       </div>
     </ResponsiveSheet>
   );
-}
-
-/** How the run went, in the shared outcome vocabulary. */
-function runOutcome(counts: {
-  imported: number;
-  present: number;
-  failed: number;
-}): WrittenOutcome {
-  const held = counts.imported + counts.present;
-  if (counts.failed === 0) return held > 0 ? "success" : "empty";
-  return held > 0 ? "partial" : "failed";
-}
-
-/** A row's result in words, or null while it has none yet. */
-function runLabel(
-  t: (key: string, params?: Record<string, string | number>) => string,
-  run: RowRun,
-): string | null {
-  switch (run.state) {
-    case "waiting":
-    case "working":
-      return null;
-    case "failed":
-      return run.message;
-    case "deleted":
-      return t("documents.sourcePicker.result.deleted");
-    case "imported":
-      return run.linked
-        ? t("documents.sourcePicker.result.importedLinked")
-        : t("documents.sourcePicker.result.imported");
-    case "duplicate":
-      return run.linked
-        ? t("documents.sourcePicker.result.duplicateLinked")
-        : t("documents.sourcePicker.result.duplicate");
-  }
 }
 
 /** One row's progress or result, under its title. */
@@ -746,19 +718,24 @@ function RunLine({ run }: { run: RowRun }) {
       );
     case "imported":
     case "duplicate":
+    case "restored":
       return (
         <span
           className="text-success flex items-center gap-1.5 text-xs"
           data-slot="document-source-run-done"
         >
           <CircleCheck className="size-3.5 shrink-0" aria-hidden />
-          {run.state === "imported"
+          {run.state === "restored"
             ? run.linked
-              ? t("documents.sourcePicker.result.importedLinked")
-              : t("documents.sourcePicker.result.imported")
-            : run.linked
-              ? t("documents.sourcePicker.result.duplicateLinked")
-              : t("documents.sourcePicker.result.duplicate")}
+              ? t("documents.sourcePicker.result.restoredLinked")
+              : t("documents.sourcePicker.result.restored")
+            : run.state === "imported"
+              ? run.linked
+                ? t("documents.sourcePicker.result.importedLinked")
+                : t("documents.sourcePicker.result.imported")
+              : run.linked
+                ? t("documents.sourcePicker.result.duplicateLinked")
+                : t("documents.sourcePicker.result.duplicate")}
         </span>
       );
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Buffer } from "node:buffer";
-import { encryptToBytes } from "@/lib/ai/coach/bytes-codec";
+import { decryptFromBytes, encryptToBytes } from "@/lib/ai/coach/bytes-codec";
 import { parseBackupPayload } from "@/lib/validations/backup";
 
 process.env.ENCRYPTION_KEY =
@@ -201,6 +201,7 @@ function makePrisma() {
               enteredUnit: "IU",
               source: "MANUAL",
               createdAt: new Date("2026-07-01T08:00:00.000Z"),
+              updatedAt: new Date("2026-07-01T08:05:00.000Z"),
             },
           ],
           // v1.40 (#1024) — one ended course with a note, one running.
@@ -209,15 +210,20 @@ function makePrisma() {
               id: "course-march",
               startsOn: new Date("2026-03-01T00:00:00.000Z"),
               endsOn: new Date("2026-03-07T00:00:00.000Z"),
+              // #1280 — ended with "End course" after the morning dose.
+              endedAt: new Date("2026-03-07T09:30:00.000Z"),
               noteEncrypted: encryptToBytes("the March flu"),
               createdAt: new Date("2026-03-01T08:00:00.000Z"),
+              updatedAt: new Date("2026-03-01T08:05:00.000Z"),
             },
             {
               id: "course-june",
               startsOn: new Date("2026-06-10T00:00:00.000Z"),
               endsOn: null,
+              endedAt: null,
               noteEncrypted: null,
               createdAt: new Date("2026-06-10T08:00:00.000Z"),
+              updatedAt: new Date("2026-06-10T08:05:00.000Z"),
             },
           ],
           // A two-step ramp, one row carrying an encrypted note and one
@@ -374,10 +380,12 @@ function makePrisma() {
             {
               rating: 4,
               moodTag: { key: "sleep_quality", kind: "RATED" },
+              createdAt: new Date("2026-07-19T20:00:00.000Z"),
             },
             {
               rating: null,
               moodTag: { key: "headache", kind: "BINARY" },
+              createdAt: new Date("2026-07-19T20:00:01.000Z"),
             },
           ],
         },
@@ -393,6 +401,7 @@ function makePrisma() {
           source: "MANUAL",
           externalSourceVersion: null,
           createdAt: new Date("2026-07-19T20:15:00.000Z"),
+          updatedAt: new Date("2026-07-19T20:16:00.000Z"),
         },
       ]),
     },
@@ -454,6 +463,8 @@ function makePrisma() {
     // Empty for the same reason as the sections above.
     documentConditionLink: { findMany: vi.fn().mockResolvedValue([]) },
     extractedFact: { findMany: vi.fn().mockResolvedValue([]) },
+    documentImportKey: { findMany: vi.fn().mockResolvedValue([]) },
+    inboundDocument: { findMany: vi.fn().mockResolvedValue([]) },
     // The ECG strips. Empty for the same reason as the sections above:
     // an account whose watch has never taken one is the ordinary case the
     // builder must still answer for.
@@ -657,7 +668,9 @@ describe("buildFullBackupPayload disaster-recovery mode", () => {
     expect(mocks.buildRecordsBackupSection).toHaveBeenCalledWith(
       prisma,
       "user-1",
-      { purpose: "disaster-recovery" },
+      // The materialising payload reads the documents itself; only the
+      // streaming writer defers them.
+      { purpose: "disaster-recovery", deferDocuments: false },
     );
     expect(payload).toMatchObject({
       schemaVersion: "2",
@@ -783,32 +796,50 @@ describe("buildFullBackupPayload disaster-recovery mode", () => {
  * decision.
  */
 describe("buildFullBackupPayload — medication courses (v1.40, #1024)", () => {
-  it.each(["portable-export", "disaster-recovery"] as const)(
-    "carries every course with its note readable in a %s file",
-    async (purpose) => {
-      installSectionMocks();
-      const { payload } = await buildFullBackupPayload(
-        makePrisma() as never,
-        "user-1",
-        { purpose, exportedAt: new Date("2026-07-20T00:00:00.000Z") },
-      );
-      const parsed = parseBackupPayload(payload);
-      expect(parsed.medications[0].courses).toEqual([
-        {
-          startsOn: "2026-03-01",
-          endsOn: "2026-03-07",
-          note: "the March flu",
-          createdAt: "2026-03-01T08:00:00.000Z",
-        },
-        {
-          startsOn: "2026-06-10",
-          endsOn: null,
-          note: null,
-          createdAt: "2026-06-10T08:00:00.000Z",
-        },
-      ]);
-    },
-  );
+  async function courses(purpose: "portable-export" | "disaster-recovery") {
+    installSectionMocks();
+    const { payload } = await buildFullBackupPayload(
+      makePrisma() as never,
+      "user-1",
+      { purpose, exportedAt: new Date("2026-07-20T00:00:00.000Z") },
+    );
+    return parseBackupPayload(payload).medications[0].courses;
+  }
+
+  it("carries every course with its note readable in a portable file", async () => {
+    expect(await courses("portable-export")).toEqual([
+      {
+        startsOn: "2026-03-01",
+        endsOn: "2026-03-07",
+        endedAt: "2026-03-07T09:30:00.000Z",
+        note: "the March flu",
+        createdAt: "2026-03-01T08:00:00.000Z",
+      },
+      {
+        startsOn: "2026-06-10",
+        endsOn: null,
+        endedAt: null,
+        note: null,
+        createdAt: "2026-06-10T08:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("carries every course with its note as ciphertext in a disaster-recovery file", async () => {
+    const [march, june] = (await courses("disaster-recovery"))!;
+    expect(march).toMatchObject({
+      startsOn: "2026-03-01",
+      endsOn: "2026-03-07",
+      endedAt: "2026-03-07T09:30:00.000Z",
+      note: null,
+      createdAt: "2026-03-01T08:00:00.000Z",
+      updatedAt: "2026-03-01T08:05:00.000Z",
+    });
+    expect(decryptFromBytes(Buffer.from(march!.noteEncrypted!, "base64"))).toBe(
+      "the March flu",
+    );
+    expect(june).toMatchObject({ note: null, noteEncrypted: null });
+  });
 });
 
 describe("buildFullBackupPayload — supplement composition (v1.43)", () => {
@@ -834,6 +865,9 @@ describe("buildFullBackupPayload — supplement composition (v1.43)", () => {
           enteredUnit: "IU",
           source: "MANUAL",
           createdAt: "2026-07-01T08:00:00.000Z",
+          ...(purpose === "disaster-recovery"
+            ? { updatedAt: "2026-07-01T08:05:00.000Z" }
+            : {}),
         },
       ]);
     },
@@ -976,10 +1010,14 @@ describe("buildFullBackupPayload — aggregation provenance", () => {
     );
 
     const rows = payload.measurements as Array<Record<string, unknown>>;
-    // The portable arm carries the human-readable subset only — no
-    // externalSourceVersion, no glucoseContext, and no provenance either.
+    // The portable arm carries the human-readable subset only: none of the
+    // sync bookkeeping (source ids, their version, the provenance), but every
+    // attribute of the reading itself, its glucose context among them.
     expect(rows[0]).not.toHaveProperty("aggregationProvenance");
     expect(rows[0]).not.toHaveProperty("externalSourceVersion");
+    expect(rows[0]).not.toHaveProperty("externalId");
+    expect(rows[0]).toHaveProperty("glucoseContext");
+    expect(rows[0]).toHaveProperty("sleepStage");
   });
 });
 
@@ -1535,7 +1573,7 @@ describe("buildFullBackupPayload — mood arms", () => {
     expect(prisma.moodEntry.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
-          tagLinks: { select: expect.any(Object) },
+          tagLinks: { select: expect.any(Object), orderBy: expect.anything() },
         }),
       }),
     );

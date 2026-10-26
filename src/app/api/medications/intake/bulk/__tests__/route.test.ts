@@ -1,5 +1,5 @@
 /**
- * v1.4.43 W6 — multi-issue 422 envelope on POST /api/medications/intake/bulk.
+ * v1.4.43 — multi-issue 422 envelope on POST /api/medications/intake/bulk.
  * Preserves the `medications.intake.bulk.invalid` errorCode meta passthrough.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
     medicationIntakeEvent: {
       create: vi.fn(),
       findUnique: vi.fn(),
-      // v1.8.2 reconcile — shared slot upsert reads + updates in place.
+      // v1.8.2 — shared slot upsert reads + updates in place.
       findMany: vi.fn(),
       update: vi.fn(),
       // v1.15.19 — resolver-null convergence probe before standalone insert.
@@ -51,8 +51,8 @@ vi.mock("@/lib/medications/inventory/consumption", () => ({
   consumeForIntake: vi.fn().mockResolvedValue(undefined),
   restoreForIntake: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/rollups/medication-compliance-rollups", () => ({
-  recomputeMedicationComplianceForDay: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/lib/medications/dose-day-refresh", () => ({
+  refreshDoseDay: vi.fn().mockResolvedValue(undefined),
   dayKeyForScheduledFor: vi.fn().mockReturnValue("2026-01-01"),
 }));
 vi.mock("@/lib/logging/transports", () => ({ emitIfSampled: vi.fn() }));
@@ -85,6 +85,7 @@ import {
   consumeForIntake,
   restoreForIntake,
 } from "@/lib/medications/inventory/consumption";
+import { auditLog } from "@/lib/auth/audit";
 
 const SESSION_OK = {
   session: { id: "sess-1", expiresAt: new Date(Date.now() + 3_600_000) },
@@ -109,6 +110,7 @@ function postReq(body: unknown): NextRequest {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(auditLog).mockResolvedValue(undefined);
   vi.mocked(getSession).mockResolvedValue(SESSION_OK as never);
   vi.mocked(prisma.auditLog.create).mockResolvedValue({} as never);
   vi.mocked(checkRateLimit).mockResolvedValue({ allowed: true } as never);
@@ -176,17 +178,15 @@ describe("POST /api/medications/intake/bulk — 422 multi-issue (v1.4.43 W6)", (
     );
     expect(res.status).toBe(422);
     await new Promise((r) => setTimeout(r, 5));
-    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(prisma.auditLog.create).mock.calls[0]?.[0] as {
-      data: { userId: string; action: string };
-    };
-    expect(call.data.action).toBe("medications.intake.bulk.validation-failed");
+    // Through `auditLog()`, which decides whether the refusal is filed.
+    expect(auditLog).toHaveBeenCalledWith(
+      "medications.intake.bulk.validation-failed",
+      expect.anything(),
+    );
   });
 
   it("does not block the 422 when the audit-row write rejects", async () => {
-    vi.mocked(prisma.auditLog.create).mockRejectedValueOnce(
-      new Error("db down"),
-    );
+    vi.mocked(auditLog).mockRejectedValueOnce(new Error("db down"));
     const res = await POST(
       postReq({
         entries: [{ medicationId: "", scheduledFor: "not-iso" }],
@@ -197,7 +197,7 @@ describe("POST /api/medications/intake/bulk — 422 multi-issue (v1.4.43 W6)", (
 });
 
 // ────────────────────────────────────────────────────────────────────
-// v1.8.2 reconcile — bulk slot-snap upsert invariants (C2 + C1)
+// v1.8.2 — bulk slot-snap upsert invariants (C2 + C1)
 // ────────────────────────────────────────────────────────────────────
 
 describe("POST /api/medications/intake/bulk — v1.8.2 reconcile", () => {

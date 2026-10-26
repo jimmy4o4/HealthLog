@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — stateless, HMAC-signed OAuth `state` for the Polar + Oura
+ * v1.17.0 — stateless, HMAC-signed OAuth `state` for the Polar + Oura
  * authorization-code flows.
  *
  * Unlike WHOOP / Withings (which carry the in-flight `(nonce → userId)` mapping
@@ -139,7 +139,7 @@ export function verifySignedState(
 export function stateMatchesCookie(
   urlState: string | null | undefined,
   cookieState: string | null | undefined,
-): boolean {
+): urlState is string {
   if (!urlState || !cookieState) return false;
   if (urlState.length !== cookieState.length) return false;
   return timingSafeEqual(Buffer.from(urlState), Buffer.from(cookieState));

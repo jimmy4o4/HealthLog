@@ -146,14 +146,14 @@ export function LabList({
   // (beneath the heading); the overview rows no longer carry it.
   // One entry per biomarker over the whole history, grouped server-side: a
   // capped page of raw rows dropped every marker measured only long ago.
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.labResultsOverview(),
     queryFn: () => apiGet<LabOverviewResponse>("/api/labs/overview"),
   });
 
   const groups = useMemo(() => {
     const base = toGroups(data?.markers ?? []);
-    // v1.18.6 (MOD-04) — honour the user's Labs sort choice. The server
+    // v1.18.6 — honour the user's Labs sort choice. The server
     // order is most-recent-first; `recentAsc` reverses, the alpha
     // options sort by analyte name (#43), and `manual` applies the persisted
     // biomarker order (legacy un-linked groups, which carry no biomarkerId,
@@ -203,6 +203,7 @@ export function LabList({
     // outage never reads as "you have no lab results".
     return (
       <QueryErrorCard
+        error={error}
         title={t("labs.loadError")}
         onRetry={() => void refetch()}
       />
@@ -228,7 +229,7 @@ export function LabList({
   // not on these overview rows. The list/tile rows navigate; the trash icon was
   // removed here so a stray tap can't delete a biomarker from the overview.
 
-  // v1.18.6 (MOD-03) — compact list view: one bordered card holding tight
+  // v1.18.6 — compact list view: one bordered card holding tight
   // divided rows instead of a card per biomarker. This is the default view
   // (#40); the card/tile view is the alternative the settings toggle selects.
   if (prefs.view === "list") {
@@ -253,10 +254,14 @@ export function LabList({
                   <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
                     {/* One line with an ellipsis on a phone; from `lg` the name
                         wraps instead, so a long one (the schema allows 120
-                        characters) always reads in full. */}
+                        characters) always reads in full. It wraps between
+                        words and hyphenates in the page language; a word is
+                        only cut when it is wider than the column on its own
+                        (`anywhere` cut "Hämoglobin" in the middle of the
+                        word whenever the column was a little short). */}
                     <span
                       data-slot="lab-list-analyte"
-                      className="truncate font-medium lg:overflow-visible lg:[overflow-wrap:anywhere] lg:text-clip lg:whitespace-normal"
+                      className="truncate font-medium lg:overflow-visible lg:break-words lg:text-clip lg:hyphens-auto lg:whitespace-normal"
                     >
                       {group.analyte}
                     </span>

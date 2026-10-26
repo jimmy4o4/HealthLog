@@ -39,6 +39,9 @@ import {
 } from "../oauth-integration-card";
 import type { IntegrationStatusViewModel } from "../shared";
 import { healthFixture } from "./health-fixture";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 // "Last data: today" only holds when the fixture's hours-ago stays on the same
 // local day, so the clock is pinned to midday rather than the wall clock.
@@ -134,6 +137,35 @@ describe("<IntegrationCard> per state", () => {
     );
     expect(html).toContain(
       "Data is arriving. Older history is loading in the background.",
+    );
+  });
+
+  it("history ended short: no longer loading, and says where it ends and why", () => {
+    const html = render(
+      "google-health",
+      connected(healthFixture(), {
+        backfillCompleted: true,
+        backfillEnded: [
+          {
+            type: "PULSE",
+            endsAt: "2024-05-11T08:00:00.000Z",
+            reason: "no_progress",
+          },
+          {
+            type: "WEIGHT",
+            endsAt: "2006-10-17T12:00:00.000Z",
+            reason: "horizon",
+          },
+        ],
+      }),
+    );
+    expect(html).not.toContain("Older history is loading");
+    expect(html).toContain('data-testid="google-health-history-ends"');
+    expect(html).toMatch(
+      /data-reason="no_progress"[^>]*>Pulse: imported back to [^<]*2024[^<]*\. Google stopped returning older readings/,
+    );
+    expect(html).toMatch(
+      /data-reason="horizon"[^>]*>Weight: imported back to [^<]*2006[^<]*\. Older readings lie beyond the import limit\./,
     );
   });
 

@@ -55,6 +55,7 @@ export function packBackupBlob(json: string): string {
 function size(bytes: number): string {
   const mb = bytes / 1024 / 1024;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  // eslint-disable-next-line healthlog/no-unlocalised-decimal -- operator log text about a backup size
   return mb < 100 ? `${mb.toFixed(1)} MB` : `${Math.round(mb)} MB`;
 }
 
@@ -175,10 +176,16 @@ function chunkSealer(
   let seq = 0;
   let stored = 0;
 
+  // A piece carries at most `chunkBytes`. Before #1239 it carried everything
+  // pending, and one large write (a section's whole JSON) became one piece of
+  // hundreds of megabytes, copied twice more on its way into the database.
   const seal = async (last: boolean): Promise<void> => {
-    const payload = pending.length === 1 ? pending[0]! : Buffer.concat(pending);
-    pending = [];
-    pendingBytes = 0;
+    const all = pending.length === 1 ? pending[0]! : Buffer.concat(pending);
+    const payload =
+      all.byteLength > chunkBytes ? all.subarray(0, chunkBytes) : all;
+    const rest = all.subarray(payload.byteLength);
+    pending = rest.byteLength > 0 ? [Buffer.from(rest)] : [];
+    pendingBytes = rest.byteLength;
     const sealed = sealBackupChunk(streamId, seq, last, payload);
     stored += sealed.byteLength;
     if (stored > limitBytes) {

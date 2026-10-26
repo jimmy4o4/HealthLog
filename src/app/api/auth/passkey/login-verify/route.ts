@@ -14,6 +14,7 @@ import { checkAuthSurfaceRateLimit } from "@/lib/rate-limit";
 import { NextRequest } from "next/server";
 import { apiHandler } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
+import { refuseIfPendingDeletion } from "@/lib/account-deletion/pending";
 import { issueApiToken, isNativeClientRequest } from "@/lib/auth/issue-token";
 import {
   resolveTokenPolicy,
@@ -72,7 +73,7 @@ export const POST = apiHandler(async (request: NextRequest) => {
 
   await ensureDbCompatibility();
 
-  // v1.4.43 W13 M-4 — tighter shared bucket on trust-chain misconfig.
+  // v1.4.43 — tighter shared bucket on trust-chain misconfig.
   const rl = await checkAuthSurfaceRateLimit(
     request,
     "auth:passkey-verify",
@@ -139,7 +140,11 @@ export const POST = apiHandler(async (request: NextRequest) => {
     return apiError("User not found", 404);
   }
 
-  // v1.4.22 W5 reconcile (Sr-H1) — `createSession` anchors the
+  // An account pending deletion is locked; the passkey proved the caller
+  // could sign in, so the refusal may say why and until when.
+  refuseIfPendingDeletion(user);
+
+  // v1.4.22 — `createSession` anchors the
   // `hl_onboarding` cookie itself; pass the user's onboarding state
   // through so the proxy short-circuits the redirect before
   // hydration.

@@ -34,6 +34,16 @@ export interface AdminUser {
   // the instance-wide default applies.
   documentQuotaBytes: number | null;
   passkeyCount: number;
+  /**
+   * Set while the account is pending deletion: when the purge job
+   * erases it, and whether the account asked itself or a Guardian deleted
+   * the managed profile. The row offers "Undo deletion" until then.
+   */
+  deletion: {
+    requestedAt: string;
+    purgeAt: string | null;
+    requestedBy: "self" | "guardian";
+  } | null;
 }
 
 export interface WorkerStatus {
@@ -61,6 +71,19 @@ export interface SystemStatus {
   buildTime: string;
   startTime: string;
   database: string;
+  /**
+   * The process's heap ceiling; `low` when it is below what a long-used
+   * account needs. `containerLimitMb` is the container's memory limit
+   * (`null` when there is none or it cannot be read), `belowFloor` when it is
+   * under the supported floor of `floorMb`.
+   */
+  memory: {
+    heapLimitMb: number;
+    low: boolean;
+    containerLimitMb: number | null;
+    floorMb: number;
+    belowFloor: boolean;
+  };
   worker: WorkerStatus;
   /**
    * Queues whose jobs exhausted their retries recently. `null` means the
@@ -117,7 +140,7 @@ export interface AdminSettings {
   glitchtipDeliveryWindowHours: number;
   reminderLateMinutes: number;
   reminderMissedMinutes: number;
-  // v1.4.25 W7 — null means "fall back to Europe/Berlin in the resolver".
+  // v1.4.25 — null means "fall back to Europe/Berlin in the resolver".
   defaultUserTimezone: string | null;
   // Document vault — the two admin-tunable limits (bytes on the wire; the
   // UI edits them as MB / GB). The per-file cap clamps to the hard 100 MiB
@@ -131,7 +154,7 @@ export interface AdminAuditEntry {
   action: string;
   ipAddress: string | null;
   location: string | null;
-  // v1.4.27 B3 — populated from the bundled GeoLite2-ASN MMDB at
+  // v1.4.27 — populated from the bundled GeoLite2-ASN MMDB at
   // audit-creation time. Both nullable: older rows, private/loopback
   // IPs, and offline-miss rows stay valid.
   asn: number | null;
@@ -244,7 +267,7 @@ export function SettingsToggle({
   onCheckedChange: (checked: boolean) => void;
   disabled: boolean;
 }) {
-  // v1.4.27 MB7 / CF-56 — stack the toggle row vertically on `<sm` so
+  // v1.4.27 — stack the toggle row vertically on `<sm` so
   // the label + description don't have to compete with the switch for
   // horizontal space on Pixel 5 (the German "Registration enabled — …"
   // description used to wrap to 4 lines while the switch ate ~52 px on
@@ -352,7 +375,7 @@ export function useAuthActionLabels(): Record<string, string> {
 }
 
 /**
- * v1.4.25 W8b — Provider column for the Login-Übersicht.
+ * v1.4.25 — Provider column for the Login-Übersicht.
  *
  * The audit log doesn't have a dedicated `provider` field; the action
  * name itself encodes how the login happened (`auth.login.passkey`,
@@ -438,7 +461,7 @@ export function useAuthProviderLabels(): Record<AuthProvider, string> {
 }
 
 /**
- * v1.4.27 B3 — Fold a GeoLite2 `autonomous_system_organization`
+ * v1.4.27 — Fold a GeoLite2 `autonomous_system_organization`
  * string down to a short DACH carrier label. The MMDB returns the
  * verbose legal-entity name ("Deutsche Telekom AG", "1&1 Telecom
  * GmbH", "Telefónica Germany GmbH & Co. OHG"); the admin overview
@@ -462,7 +485,7 @@ export function carrierShortLabel(rawAsnOrg: string): string {
 }
 
 /**
- * v1.4.25 W8b — Build the CSV record set for the audit-log export.
+ * v1.4.25 — Build the CSV record set for the audit-log export.
  *
  * Pulled out of the section component so the column order, header
  * mapping, and provider/outcome derivation are reachable from a
@@ -472,7 +495,7 @@ export function carrierShortLabel(rawAsnOrg: string): string {
  * require schema/API changes that are out of scope). `action` and
  * `details` follow so the export keeps the full triage payload.
  *
- * v1.4.27 B3: the `carrier` column lands between `location` and
+ * v1.4.27: the `carrier` column lands between `location` and
  * `provider` so the geo-derived fields stay grouped.
  *
  * `formatTimestamp` is injected (not imported) so the production
@@ -484,7 +507,7 @@ export interface AuditCsvEntry {
   action: string;
   ipAddress: string | null;
   location: string | null;
-  // v1.4.27 B3 — both optional so legacy fixture data that predates
+  // v1.4.27 — both optional so legacy fixture data that predates
   // the column landing still compiles against this shape.
   carrier?: string | null;
   asn?: number | null;

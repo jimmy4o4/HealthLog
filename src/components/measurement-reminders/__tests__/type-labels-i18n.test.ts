@@ -41,7 +41,7 @@ const REQUIRED_KEYS = [
 ];
 
 describe("measurement-reminder + bulk-share dynamic i18n keys", () => {
-  it("discovers all seven shipped locales", () => {
+  it("discovers all nine shipped locales", () => {
     expect(LOCALES.map((l) => l.locale).sort()).toEqual([
       "de",
       "en",
@@ -49,7 +49,9 @@ describe("measurement-reminder + bulk-share dynamic i18n keys", () => {
       "fr",
       "it",
       "ko",
+      "nl",
       "pl",
+      "pt-BR",
     ]);
   });
 

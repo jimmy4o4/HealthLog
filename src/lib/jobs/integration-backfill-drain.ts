@@ -17,11 +17,12 @@
 import type { Job } from "pg-boss";
 
 import { runWhoopBackfillForUser } from "@/lib/jobs/whoop-backfill";
-import { runFitbitBackfillForUser } from "@/lib/jobs/fitbit-backfill";
+import { runFitbitBackfillForUser } from "@/lib/fitbit/jobs/backfill";
 import { runGoogleHealthBackfillForUser } from "@/lib/jobs/google-health-backfill";
 import { runGoogleHealthSleepRepairForUser } from "@/lib/jobs/google-health-sleep-repair";
-import { runFitbitSleepRepairForUser } from "@/lib/jobs/fitbit-sleep-repair";
+import { runFitbitSleepRepairForUser } from "@/lib/fitbit/jobs/sleep-repair";
 import { runStravaBackfillForUser } from "@/lib/jobs/strava-backfill";
+import { runOuraBackfillForUser } from "@/lib/jobs/oura-backfill";
 import { runSleepTimelineBackfillForUser } from "@/lib/jobs/sleep-timeline-backfill";
 import { runLabBiomarkerBackfillForUser } from "@/lib/jobs/lab-biomarker-backfill";
 import {
@@ -132,11 +133,29 @@ async function runAdmitted(
       return;
     }
     case "strava-backfill": {
-      const { imported } = await runStravaBackfillForUser(userId);
+      const { imported, continued } = await runStravaBackfillForUser(
+        userId,
+        data.slice ?? 0,
+      );
       totals.imported += imported;
+      if (continued) totals.continued += 1;
       workerLog(
         "info",
-        `[strava-backfill] user=${userId} imported=${imported}`,
+        `[strava-backfill] user=${userId} imported=${imported}${continued ? " continued" : ""}`,
+      );
+      return;
+    }
+    case "oura-backfill": {
+      const { imported, continued } = await runOuraBackfillForUser(
+        userId,
+        shouldStop,
+        data.slice ?? 0,
+      );
+      totals.imported += imported;
+      if (continued) totals.continued += 1;
+      workerLog(
+        "info",
+        `[oura-backfill] user=${userId} imported=${imported}${continued ? " continued" : ""}`,
       );
       return;
     }

@@ -38,8 +38,14 @@ import { dayKeyForUserTz } from "@/lib/measurements/consolidation-tz";
 import { shiftDateKey } from "@/lib/tz/format";
 import type { DoseHistoryRow } from "@/lib/medications/scheduling/dose-history";
 import {
+  ALCOHOL_CHANNEL_KEY,
+  CAFFEINE_CHANNEL_KEY,
+  HYDRATION_CHANNEL_KEY,
   MEDICATION_COMPLIANCE_CHANNEL_KEY,
+  NUTRIENT_CHANNEL_PREFIX,
   SYMPTOM_SEVERITY_CHANNEL_KEY,
+  TRAINING_LOAD_CHANNEL_KEY,
+  WORKOUT_MINUTES_CHANNEL_KEY,
   type DailySeriesPoint,
   type NamedSeries,
 } from "@/lib/insights/correlation-discovery";
@@ -120,9 +126,11 @@ function dayKey(at: Date, tz: string): string {
 /**
  * Build the daily SYMPTOM_SEVERITY series (rides both roles; this returns it in
  * the requested `role`). Healthy days are zero-filled — but ONLY across the
- * span of the user's real episodes intersected with `[windowStart, windowEnd]`,
- * so a user with no episodes yields an EMPTY series (the channel degrades to
- * absent, never a spurious all-zero constant).
+ * span of the episodes passed in, intersected with `[windowStart, windowEnd]`.
+ * Logged days always count, inside a span or not, so an episode that carries
+ * no span (a chronic condition) still contributes its real readings. No span
+ * and no log yields an EMPTY series (the channel degrades to absent, never a
+ * spurious all-zero constant).
  *
  * Algorithm:
  *  1. Compute the set of in-window calendar days covered by ANY episode span
@@ -134,8 +142,8 @@ function dayKey(at: Date, tz: string): string {
  *     on a day → the MAX, the most-symptomatic reading).
  *
  * The result is a dense-within-episode-spans series with genuine 0↔>0 variance
- * when the user had symptomatic days, and NOTHING at all when they had no
- * episodes. Pure.
+ * when the user had symptomatic days, and NOTHING at all when there is neither
+ * a span nor a logged day. Pure.
  */
 export function buildSymptomSeverityDailySeries(args: {
   dayLogs: SymptomDayLogRow[];
@@ -171,11 +179,6 @@ export function buildSymptomSeverityDailySeries(args: {
     }
   }
 
-  // If no episode put a single day on the board, the channel is absent.
-  if (byDay.size === 0) {
-    return { key: SYMPTOM_SEVERITY_CHANNEL_KEY, role, points: [] };
-  }
-
   // Step 3 — overlay logged impacts (MAX per day). A logged day outside every
   // episode span is still honoured (it is, by definition, a symptomatic day the
   // user recorded), so it joins the series even if the span walk missed it.
@@ -184,6 +187,11 @@ export function buildSymptomSeverityDailySeries(args: {
     if (!Number.isFinite(log.impact)) continue;
     const prev = byDay.get(log.day);
     byDay.set(log.day, prev == null ? log.impact : Math.max(prev, log.impact));
+  }
+
+  // No span and no logged day: the channel is absent.
+  if (byDay.size === 0) {
+    return { key: SYMPTOM_SEVERITY_CHANNEL_KEY, role, points: [] };
   }
 
   const points: DailySeriesPoint[] = [...byDay.entries()]
@@ -241,4 +249,240 @@ export function buildSymptomEventDailySeries(args: {
     role: "outcome",
     points,
   };
+}
+
+// ─── v1.44 — the extended channel families ─────────────────────────────────
+
+/** One stored nutrient day total (one row per day, nutrient and source). */
+export interface NutrientDayRow {
+  day: string;
+  nutrient: string;
+  amount: number;
+}
+
+/** Ceiling on `NUTRIENT:<code>` channels in one scan. */
+export const MAX_MICRONUTRIENT_CHANNELS = 4;
+
+/**
+ * The intake channels from the nutrient log: water as HYDRATION, caffeine as
+ * CAFFEINE, and at most {@link MAX_MICRONUTRIENT_CHANNELS} micronutrients as
+ * `NUTRIENT:<code>`.
+ *
+ * A day's amount is the sum across its sources (a manual water entry and the
+ * Apple Health total are two rows, and reads sum them). A day without a row is
+ * no point: the log does not say whether nothing was taken or nothing was
+ * recorded. The micronutrients admitted are those with at least `minDays`
+ * logged days and any day-to-day variance, the most-logged first (code as the
+ * tie-break): a daily supplement at a fixed dose is a constant, and a
+ * constant cannot correlate with anything. Pure.
+ */
+export function buildNutrientDailySeries(
+  rows: readonly NutrientDayRow[],
+  opts: { minDays: number },
+): NamedSeries[] {
+  const byNutrient = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    if (!Number.isFinite(row.amount)) continue;
+    const days = byNutrient.get(row.nutrient) ?? new Map<string, number>();
+    days.set(row.day, (days.get(row.day) ?? 0) + row.amount);
+    byNutrient.set(row.nutrient, days);
+  }
+  const pointsOf = (code: string): DailySeriesPoint[] =>
+    [...(byNutrient.get(code) ?? new Map<string, number>()).entries()]
+      .map(([day, value]) => ({ day, value }))
+      .sort((a, b) => (a.day < b.day ? -1 : 1));
+
+  const out: NamedSeries[] = [
+    {
+      key: HYDRATION_CHANNEL_KEY,
+      role: "behaviour",
+      points: pointsOf("water"),
+    },
+    {
+      key: CAFFEINE_CHANNEL_KEY,
+      role: "behaviour",
+      points: pointsOf("caffeine"),
+    },
+  ];
+  const candidates = [...byNutrient.keys()]
+    .filter((code) => code !== "water" && code !== "caffeine")
+    .map((code) => ({ code, points: pointsOf(code) }))
+    .filter(
+      ({ points }) =>
+        points.length >= opts.minDays &&
+        points.some((p) => p.value !== points[0].value),
+    )
+    .sort(
+      (a, b) => b.points.length - a.points.length || (a.code < b.code ? -1 : 1),
+    )
+    .slice(0, MAX_MICRONUTRIENT_CHANNELS);
+  for (const { code, points } of candidates) {
+    out.push({
+      key: `${NUTRIENT_CHANNEL_PREFIX}${code}`,
+      role: "behaviour",
+      points,
+    });
+  }
+  return out;
+}
+
+/** One mood entry as the alcohol channel reads it. */
+export interface AlcoholTagEntry {
+  at: Date;
+  tagged: boolean;
+}
+
+/** Fewest tagged days before the alcohol channel is offered at all. */
+export const MIN_ALCOHOL_DAYS = 5;
+
+/**
+ * The ALCOHOL behaviour series: per day with at least one mood entry, 1 when
+ * any entry that day carries the `alcohol` tag and 0 otherwise. A day without
+ * an entry is no point. Below {@link MIN_ALCOHOL_DAYS} tagged days (or with no
+ * untagged day to compare against) the series is empty: a handful of ones is
+ * what a spurious point-biserial r is made of. Pure.
+ */
+export function buildAlcoholDailySeries(
+  entries: readonly AlcoholTagEntry[],
+  tz: string,
+): NamedSeries {
+  const byDay = new Map<string, number>();
+  for (const entry of entries) {
+    const day = dayKey(entry.at, tz);
+    byDay.set(day, Math.max(byDay.get(day) ?? 0, entry.tagged ? 1 : 0));
+  }
+  const points = [...byDay.entries()]
+    .map(([day, value]) => ({ day, value }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
+  const tagged = points.filter((p) => p.value === 1).length;
+  const usable = tagged >= MIN_ALCOHOL_DAYS && tagged < points.length;
+  return {
+    key: ALCOHOL_CHANNEL_KEY,
+    role: "behaviour",
+    points: usable ? points : [],
+  };
+}
+
+/** One canonical workout session as the training channels read it. */
+export interface WorkoutSessionRow {
+  startedAt: Date;
+  durationSec: number;
+}
+
+/**
+ * Fill the days between the first and the last key with 0. Inside that span
+ * the person was recording training, so a day without a session is a rest
+ * day; outside it nothing says whether they were recording at all. Pure.
+ */
+function zeroFillSpan(byDay: ReadonlyMap<string, number>): DailySeriesPoint[] {
+  const keys = [...byDay.keys()].sort();
+  const points: DailySeriesPoint[] = [];
+  if (keys.length === 0) return points;
+  const last = keys[keys.length - 1];
+  for (let day = keys[0]; day <= last; day = shiftDateKey(day, 1)) {
+    points.push({ day, value: byDay.get(day) ?? 0 });
+  }
+  return points;
+}
+
+/**
+ * WORKOUT_MINUTES: the day's summed session minutes (user zone, by start),
+ * over sessions the caller has already collapsed across sources, zero-filled
+ * between the first and the last session. Pure.
+ */
+export function buildWorkoutMinutesSeries(
+  sessions: readonly WorkoutSessionRow[],
+  tz: string,
+): NamedSeries {
+  const byDay = new Map<string, number>();
+  for (const s of sessions) {
+    if (!Number.isFinite(s.durationSec) || s.durationSec <= 0) continue;
+    const day = dayKey(s.startedAt, tz);
+    byDay.set(day, (byDay.get(day) ?? 0) + s.durationSec / 60);
+  }
+  return {
+    key: WORKOUT_MINUTES_CHANNEL_KEY,
+    role: "behaviour",
+    points: zeroFillSpan(byDay),
+  };
+}
+
+/**
+ * TRAINING_LOAD: the stored day-total TRIMP, zero-filled between the first and
+ * the last stored day. The nightly strain run writes a row only on a scored
+ * day, so a missing day inside the span carried no training impulse. The day
+ * keys are the strain engine's UTC days (the same tolerance the DAY rollups
+ * carry). Pure.
+ */
+export function buildTrainingLoadSeries(
+  rows: ReadonlyArray<{ day: string; dayTrimp: number }>,
+): NamedSeries {
+  const byDay = new Map<string, number>();
+  for (const row of rows) {
+    if (!Number.isFinite(row.dayTrimp) || row.dayTrimp < 0) continue;
+    byDay.set(row.day, row.dayTrimp);
+  }
+  return {
+    key: TRAINING_LOAD_CHANNEL_KEY,
+    role: "behaviour",
+    points: zeroFillSpan(byDay),
+  };
+}
+
+/** One local hour's mean of one room-climate type. */
+export interface ClimateHourRow {
+  type: string;
+  /** Local calendar day of the hour, YYYY-MM-DD. */
+  day: string;
+  /** Local hour, 0–23. */
+  hour: number;
+  mean: number;
+}
+
+/** The overnight window, local time: from this hour … */
+export const OVERNIGHT_FROM_HOUR = 21;
+/** … until (exclusive) this hour of the next morning. */
+export const OVERNIGHT_TO_HOUR = 7;
+/** Fewest hours inside the window before a night has a value. */
+export const MIN_OVERNIGHT_HOURS = 4;
+
+/**
+ * One series per room-climate type: the night's mean of its hourly means, the
+ * night running 21:00 to 07:00 local time and keyed on the morning's day, the
+ * key the sleep series uses. Averaging hours rather than readings keeps a
+ * sensor that reports every minute from outweighing one that reports every
+ * quarter hour. A night with fewer than {@link MIN_OVERNIGHT_HOURS} hours has
+ * no point. Each series pairs with the night's sleep only, at lag 0. Pure.
+ */
+export function buildOvernightClimateSeries(
+  rows: readonly ClimateHourRow[],
+  types: readonly string[],
+  targets: readonly string[],
+): NamedSeries[] {
+  const nights = new Map<string, Map<string, { sum: number; n: number }>>();
+  for (const row of rows) {
+    if (!Number.isFinite(row.mean)) continue;
+    let night: string;
+    if (row.hour >= OVERNIGHT_FROM_HOUR) night = shiftDateKey(row.day, 1);
+    else if (row.hour < OVERNIGHT_TO_HOUR) night = row.day;
+    else continue;
+    const byNight =
+      nights.get(row.type) ?? new Map<string, { sum: number; n: number }>();
+    const acc = byNight.get(night) ?? { sum: 0, n: 0 };
+    acc.sum += row.mean;
+    acc.n += 1;
+    byNight.set(night, acc);
+    nights.set(row.type, byNight);
+  }
+  return types.map((type) => ({
+    key: type,
+    role: "behaviour" as const,
+    lagDays: 0,
+    phrasing: "overnight" as const,
+    targets,
+    points: [...(nights.get(type) ?? new Map()).entries()]
+      .filter(([, acc]) => acc.n >= MIN_OVERNIGHT_HOURS)
+      .map(([day, acc]) => ({ day, value: acc.sum / acc.n }))
+      .sort((a, b) => (a.day < b.day ? -1 : 1)),
+  }));
 }

@@ -30,7 +30,7 @@ import {
   EMPTY_STATE_ACTIONS,
   type PaletteEntry,
   type PaletteGroup,
-} from "@/lib/command-palette/build-index";
+} from "@/components/command-palette/build-index";
 import { rankEntries } from "@/lib/command-palette/rank";
 import { pushRecent, readRecent } from "@/lib/command-palette/recent";
 import { scrollToAnchorWhenReady } from "@/lib/dom/scroll-to-anchor";
@@ -135,6 +135,9 @@ export default function CommandPalette() {
       <Sheet open={open} onOpenChange={setCommandPaletteOpen}>
         <SheetContent
           side="bottom"
+          // The palette fills the window: no backdrop to pull it towards,
+          // and its own Cancel and Escape close it.
+          draggable={false}
           showCloseButton={false}
           data-slot="command-palette"
           data-variant="sheet"

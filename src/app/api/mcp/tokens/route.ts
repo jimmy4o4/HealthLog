@@ -22,12 +22,8 @@
 import { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth, requireRecentProof } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
 import { issueApiToken } from "@/lib/auth/issue-token";
@@ -48,7 +44,7 @@ export const GET = apiHandler(async () => {
     return apiError("API is globally disabled", 403);
   }
 
-  // M2 — list only manually-minted connector tokens. OAuth access rows
+  // List only manually-minted connector tokens. OAuth access rows
   // (`mcpConnectionId != null`) are transient 60-minute credentials that would
   // flood this list; they are surfaced (and revoked) as connections instead.
   const tokens = await prisma.apiToken.findMany({
@@ -84,15 +80,10 @@ export const POST = apiHandler(async (request: NextRequest) => {
     return apiError("API is globally disabled", 403);
   }
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, createMcpTokenSchema, {
     maxBytes: 16 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = createMcpTokenSchema.safeParse(body);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   // Build the permission array explicitly from the closed scope choice —
   // never spread, never wildcard. `read` → read-only; `read_write` → read plus

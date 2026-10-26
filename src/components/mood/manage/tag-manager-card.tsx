@@ -74,6 +74,7 @@ import {
   type ManageTag,
   type MoodTagLayoutResolved,
 } from "./use-mood-tag-manage";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * v1.17 — per-group tag management for `/settings/mood`. Mirrors the
@@ -147,7 +148,7 @@ export function TagManagerCard({ catalog }: TagManagerCardProps) {
     const rollback = await snapshotManageCache(queryClient);
     updateManageCache(queryClient, () => mergeBack(catalog, nextCatalog));
     try {
-      // v1.32.22 (R5b) — echo + seed the layout token (see `putGroupOrder` in
+      // v1.32.22 — echo + seed the layout token (see `putGroupOrder` in
       // the groups card): the sibling group-order card writes the same blob, so
       // a stale placements merge is exactly the overwrite the token 409s.
       const resolved = await apiPut<MoodTagLayoutResolved>(
@@ -264,7 +265,7 @@ export function TagManagerCard({ catalog }: TagManagerCardProps) {
       }
       // Both kinds pin the resulting per-group order in the layout blob
       // so the resolved tree matches what the user just saw happen.
-      // v1.32.22 (R5b) — echo + seed the layout token so a concurrent write to
+      // v1.32.22 — echo + seed the layout token so a concurrent write to
       // the same blob 409s instead of clobbering.
       const resolved = await apiPut<MoodTagLayoutResolved>(
         "/api/mood/tags/layout",
@@ -295,7 +296,7 @@ export function TagManagerCard({ catalog }: TagManagerCardProps) {
     // `relative` anchors the sr-only drag-hint paragraph: `sr-only` is
     // absolutely positioned, and without a positioned ancestor its 1px box
     // lands below the list in DOCUMENT coordinates and makes the document
-    // itself scrollable (second scrollbar — UI-STANDARDS §9 one-scroll-floor).
+    // itself scrollable (second scrollbar — ui-standards.md §9 one-scroll-floor).
     <div className="relative space-y-4" data-slot="mood-tag-manager-card">
       <div className="flex items-center justify-between gap-2">
         <p className="text-muted-foreground min-w-0 text-xs">
@@ -317,7 +318,7 @@ export function TagManagerCard({ catalog }: TagManagerCardProps) {
       </div>
 
       {visible.categories.length === 0 && (
-        <p className="text-muted-foreground text-sm">{t("common.noData")}</p>
+        <EmptyState variant="plain" size="compact" title={t("common.noData")} />
       )}
 
       {visible.categories.map((category) => {

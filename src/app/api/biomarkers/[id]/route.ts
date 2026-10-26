@@ -5,10 +5,9 @@ import {
   apiError,
   apiSuccess,
   getClientIp,
-  returnAllZodIssues,
-  safeJson,
   sanitiseZodIssues,
 } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import {
   destroyedDetails,
@@ -26,6 +25,10 @@ import { mergedInto } from "@/lib/labs/biomarker-merge";
 import { encryptContextToBytes } from "@/lib/labs/biomarker-store";
 import { matchAnalyteKey } from "@/lib/labs/analyte-match";
 import { annotate } from "@/lib/logging/context";
+import { computeLabTrend } from "@/lib/labs/lab-trend";
+
+/** Upper bound on readings the trend line reads. */
+const LAB_TREND_READ_CAP = 2000;
 import { updateBiomarkerSchema } from "@/lib/validations/biomarkers";
 import { effectiveBound, isInvertedRange } from "@/lib/validations/labs";
 
@@ -58,14 +61,46 @@ export const GET = apiHandler(
       });
     }
 
-    const aliases = await aliasNamesByMarker(prisma, user.id, [row]);
+    const [aliases, readings] = await Promise.all([
+      aliasNamesByMarker(prisma, user.id, [row]),
+      // v1.44 — the marker's numeric readings for the trend line. Every
+      // reading is stored in the marker's unit, so the series needs no
+      // conversion; the cap is far above any real panel history.
+      prisma.labResult.findMany({
+        where: {
+          userId: user.id,
+          biomarkerId: id,
+          deletedAt: null,
+          value: { not: null },
+        },
+        // Newest first, so a capped read keeps the recent end of the series
+        // (the staleness check reads the newest reading); the fit sorts.
+        orderBy: { takenAt: "desc" },
+        take: LAB_TREND_READ_CAP,
+        select: { takenAt: true, value: true },
+      }),
+    ]);
+    const trend = computeLabTrend(
+      readings.flatMap((r) =>
+        r.value === null ? [] : [{ takenAt: r.takenAt, value: r.value }],
+      ),
+      { low: row.lowerBound, high: row.upperBound },
+      new Date(),
+    );
 
     annotate({
       action: { name: "labs.biomarker.get" },
-      meta: { biomarkerId: id },
+      meta: {
+        biomarkerId: id,
+        trend: trend.status,
+        ...(trend.status === "ok" ? { projection: trend.projection } : {}),
+      },
     });
 
-    return apiSuccess(serialiseBiomarker(row, aliases.get(row.id) ?? []));
+    return apiSuccess({
+      ...serialiseBiomarker(row, aliases.get(row.id) ?? []),
+      trend,
+    });
   },
 );
 
@@ -86,34 +121,29 @@ export const PUT = apiHandler(
       });
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, updateBiomarkerSchema, {
       maxBytes: 16 * 1024,
+      action: "labs.biomarker.update.validation-failed",
+      countIssues: true,
+      meta: { biomarkerId: id },
+      errorCode: "labs.biomarker.update.invalid",
+      onInvalid: (error) => {
+        const auditIssues = sanitiseZodIssues(error.issues, {
+          stripValuesFromMessage: true,
+        });
+        // v1.37.0 — through `auditLog()` rather than a bare `prisma.auditLog
+        // .create`, because that helper is the only writer that stamps
+        // `actorUserId`. Filed under the resolved record either way; without
+        // the stamp a manager's malformed payload would read as the owner's own.
+        void auditLog("labs.biomarker.update.validation-failed", {
+          userId: user.id,
+          details: { issues: auditIssues, biomarkerId: id },
+        }).catch(() => {
+          /* swallow — the 422 response is the contract */
+        });
+      },
     });
-    if (jsonError) return jsonError;
-
-    const parsed = updateBiomarkerSchema.safeParse(body);
-    if (!parsed.success) {
-      annotate({
-        action: { name: "labs.biomarker.update.validation-failed" },
-        meta: { issue_count: parsed.error.issues.length, biomarkerId: id },
-      });
-      const auditIssues = sanitiseZodIssues(parsed.error.issues, {
-        stripValuesFromMessage: true,
-      });
-      // v1.37.0 — through `auditLog()` rather than a bare `prisma.auditLog
-      // .create`, because that helper is the only writer that stamps
-      // `actorUserId`. Filed under the resolved record either way; without the
-      // stamp a manager's malformed payload would read as the owner's own.
-      void auditLog("labs.biomarker.update.validation-failed", {
-        userId: user.id,
-        details: { issues: auditIssues, biomarkerId: id },
-      }).catch(() => {
-        /* swallow — the 422 response is the contract */
-      });
-      return returnAllZodIssues(parsed.error, 422, {
-        errorCode: "labs.biomarker.update.invalid",
-      });
-    }
+    if (!parsed.ok) return parsed.error;
 
     const d = parsed.data;
 

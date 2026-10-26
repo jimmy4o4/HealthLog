@@ -1,5 +1,5 @@
 /**
- * G3 — the success affordance is owned by the outcome module, everywhere.
+ * The success affordance is owned by the outcome module, everywhere.
  *
  * #640 established the rule inside the import panel: a write that wrote
  * nothing must not read as a success. #650 widened it to the medication
@@ -48,6 +48,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join, posix, relative, sep } from "node:path";
+import { stripComments } from "./helpers/source-files";
 
 const REPO_ROOT = join(__dirname, "..", "..");
 const COMPONENT_ROOT = join(REPO_ROOT, "src", "components");
@@ -82,6 +83,9 @@ const PINNED_AFFORDANCES: Record<
   // the two status grids used to spell the tint at every call site and now
   // name a tone instead, so the marker lives here once.
   "src/components/admin/_shared.tsx": { "text-success": 3, "toast.success": 1 },
+  // v1.44: the activity calendar's per-week tick for "every weekly goal met",
+  // a state of a row the person reads, not the outcome of a write.
+  "src/components/activity/activity-calendar-card.tsx": { "text-success": 1 },
   // v1.42: the readiness inventory's "carries" status icon, one arm of the
   // carries / thin / empty tone table, beside its spoken status label.
   "src/components/timeline/readiness-inventory.tsx": { "text-success": 1 },
@@ -94,7 +98,10 @@ const PINNED_AFFORDANCES: Record<
   "src/components/admin/assistant-section.tsx": { "toast.success": 1 },
   // v1.43 — the AI usage bounds: a settings save, not a write with counts.
   "src/components/admin/ai-usage-section.tsx": { "toast.success": 1 },
-  "src/components/admin/backups-section.tsx": { "toast.success": 4 },
+  // The run, the download, the upload and the finished restore, one toast each.
+  "src/components/admin/backups/use-backup-actions.ts": { "toast.success": 2 },
+  "src/components/admin/backups/use-backup-restores.ts": { "toast.success": 1 },
+  "src/components/admin/backups/use-backup-upload.ts": { "toast.success": 1 },
   "src/components/admin/central-codex-section.tsx": { "toast.success": 2 },
   "src/components/admin/danger-zone-section.tsx": { "text-success": 1 },
   "src/components/admin/encryption-section.tsx": {
@@ -128,6 +135,13 @@ const PINNED_AFFORDANCES: Record<
   // off-host copy is, and the state it paints green came out of the database
   // rather than out of a request this card just made.
   "src/components/admin/offhost-backups-section.tsx": { "text-success": 1 },
+  // Reads the server's verdict, writes nothing: the check and the green mark
+  // say a backup signal is ok as the readiness model judged it, not that a
+  // request this card made succeeded.
+  "src/components/admin/recovery-readiness-card.tsx": {
+    CheckCircle2: 2,
+    "text-success": 1,
+  },
   "src/components/admin/recent-audit-preview.tsx": {
     CheckCircle2: 2,
     "text-success": 1,
@@ -142,6 +156,9 @@ const PINNED_AFFORDANCES: Record<
     "text-success": 2,
     "toast.success": 2,
   },
+  // An undone account deletion: an account action with no row counts to
+  // misreport.
+  "src/components/admin/pending-deletion-controls.tsx": { "toast.success": 1 },
   "src/components/admin/version-tile-section.tsx": {
     CheckCircle2: 2,
     "text-success": 1,
@@ -160,11 +177,10 @@ const PINNED_AFFORDANCES: Record<
     "toast.success": 1,
   },
   "src/components/custom-metrics/custom-metric-history-list.tsx": {
-    // v1.37.20 (A3-11) — the third success is the restore confirmation
+    // v1.37.20 — the third success is the restore confirmation
     // behind the delete toast's Undo action.
     "toast.success": 3,
   },
-  "src/components/cycle/cycle-phase-crosstab.tsx": { "text-success": 1 },
   // v1.36.x — two call sites, one decision: the intake toast routes through
   // `intakeToastOptions()`, which returns `undefined` in the caller's own
   // record, and sonner's one-argument form is what the unit tests assert. So
@@ -174,8 +190,25 @@ const PINNED_AFFORDANCES: Record<
   },
   "src/components/dashboard/range-display.tsx": { "text-success": 2 },
   "src/components/documents/document-card.tsx": { "text-success": 1 },
-  "src/components/documents/document-detail-sheet.tsx": { "toast.success": 2 },
-  "src/components/documents/documents-view.tsx": { "toast.success": 3 },
+  "src/components/documents/detail/use-document-detail-ai.ts": {
+    "toast.success": 1,
+  },
+  "src/components/documents/detail/use-document-detail.ts": {
+    "toast.success": 1,
+  },
+  "src/components/documents/vault/use-vault-library.ts": {
+    "toast.success": 1,
+  },
+  "src/components/documents/vault/use-vault-bulk.ts": {
+    "toast.success": 2,
+  },
+  // Recently deleted: the one restore's toast, which carries an "Open"
+  // action the shared outcome toast has no slot for. It fires only on the
+  // restore route's 200 for that one document, i.e. a document back in the
+  // vault. Restore-all and delete-now go through toastWrittenOutcome.
+  "src/components/documents/trash/use-recently-deleted.ts": {
+    "toast.success": 1,
+  },
   // The document picker's per-row result: tinted only for the `imported` /
   // `duplicate` outcome the import route returned for that one document, i.e.
   // a document the vault now holds. The run's headline goes through
@@ -214,25 +247,10 @@ const PINNED_AFFORDANCES: Record<
   "src/components/insights/coach-panel/suggested-action-card.tsx": {
     "text-success": 1,
   },
-  "src/components/insights/confidence-badge.ts": { "text-success": 1 },
   "src/components/insights/daily-briefing.tsx": { "text-success": 1 },
   "src/components/insights/derived/band-tokens.ts": { "text-success": 1 },
-  // The green `+N` chip beside the Health Score label. It reports a week that
-  // went up, not an action that succeeded, and it wears the same band token
-  // the score's own number does — there is no outcome here to route through
-  // the outcome module.
-  "src/components/insights/health-score-card.tsx": { "text-success": 1 },
   "src/components/insights/insights-edit-mode.tsx": { "toast.success": 2 },
   "src/components/insights/insights-tab-strip.tsx": { "toast.success": 1 },
-  "src/components/insights/mood/mood-better-days.tsx": { "text-success": 1 },
-  "src/components/insights/mood/mood-factor-metric-crosstab.tsx": {
-    "text-success": 1,
-  },
-  "src/components/insights/mood/mood-tag-influence.tsx": { "text-success": 1 },
-  "src/components/insights/mood/mood-tag-metric-crosstab.tsx": {
-    "text-success": 1,
-  },
-  "src/components/insights/personal-record-badge.tsx": { "text-success": 1 },
   "src/components/labs/biomarker-form.tsx": { "toast.success": 1 },
   "src/components/labs/biomarker-manager.tsx": { "toast.success": 2 },
   "src/components/labs/lab-biomarker-detail.tsx": { "toast.success": 1 },
@@ -241,12 +259,14 @@ const PINNED_AFFORDANCES: Record<
   "src/components/measurement-reminders/vorsorge-dashboard-card.tsx": {
     CheckCircle2: 2,
   },
-  "src/components/measurement-reminders/vorsorge-section.tsx": {
+  "src/components/measurement-reminders/checkups/checkup-card.tsx": {
     CheckCircle2: 2,
     "text-success": 1,
   },
   "src/components/measurements/measurement-form.tsx": { "toast.success": 1 },
-  "src/components/measurements/measurement-list.tsx": { "toast.success": 3 },
+  "src/components/measurements/list/use-measurement-list-data.ts": {
+    "toast.success": 3,
+  },
   "src/components/medications/card-parts/medication-status-pill.tsx": {
     "text-success": 1,
   },
@@ -254,8 +274,13 @@ const PINNED_AFFORDANCES: Record<
   "src/components/medications/dose-history-add-dialog.tsx": {
     "toast.success": 2,
   },
-  "src/components/medications/dose-history-ledger.tsx": {
-    "text-success": 2,
+  "src/components/medications/dose-history/ledger-row-item.tsx": {
+    "text-success": 1,
+  },
+  "src/components/medications/dose-history/ledger-summary-chart.tsx": {
+    "text-success": 1,
+  },
+  "src/components/medications/dose-history/use-dose-history-ledger.ts": {
     "toast.success": 4,
   },
   "src/components/medications/intake-edit-dialog.tsx": { "toast.success": 1 },
@@ -361,17 +386,12 @@ const PINNED_AFFORDANCES: Record<
   },
   "src/components/settings/coach-memory-section.tsx": { "toast.success": 2 },
   "src/components/settings/coach-prefs-section.tsx": { "toast.success": 1 },
-  "src/components/settings/dashboard-layout-section.tsx": {
+  "src/components/settings/dashboard-layout/use-dashboard-layout-draft.ts": {
     "toast.success": 2,
   },
-  "src/components/settings/email-card.tsx": { "text-success": 1 },
   "src/components/settings/environment-section.tsx": { "toast.success": 4 },
   "src/components/settings/insights-pill-order-section.tsx": {
     "toast.success": 1,
-  },
-  "src/components/settings/integration-status-pill.tsx": {
-    CheckCircle2: 2,
-    "text-success": 1,
   },
   "src/components/settings/integrations/connections-panel.tsx": {
     "toast.success": 2,
@@ -403,13 +423,12 @@ const PINNED_AFFORDANCES: Record<
   },
   "src/components/settings/mcp-section.tsx": {
     "text-success": 4,
-    "toast.success": 2,
+    "toast.success": 1,
   },
   "src/components/settings/notification-status-card.tsx": {
     CheckCircle2: 2,
     "text-success": 1,
   },
-  "src/components/settings/ntfy-card.tsx": { "text-success": 1 },
   // The one that used to sit inside `account-section/index.tsx` — the card
   // moved to Settings → Security, the line moved with it.
   "src/components/settings/password-card.tsx": { "text-success": 1 },
@@ -417,7 +436,6 @@ const PINNED_AFFORDANCES: Record<
   "src/components/settings/share-link-create-form.tsx": { "text-success": 3 },
   "src/components/settings/sharing-section.tsx": { "text-success": 1 },
   "src/components/settings/sources-section.tsx": { "toast.success": 2 },
-  "src/components/settings/telegram-card.tsx": { "text-success": 1 },
   "src/components/settings/test-connection-button.tsx": {
     CheckCircle2: 2,
     "text-success": 1,
@@ -427,9 +445,13 @@ const PINNED_AFFORDANCES: Record<
   },
   "src/components/settings/trusted-devices-card.tsx": { "text-success": 1 },
   "src/components/settings/web-push-card.tsx": { "text-success": 1 },
-  "src/components/settings/webhook-card.tsx": { "text-success": 1 },
   "src/components/targets/target-edit-sheet.tsx": { "toast.success": 2 },
   "src/components/ui/password-strength.tsx": { "text-success": 2 },
+  // The success tone of the grade chip (a high confidence, a score that went
+  // up). It states a grade beside a reading, never that a write succeeded;
+  // the crosstab, confidence and score chips that each carried their own copy
+  // of this class now render through it.
+  "src/components/ui/score-pill.tsx": { "text-success": 1 },
 };
 
 /**
@@ -523,11 +545,6 @@ const RESULT_SURFACES: ReadonlyArray<{
     forbidsMarkers: true,
   },
 ];
-
-/** Code only — a comment naming a marker is prose, not an affordance. */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-}
 
 function readCode(relativePath: string): string {
   return stripComments(readFileSync(join(REPO_ROOT, relativePath), "utf8"));

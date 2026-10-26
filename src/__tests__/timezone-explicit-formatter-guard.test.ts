@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { walkSourceFiles } from "./helpers/source-files";
 
 /**
  * A formatter that renders an instant must say which calendar it renders in.
@@ -29,21 +30,74 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = resolve(__dirname, "../..");
 
+/** A source file under `src/`, by its repo-relative path, and its text. */
+interface SourceFile {
+  file: string;
+  source: string;
+}
+
+/** Whatever any scan below looks for, as plain substrings. */
+const MARKERS = [
+  "Intl.DateTimeFormat",
+  ".toLocaleDateString",
+  ".toLocaleTimeString",
+  "getDateTimeFormat",
+  "fmt.date",
+];
+
+let candidates: SourceFile[] | null = null;
+
+/**
+ * Every source file that mentions one of the markers, read once per run.
+ *
+ * Each scan used to start its own `grep -r` over the whole of `src/`,
+ * generated client included, five times per run; under a loaded unit suite
+ * that alone ran past the 5 s test timeout. The tree is walked once now, the
+ * generated Prisma client left out (it renders no dates, and no scan has ever
+ * matched in it), and each file is kept only when a plain substring test says
+ * a pattern could match, before any regular expression runs.
+ */
+function candidateFiles(): SourceFile[] {
+  candidates ??= walkSourceFiles(resolve(REPO_ROOT, "src"), { floor: 3000 })
+    .filter((rel) => !rel.startsWith("generated/"))
+    .map((rel) => ({
+      file: `src/${rel}`,
+      source: readFileSync(resolve(REPO_ROOT, "src", rel), "utf8"),
+    }))
+    .filter(({ source }) => MARKERS.some((marker) => source.includes(marker)));
+  return candidates;
+}
+
+/** The candidate files a pattern matches, test files left in. */
+function filesMatching(pattern: RegExp, under = "src/"): SourceFile[] {
+  return candidateFiles().filter(
+    ({ file, source }) => file.startsWith(under) && pattern.test(source),
+  );
+}
+
+const ANY_FORMATTER =
+  /new Intl\.DateTimeFormat|\.toLocale(Date|Time)String\(|getDateTimeFormat\(/;
+
 /**
  * Bare formatter sites that are correct as they stand. Keep this short: it is
- * an inventory of exceptions, not a parking space. Every entry says why.
+ * an inventory of exceptions, not a parking space. Every entry says why, and
+ * how many bare sites the file holds: an exception covers those sites, not
+ * whatever lands in the same file next.
  */
-const ALLOWLIST: ReadonlyArray<{ file: string; why: string }> = [
+const ALLOWLIST: ReadonlyArray<{ file: string; hits: number; why: string }> = [
   {
     file: "src/components/ui/calendar.tsx",
+    hits: 1,
     why: "A `data-day` attribute on a calendar cell, derived from the grid's own arithmetic. It identifies a cell, it does not render a recorded moment.",
   },
   {
     file: "src/components/cycle/cycle-calendar.tsx",
+    hits: 2,
     why: "Weekday headers walked from a fixed local date, and a month label built from a month anchor. Both are calendar arithmetic with no instant behind them.",
   },
   {
     file: "src/lib/intl/formatter-cache.ts",
+    hits: 2,
     why: "The shared cache itself. Its options come from the caller, so the timezone is the caller's to supply and the guard should be asking them, not this.",
   },
 ];
@@ -51,6 +105,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; why: string }> = [
 const FORMATTER_PATTERNS = [
   /new Intl\.DateTimeFormat\s*\(/g,
   /\.toLocale(?:Date|Time)String\s*\(/g,
+  // The shared cache's own entry point: it forwards its options straight to
+  // `Intl.DateTimeFormat`, so a call that omits the zone is a bare formatter
+  // exactly like the constructor form (the workout surfaces did this until
+  // v1.43.6).
+  /\bgetDateTimeFormat\s*\(/g,
 ];
 
 /** The argument list starting at the `(` at or after `from`. */
@@ -68,27 +127,31 @@ function argumentList(source: string, from: number): string {
   return source.slice(open);
 }
 
+/** Number of top-level, comma-separated arguments in `(…)`. */
+function topLevelArgCount(args: string): number {
+  let depth = 0;
+  let count = 0;
+  let sawContent = false;
+  for (const ch of args.slice(1, -1)) {
+    if ("([{".includes(ch)) depth += 1;
+    else if (")]}".includes(ch)) depth -= 1;
+    else if (ch === "," && depth === 0) {
+      count += 1;
+      sawContent = false;
+      continue;
+    }
+    if (!/\s/.test(ch)) sawContent = true;
+  }
+  return sawContent ? count + 1 : count;
+}
+
 function bareFormatterSites(): Array<{ file: string; line: number }> {
-  const listed = execFileSync(
-    "grep",
-    [
-      "-rlE",
-      "new Intl\\.DateTimeFormat|\\.toLocale(Date|Time)String\\(",
-      "src",
-      "--include=*.ts",
-      "--include=*.tsx",
-    ],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  )
-    .trim()
-    .split("\n")
-    .filter(Boolean)
+  const listed = filesMatching(ANY_FORMATTER)
     // Tests pin instants on purpose and are not user-facing surfaces.
-    .filter((f) => !f.includes("__tests__"));
+    .filter(({ file }) => !file.includes("__tests__"));
 
   const hits: Array<{ file: string; line: number }> = [];
-  for (const file of listed) {
-    const source = readFileSync(resolve(REPO_ROOT, file), "utf8");
+  for (const { file, source } of listed) {
     for (const pattern of FORMATTER_PATTERNS) {
       pattern.lastIndex = 0;
       for (let m = pattern.exec(source); m !== null; m = pattern.exec(source)) {
@@ -105,6 +168,15 @@ function bareFormatterSites(): Array<{ file: string; line: number }> {
         // of them and the honest response would be to allowlist them — which
         // is how a guard stops guarding.
         if (/\btimeZone\s*(?::|,|\}|$)/m.test(args)) continue;
+        // `getDateTimeFormat(locale, tz, options)` takes the zone as its own
+        // argument; only the two-argument `(locale, options)` form can leave
+        // it out.
+        if (m[0].startsWith("getDateTimeFormat") && topLevelArgCount(args) >= 3)
+          continue;
+        // A mention in a comment renders nothing.
+        const lineStart = source.lastIndexOf("\n", m.index) + 1;
+        if (/^\s*(?:\/\/|\*|\/\*)/.test(source.slice(lineStart, m.index)))
+          continue;
         hits.push({
           file,
           line: source.slice(0, m.index).split("\n").length,
@@ -121,27 +193,17 @@ describe("date formatters name the calendar they render in", () => {
   it("finds formatter sites at all (the guard must not pass vacuously)", () => {
     // If this drops to zero the grep has stopped matching and every assertion
     // below became free.
-    const all = execFileSync(
-      "grep",
-      [
-        "-rlE",
-        "new Intl\\.DateTimeFormat|\\.toLocale(Date|Time)String\\(",
-        "src",
-        "--include=*.ts",
-        "--include=*.tsx",
-      ],
-      { cwd: REPO_ROOT, encoding: "utf8" },
-    )
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    expect(all.length).toBeGreaterThan(5);
+    expect(filesMatching(ANY_FORMATTER).length).toBeGreaterThan(5);
   });
 
   it("has no unexplained formatter without an explicit timeZone", () => {
-    const unexplained = hits.filter(
-      (h) => !ALLOWLIST.some((a) => a.file === h.file),
-    );
+    const unexplained = hits.filter((h) => {
+      const entry = ALLOWLIST.find((a) => a.file === h.file);
+      return (
+        !entry ||
+        hits.filter((other) => other.file === h.file).length > entry.hits
+      );
+    });
     if (unexplained.length > 0) {
       throw new Error(
         `${unexplained.length} formatter call(s) render a date without naming a timezone:\n\n` +
@@ -150,7 +212,7 @@ describe("date formatters name the calendar they render in", () => {
           "profile timezone (`readStoredTimezone() || DEFAULT_TIMEZONE` on the client, " +
           "`resolveUserTimezone(userId)` on the server), or use the shared helpers in " +
           "@/lib/format. If the value is calendar arithmetic rather than a recorded " +
-          "instant, add the file to ALLOWLIST in this test with the reason.",
+          "instant, add the file to ALLOWLIST in this test with the reason and its count.",
       );
     }
   });
@@ -177,10 +239,74 @@ describe("date formatters name the calendar they render in", () => {
     // that has moved on, and it quietly covers whatever lands in that file next.
     for (const entry of ALLOWLIST) {
       expect(
-        hits.some((h) => h.file === entry.file),
-        `stale allowlist entry — ${entry.file} no longer has a bare formatter`,
-      ).toBe(true);
+        hits.filter((h) => h.file === entry.file).length,
+        `stale allowlist entry — ${entry.file} holds a different number of bare formatters`,
+      ).toBe(entry.hits);
     }
+  });
+});
+
+/**
+ * A component renders dates through `useFormatters()`, never through the
+ * shared cache directly.
+ *
+ * The two-argument `getDateTimeFormat(locale, options)` from
+ * `@/lib/intl/formatter-cache` can name a zone and still be wrong: it takes
+ * the locale and the hour cycle from wherever the caller found them and
+ * knows nothing of the reader's date-order preference. The workout surfaces
+ * rebuilt their own formatters this way and showed "Dec 16" to a reader who
+ * had chosen YYYY-MM-DD. The three-argument `(locale, timeZone, options)`
+ * form from `@/lib/tz/intl-cache` builds day keys and clock parts, not
+ * display text, and stays allowed.
+ */
+describe("components format dates through useFormatters", () => {
+  const CALL = /\bgetDateTimeFormat\s*\(/g;
+
+  let scanned: { offenders: string[]; calls: number } | null = null;
+
+  function scan() {
+    if (scanned) return scanned;
+    const files = filesMatching(
+      /getDateTimeFormat\s*\(/,
+      "src/components/",
+    ).filter(({ file }) => !file.includes("__tests__"));
+    const offenders: string[] = [];
+    let calls = 0;
+    for (const { file, source } of files) {
+      CALL.lastIndex = 0;
+      for (let m = CALL.exec(source); m; m = CALL.exec(source)) {
+        const lineStart = source.lastIndexOf("\n", m.index) + 1;
+        if (/^\s*(?:\/\/|\*|\/\*)/.test(source.slice(lineStart, m.index)))
+          continue;
+        calls += 1;
+        const args = argumentList(source, m.index + m[0].length - 1);
+        if (topLevelArgCount(args) < 3) {
+          offenders.push(
+            `${file}:${source.slice(0, m.index).split("\n").length}`,
+          );
+        }
+      }
+    }
+    scanned = { offenders, calls };
+    return scanned;
+  }
+
+  it("still sees the cache's calls in components (the matcher matches)", () => {
+    expect(scan().calls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("has no two-argument getDateTimeFormat in src/components", () => {
+    expect(scan().offenders).toEqual([]);
+  });
+
+  it("the matcher flags the two-argument form across lines", () => {
+    const source =
+      'getDateTimeFormat(\n  locale,\n  { timeZone, month: "short" },\n)';
+    CALL.lastIndex = 0;
+    const m = CALL.exec(source)!;
+    expect(
+      topLevelArgCount(argumentList(source, m.index + m[0].length - 1)),
+    ).toBe(2);
   });
 });
 
@@ -204,20 +330,16 @@ describe("a stated date is formatted on its calendar date", () => {
   const CALENDAR_CALL = /\bfmt\.dateShortSmartCalendar\s*\(/g;
   const NOON_ANCHOR = /T12:00:00/;
 
+  let scanned: { offenders: string[]; calendarCalls: number } | null = null;
+
   function scan() {
-    const files = execFileSync(
-      "grep",
-      ["-rlE", "fmt\\.date", "src", "--include=*.ts", "--include=*.tsx"],
-      { cwd: REPO_ROOT, encoding: "utf8" },
-    )
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .filter((f) => !f.includes("__tests__"));
+    if (scanned) return scanned;
+    const files = filesMatching(/fmt\.date/).filter(
+      ({ file }) => !file.includes("__tests__"),
+    );
     const offenders: string[] = [];
     let calendarCalls = 0;
-    for (const file of files) {
-      const source = readFileSync(resolve(REPO_ROOT, file), "utf8");
+    for (const { file, source } of files) {
       calendarCalls += (source.match(CALENDAR_CALL) ?? []).length;
       if (/const fmt = makeBucketLabelFormatters\(/.test(source)) continue;
       ZONED_CALL.lastIndex = 0;
@@ -230,7 +352,8 @@ describe("a stated date is formatted on its calendar date", () => {
         }
       }
     }
-    return { offenders, calendarCalls };
+    scanned = { offenders, calendarCalls };
+    return scanned;
   }
 
   it("finds the calendar formatter in use (the matcher still matches)", () => {

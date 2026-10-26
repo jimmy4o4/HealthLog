@@ -56,7 +56,7 @@ test.describe("Settings → Export & Import", () => {
 
   test("renders all export surfaces with stable testids", async ({ page }) => {
     await page.goto("/settings/export", { waitUntil: "domcontentloaded" });
-    // v1.18.0 (S5) — the full health-record export moved to its own
+    // v1.18.0 — the full health-record export moved to its own
     // `/settings/gesundheitsakte` section. The Export & Import page keeps
     // the four CSV/backup tiles with the `export-card-*` shape.
     for (const id of [
@@ -72,7 +72,7 @@ test.describe("Settings → Export & Import", () => {
   test("renders the health-record export panel on its own section", async ({
     page,
   }) => {
-    // v1.18.0 (S5) — the health-record export is the hero of the
+    // v1.18.0 — the health-record export is the hero of the
     // dedicated, module-gated Gesundheitsakte section.
     await openGesundheitsakte(page);
     await expect(page.getByTestId("health-record-export-panel")).toBeVisible({
@@ -149,8 +149,9 @@ test.describe("Settings → Export & Import", () => {
     await page.getByTestId("report-apply-standard-export").click();
 
     await expect(generate).toBeEnabled();
-    // Exactly the shipped set: the three classic vitals, weight and BMI, and
-    // nothing at all from the groups the template leaves alone.
+    // Exactly the shipped set: the three classic vitals, weight and BMI, the
+    // two heart-rate-variability rows, and nothing at all from the groups the
+    // template leaves alone.
     await expect(
       page.getByTestId("report-group-row-vitals-export"),
     ).toContainText("3/7");
@@ -159,7 +160,10 @@ test.describe("Settings → Export & Import", () => {
     ).toContainText("2/12");
     await expect(
       page.getByTestId("report-group-row-cardio-export"),
-    ).toContainText("0/14");
+    ).toContainText("2/15");
+    await expect(
+      page.getByTestId("report-group-row-mobility-export"),
+    ).toContainText("0/11");
     // The fenced tier is not part of any one-click set.
     await expect(
       page.getByTestId("report-scope-summary-export"),

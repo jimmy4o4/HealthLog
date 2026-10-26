@@ -13,6 +13,13 @@
  * a `useInfiniteQuery` in the file), or is listed below with the reason the
  * cap cannot cut anything off.
  *
+ * Only code counts as a pager. A comment that says "offset" sends nothing,
+ * and an offset pinned to a literal `0` is the opposite of paging: it asks
+ * for the first page and nothing else. The day-grouped measurement list
+ * passed this guard in exactly that shape (#1245), `limit` 5000 between a
+ * comment about pagination and `offset` "0", while it drew every day of a
+ * long history on one page and lost the days past the cap.
+ *
  * What it matches: `limit=<digits>` inside a URL string, and the two
  * `URLSearchParams` spellings, `.set("limit", "<digits>")` and
  * `limit: "<digits>"`. What it does not: a limit routed through a named
@@ -21,10 +28,13 @@
  * outside `app/api/`); a server-side `take` is not a fetch.
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import {
+  readSourceText,
+  stripComments,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -70,16 +80,10 @@ const ALLOWLIST: readonly Allowed[] = [
       "Search-backed picker: the query narrows the whole document vault server-side.",
   },
   {
-    file: "components/settings/share-document-picker.tsx",
+    file: "components/documents/document-picker-sheet.tsx",
     limit: 50,
     reason:
-      "Search-backed picker: the query narrows the whole document vault server-side.",
-  },
-  {
-    file: "components/documents/document-link-picker.tsx",
-    limit: 50,
-    reason:
-      "Search-backed picker: the query narrows the whole document vault server-side.",
+      "Search-backed picker (episode links and share links): the query narrows the whole document vault server-side.",
   },
   {
     file: "hooks/use-mood-day.ts",
@@ -97,6 +101,18 @@ const LIMIT_PATTERNS: readonly RegExp[] = [
 
 const PAGER_NEARBY = /\boffset\b|\bcursor\b|\bpageParam\b/;
 const PAGER_LINES = 3;
+
+/**
+ * The line as code a pager could live in: every offset pinned to a literal
+ * zero removed, in the URL spelling and both `URLSearchParams` spellings.
+ * The lines come comment-free from `stripComments`.
+ */
+function pagerCode(text: string): string {
+  return text
+    .replace(/[?&]offset=0(?!\d)/g, "")
+    .replace(/\.set\(\s*["']offset["']\s*,\s*["']0["']\s*\)/g, "")
+    .replace(/\boffset:\s*["']?0["']?(?![\d.])/g, "");
+}
 
 function clientFiles(): string[] {
   return walkSourceFiles(SRC, { floor: 3000 })
@@ -121,17 +137,16 @@ interface Hit {
 
 /** Every literal limit in the given source, with whether a pager is beside it. */
 function findLimitHits(file: string, source: string): Hit[] {
-  const lines = source.split("\n");
+  // Comments describe old shapes; they send nothing.
+  const lines = stripComments(source, file).split("\n");
   const infinite = /\buseInfiniteQuery\b/.test(source);
   const hits: Hit[] = [];
   lines.forEach((text, index) => {
-    // Comments describe old shapes; they send nothing.
-    const trimmed = text.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
     for (const pattern of LIMIT_PATTERNS) {
       for (const match of text.matchAll(pattern)) {
         const near = lines
           .slice(Math.max(0, index - PAGER_LINES), index + PAGER_LINES + 1)
+          .map(pagerCode)
           .join("\n");
         hits.push({
           file,
@@ -147,7 +162,7 @@ function findLimitHits(file: string, source: string): Hit[] {
 
 function allHits(): Hit[] {
   return clientFiles().flatMap((file) =>
-    findLimitHits(file, readFileSync(join(SRC, file), "utf8")),
+    findLimitHits(file, readSourceText(join(SRC, file))),
   );
 }
 
@@ -194,6 +209,55 @@ describe("client fetch limits", () => {
     expect(hits).toHaveLength(1);
     expect(hits[0].paged).toBe(false);
     expect(isAllowed(hits[0])).toBe(false);
+  });
+
+  // #1245 — the day-grouped measurement list as it stood: a wide limit, a
+  // comment that talks about the offset, and the offset pinned to zero.
+  // Neither of the two is a pager.
+  it("flags the shape the day-grouped measurement list had", () => {
+    const hits = findLimitHits(
+      "components/measurements/measurement-list.tsx",
+      [
+        "      if (isCumulativeFilter) {",
+        '        params.set("groupBy", "day");',
+        "        // pagination/offset don't apply on the server side.",
+        '        params.set("limit", "5000");',
+        "        // Reset the offset so a sort flip stays on the first page.",
+        '        params.set("offset", "0");',
+        "      }",
+      ].join("\n"),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].limit).toBe(5000);
+    expect(hits[0].paged).toBe(false);
+  });
+
+  it("counts neither a comment nor a zero offset as a pager, in any spelling", () => {
+    const shapes = [
+      'apiGet("/api/x?limit=500&offset=0")',
+      'apiGet("/api/x?limit=500") // the offset is fixed',
+      '/* offset */ apiGet("/api/x?limit=500")',
+      'new URLSearchParams({ limit: "500", offset: "0" })',
+      'new URLSearchParams({ limit: "500", offset: 0 })',
+    ];
+    for (const shape of shapes) {
+      const hits = findLimitHits("components/example.tsx", shape);
+      expect(hits, shape).toHaveLength(1);
+      expect(hits[0].paged, shape).toBe(false);
+    }
+  });
+
+  it("still accepts an offset that is a page, beside a zero elsewhere", () => {
+    const shapes = [
+      "fetch(`/api/x?limit=100&offset=${(page - 1) * 100}`)",
+      'params.set("limit", "100");\nparams.set("offset", String(offset));',
+      'apiGet("/api/x?limit=100&offset=10")',
+    ];
+    for (const shape of shapes) {
+      const hits = findLimitHits("components/example.tsx", shape);
+      expect(hits, shape).toHaveLength(1);
+      expect(hits[0].paged, shape).toBe(true);
+    }
   });
 
   it("accepts a limit that travels with an offset", () => {

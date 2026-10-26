@@ -112,11 +112,11 @@ vi.mock("@/lib/jobs/boss-instance", () => ({
 import { AiUnavailableError } from "@/lib/ai/capabilities/refusal";
 import {
   DOCUMENT_AI_RUN_EXPIRE_SECONDS,
-  DOCUMENT_AI_RUN_QUEUE,
   enqueueDocumentAiRun,
   handleDocumentAiRunJobs,
   runDocumentAiRun,
 } from "@/lib/jobs/document-ai-run";
+import { DOCUMENT_AI_RUN_QUEUE } from "@/lib/jobs/document-ai-run-queue";
 
 const NOW = 1_800_000_000_000;
 const now = () => NOW;
@@ -285,6 +285,32 @@ describe("runDocumentAiRun", () => {
     );
   });
 
+  it("reads as interactive work of the run's owner, so the document reader serves it first", async () => {
+    let seen: unknown = null;
+    executeDocumentIndex.mockImplementation(async () => {
+      const { currentPdfWork } = await import("@/lib/documents/pdf-isolation");
+      seen = currentPdfWork();
+      return { ok: true, data: {} };
+    });
+    await runDocumentAiRun("run1", NOW + 2_700_000, now);
+    expect(seen).toMatchObject({ owner: "u1", lane: "interactive" });
+  });
+
+  it("answers a busy document reader with a retryable code and hands the reservation back", async () => {
+    const { PdfReaderUnavailableError } = await import("@/lib/documents/pdfjs");
+    executeDocumentIndex.mockRejectedValue(
+      new PdfReaderUnavailableError("busy"),
+    );
+    expect(await runDocumentAiRun("run1", NOW + 2_700_000, now)).toBe("failed");
+    expect(settleAiRunBudget).toHaveBeenCalledWith("u1", budget, 0, null);
+    expect(failAiRun).toHaveBeenCalledWith(
+      "run1",
+      expect.objectContaining({ status: 503, errorCode: "aiRuns.readerBusy" }),
+      "RUNNING",
+      new Date(NOW),
+    );
+  });
+
   it("fails a run whose document is gone and hands the reservation back", async () => {
     loadOwnedDocument.mockResolvedValue(null);
     expect(await runDocumentAiRun("run1", NOW + 2_700_000, now)).toBe("failed");
@@ -345,6 +371,47 @@ describe("runDocumentAiRun", () => {
         input: expect.objectContaining({ mode: "text", text: "Hb 14 g/dL" }),
       }),
     );
+  });
+
+  it("hands a lab scan a schedule that fits the deadline and moves it", async () => {
+    claimAiRun.mockResolvedValue(
+      claimed({
+        kind: "LABS_OCR_EXTRACT",
+        documentId: null,
+        params: { mode: "vision", mime: "application/pdf", budget },
+        input: Buffer.from("%PDF-1.4"),
+      }),
+    );
+    requireLabsOcrProvider.mockResolvedValue({
+      entry: {
+        providerType: "anthropic",
+        instance: { responseTimeoutSeconds: null },
+      },
+      providerType: "anthropic",
+      pdfSupported: true,
+    });
+    executeOcrExtraction.mockImplementation(async (args) => {
+      // 2 700 s of job budget, a 60 s margin and a second of slack, at the
+      // read's own 120 s default per call: 21 sequential calls fit.
+      expect(args.schedule.maxModelCalls()).toBe(21);
+      await args.schedule.arm(20);
+      return {
+        ok: true,
+        data: { reportDate: null, providerType: "anthropic", rows: [] },
+      };
+    });
+    expect(await runDocumentAiRun("run1", NOW + 2_700_000, now)).toBe(
+      "succeeded",
+    );
+    // One read armed first, then the twenty calls the read planned.
+    expect(updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "run1", status: "RUNNING" },
+      data: { expiresAt: new Date(NOW + 2 * 120_000 + 60_000) },
+    });
+    expect(updateMany).toHaveBeenLastCalledWith({
+      where: { id: "run1", status: "RUNNING" },
+      data: { expiresAt: new Date(NOW + 20 * 120_000 + 60_000) },
+    });
   });
 });
 
@@ -581,9 +648,12 @@ describe("extract runs", () => {
     executeDocumentExtract.mockResolvedValue({
       ok: true,
       data: {
-        id: "d1",
-        status: "EXTRACTED",
-        facts: [{ id: "f1" }, { id: "f2" }],
+        document: {
+          id: "d1",
+          status: "EXTRACTED",
+          facts: [{ id: "f1" }, { id: "f2" }],
+        },
+        incomplete: false,
       },
     });
     loadDocumentChatText.mockResolvedValue({ text: "Hb 14 g/dL" });
@@ -611,6 +681,65 @@ describe("extract runs", () => {
       { documentId: "d1", factsStaged: 2, status: "EXTRACTED" },
       new Date(NOW),
     );
+  });
+
+  it("says so when part of the document may be missing from the staged facts", async () => {
+    claimAiRun.mockResolvedValue(extractRun("stored"));
+    executeDocumentExtract.mockResolvedValue({
+      ok: true,
+      data: {
+        document: { id: "d1", status: "EXTRACTED", facts: [{ id: "f1" }] },
+        incomplete: true,
+      },
+    });
+    expect(await runDocumentAiRun("run1", NOW + 2_700_000, now)).toBe(
+      "succeeded",
+    );
+    expect(completeAiRun).toHaveBeenCalledWith(
+      "run1",
+      {
+        documentId: "d1",
+        factsStaged: 1,
+        status: "EXTRACTED",
+        incomplete: true,
+      },
+      new Date(NOW),
+    );
+  });
+
+  it("hands an extract the lab scan's schedule: the read's own timeout per call, moved as it plans", async () => {
+    claimAiRun.mockResolvedValue(extractRun("stored"));
+    requireDocumentTextProvider.mockResolvedValue({
+      entry: {
+        providerType: "local",
+        instance: { responseTimeoutSeconds: null },
+      },
+      providerType: "local",
+    });
+    executeDocumentExtract.mockImplementation(async (args) => {
+      // As for a lab scan: 2 700 s of job budget, a 60 s margin and a second
+      // of slack, at the read's own 120 s per call.
+      expect(args.schedule.maxModelCalls()).toBe(21);
+      await args.schedule.arm(12);
+      return {
+        ok: true,
+        data: {
+          document: { id: "d1", status: "EXTRACTED", facts: [] },
+          incomplete: false,
+        },
+      };
+    });
+    expect(await runDocumentAiRun("run1", NOW + 2_700_000, now)).toBe(
+      "succeeded",
+    );
+    expect(updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "run1", status: "RUNNING" },
+      data: { expiresAt: new Date(NOW + 2 * 120_000 + 60_000) },
+    });
+    expect(updateMany).toHaveBeenLastCalledWith({
+      where: { id: "run1", status: "RUNNING" },
+      data: { expiresAt: new Date(NOW + 12 * 120_000 + 60_000) },
+    });
   });
 
   it("reads the stored text for a stored extract and re-checks the text provider's wire", async () => {

@@ -20,7 +20,7 @@ import { delegatedGenerationSuppressed } from "@/lib/sharing/delegated-generatio
 import type { SupportedLocale } from "@/lib/insights/status-shared";
 
 /**
- * v1.18.11 (P6-tighten) — the measurement types the FDR correlation-discovery
+ * v1.18.11 — the measurement types the FDR correlation-discovery
  * matrix scans (`correlation-discovery.ts`). A status card whose prompt folds
  * the surviving cross-metric correlations (`getRelevantCorrelationsForMetric`)
  * can have a NEW correlation surface purely because one of these channels
@@ -84,7 +84,7 @@ export function statusCacheAction(scope: string, locale: string): string {
 const CACHE_ACTION_SHAPE = /^insights\.(.+)-status\.([^.]+)$/;
 
 /** The row key behind a note's name, or `null` for a name of another shape. */
-function statusCacheKey(
+export function statusCacheKey(
   cacheAction: string,
 ): { metric: string; locale: string } | null {
   const match = CACHE_ACTION_SHAPE.exec(cacheAction);
@@ -200,6 +200,7 @@ export async function writeStatusNote(args: {
     generatedAt,
     retryAt: null,
     negativeReason: null,
+    failureStreak: 0,
   };
   await prisma.insightStatusCache.upsert({
     where: { userId_metric_locale: { userId: args.userId, ...key } },
@@ -230,36 +231,11 @@ async function redateStatusNote(
         generatedAt,
         retryAt: null,
         negativeReason: null,
+        failureStreak: 0,
       },
     });
   }
   return generatedAt;
-}
-
-/**
- * Open a negative-cache window for a note: the generation stalled, erred, or
- * was screened. Leaves any stored note exactly as it was.
- */
-export async function writeStatusNegativeWindow(args: {
-  userId: string;
-  cacheAction: string;
-  todayKey: string;
-  reason: "timeout" | "error" | "screened";
-  retryAt: Date;
-}): Promise<void> {
-  const key = statusCacheKey(args.cacheAction);
-  if (!key) return;
-  await prisma.insightStatusCache.upsert({
-    where: { userId_metric_locale: { userId: args.userId, ...key } },
-    create: {
-      userId: args.userId,
-      ...key,
-      dateKey: args.todayKey,
-      retryAt: args.retryAt,
-      negativeReason: args.reason,
-    },
-    update: { retryAt: args.retryAt, negativeReason: args.reason },
-  });
 }
 
 export interface FreshStatusCacheHit {
@@ -403,7 +379,7 @@ export async function refreshUnchangedStatusItems(args: {
 }
 
 /**
- * v1.18.11 (P6) — cheap input fingerprint for the slow-moving status
+ * v1.18.11 — cheap input fingerprint for the slow-moving status
  * metrics (weight / BMI).
  *
  * The post-build content-hash gate (`refreshUnchangedStatusInsight`)
@@ -424,14 +400,14 @@ export async function computeStatusInputFingerprint(args: {
   userId: string;
   types: readonly MeasurementType[];
   /**
-   * v1.18.11 (P6) — include the mood-entry table in the fingerprint. The
+   * v1.18.11 — include the mood-entry table in the fingerprint. The
    * weight snapshot folds a mood-context block, so a mood change must flip
    * the input hash or the gate would skip a build whose prose could have
    * moved. Omit for metrics that don't read mood.
    */
   includeMood?: boolean;
   /**
-   * v1.18.11 (P6-tighten) — include the FDR correlation-discovery channels
+   * v1.18.11 — include the FDR correlation-discovery channels
    * (`CORRELATION_CHANNEL_TYPES`) in the fingerprint. A card that folds the
    * surviving cross-metric correlations (via `getRelevantCorrelationsForMetric`)
    * can surface a NEW relation purely because a discovery channel — steps,
@@ -445,7 +421,7 @@ export async function computeStatusInputFingerprint(args: {
    */
   includeCorrelationChannels?: boolean;
   /**
-   * v1.18.11 (P6) — extra non-measurement inputs the snapshot derives from
+   * v1.18.11 — extra non-measurement inputs the snapshot derives from
    * (e.g. BMI reads the profile `heightCm`). Folded into the hash so a
    * change to one of them flips the gate. Values must be JSON-stable.
    */
@@ -635,10 +611,12 @@ export async function readPreviousStatusNote(args: {
 }
 
 /**
- * Which of `cacheActions` carry a note written at or after `since`. The
- * ingest invalidator skips those, so a fresh note survives a sync drip.
+ * Which of `cacheActions` are not due for another generation: a note written
+ * at or after `since`, or (#1279) an open negative-cache window. The ingest
+ * invalidator skips those, so a fresh note survives a sync drip and a note
+ * whose generation keeps failing is not selected again by every sync.
  */
-export async function statusNotesWrittenSince(args: {
+export async function statusNotesNotDue(args: {
   userId: string;
   cacheActions: readonly string[];
   since: Date;
@@ -653,17 +631,23 @@ export async function statusNotesWrittenSince(args: {
     const [metric, locale] = k.split("\u0000");
     return { metric, locale };
   });
-  const rows = await prisma.insightStatusCache.findMany({
-    where: {
-      userId: args.userId,
-      OR: keys,
-      generatedAt: { gte: args.since },
-      textEncrypted: { not: null },
-    },
-    select: { metric: true, locale: true },
-  });
+  const [written, coolingDown] = await Promise.all([
+    prisma.insightStatusCache.findMany({
+      where: {
+        userId: args.userId,
+        OR: keys,
+        generatedAt: { gte: args.since },
+        textEncrypted: { not: null },
+      },
+      select: { metric: true, locale: true },
+    }),
+    prisma.insightStatusCache.findMany({
+      where: { userId: args.userId, OR: keys, retryAt: { gt: new Date() } },
+      select: { metric: true, locale: true },
+    }),
+  ]);
   const fresh = new Set<string>();
-  for (const row of rows) {
+  for (const row of [...written, ...coolingDown]) {
     const action = byKey.get(`${row.metric}\u0000${row.locale}`);
     if (action) fresh.add(action);
   }

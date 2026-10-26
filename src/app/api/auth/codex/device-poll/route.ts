@@ -8,6 +8,9 @@ import { prisma } from "@/lib/db";
 import { auditLog } from "@/lib/auth/audit";
 import { getClientIp, apiSuccess, apiError } from "@/lib/api-response";
 import { annotate } from "@/lib/logging/context";
+import { INSIGHTS_CACHE_CLEARED } from "@/lib/insights/cached-text-cipher";
+import { forgetProviderHealth } from "@/lib/ai/provider-health-ledger";
+import { clearStatusNegativeWindows } from "@/lib/insights/status-negative-window";
 
 /**
  * v1.4.7.1: Device-code flow polling endpoint.
@@ -81,12 +84,19 @@ export const POST = apiHandler(async (request: NextRequest) => {
       codexConnectedAt: new Date(),
       codexConnectionStatus: "connected",
       insightsCachedAt: null,
-      insightsCachedText: null,
+      ...INSIGHTS_CACHE_CLEARED,
       insightsCachedLocale: null,
     },
   });
 
   cookieStore.delete("codex_device");
+  // A new sign-in: whatever the ledger held against the old one no longer
+  // describes this credential, and (#1279) the person's notes stop waiting
+  // out windows it earned, as on a save of their provider settings.
+  await Promise.all([
+    forgetProviderHealth({ userId: user.id, providerType: "codex" }),
+    clearStatusNegativeWindows(user.id),
+  ]);
 
   await auditLog("codex.oauth.connected", {
     userId: user.id,

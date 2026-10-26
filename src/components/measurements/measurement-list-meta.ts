@@ -132,6 +132,16 @@ export const MEASUREMENT_TYPE_LABEL_KEYS: Record<string, string> = {
   PAIN_NRS: "measurements.typePainNrs",
   WAIST_CIRCUMFERENCE: "measurements.typeWaistCircumference",
   WAIST_TO_HEIGHT: "measurements.typeWaistToHeight",
+  // ── v1.44 — activity rings, mindfulness, State of Mind, AFib burden ──
+  EXERCISE_MINUTES: "measurements.typeExerciseMinutes",
+  STAND_MINUTES: "measurements.typeStandMinutes",
+  STAND_HOURS: "measurements.typeStandHours",
+  MINDFUL_MINUTES: "measurements.typeMindfulMinutes",
+  STATE_OF_MIND_VALENCE: "measurements.typeStateOfMindValence",
+  AFIB_BURDEN: "measurements.typeAfibBurden",
+  INDOOR_CO2: "measurements.typeIndoorCo2",
+  INDOOR_TEMPERATURE: "measurements.typeIndoorTemperature",
+  INDOOR_HUMIDITY: "measurements.typeIndoorHumidity",
 };
 
 export const MEASUREMENT_TYPE_ICONS: Record<string, LucideIcon> = {
@@ -267,52 +277,20 @@ export const MEASUREMENT_TYPE_ICONS: Record<string, LucideIcon> = {
   PAIN_NRS: Activity,
   WAIST_CIRCUMFERENCE: Scale,
   WAIST_TO_HEIGHT: Scale,
+  // ── v1.44 — the rings take the activity glyphs, mindful minutes the
+  // breath, the valence the score dial, AFib burden the rhythm trace.
+  EXERCISE_MINUTES: Dumbbell,
+  STAND_MINUTES: PersonStanding,
+  STAND_HOURS: PersonStanding,
+  MINDFUL_MINUTES: Wind,
+  STATE_OF_MIND_VALENCE: Gauge,
+  AFIB_BURDEN: HeartPulse,
+  // Room climate: air, warmth, moisture.
+  INDOOR_CO2: Wind,
+  INDOOR_TEMPERATURE: Thermometer,
+  INDOOR_HUMIDITY: Droplets,
 };
 
 // The colour map lives in its own icon-free module so a surface that only
 // needs the colours (the timeline's value lines) does not pull every icon.
 export { MEASUREMENT_TYPE_COLORS } from "./measurement-type-colors";
-
-/**
- * Count-shaped types whose stored unit is a source token ("count",
- * "count/min", "steps") rather than a word a reader should see. The list
- * shows the same localised unit the type's insights page uses, so a row
- * reads "13 Etagen", not "13 count".
- */
-export const MEASUREMENT_UNIT_LABEL_KEYS: Partial<Record<string, string>> = {
-  ACTIVITY_STEPS: "insights.units.steps",
-  FLIGHTS_CLIMBED: "insights.units.flights",
-  FALL_COUNT: "insights.units.falls",
-  BREATHING_DISTURBANCES: "insights.units.breathingEvents",
-  RESPIRATORY_RATE: "insights.units.respiratoryRate",
-};
-
-/** The unit a list row shows for `type`: the localised word, else `unit`. */
-export function measurementUnitLabel(
-  type: string,
-  unit: string,
-  t: (key: string) => string,
-): string {
-  const key = MEASUREMENT_UNIT_LABEL_KEYS[type];
-  if (key) return t(key);
-  // A score or a rating is a bare number; "72 score" reads as a stray
-  // English token next to the German label, not as a unit.
-  if (UNITLESS_TOKENS.has(unit)) return "";
-  return unit;
-}
-
-const UNITLESS_TOKENS: ReadonlySet<string> = new Set(["score", "rating"]);
-
-/**
- * The unit as the lead of a row's meta line ("kg · 2 days ago"), or null
- * when the row has no unit word to show: a score or a rating would otherwise
- * open the line with a bare separator.
- */
-export function measurementUnitMetaLead(
-  type: string,
-  unit: string,
-  t: (key: string) => string,
-): string | null {
-  const label = measurementUnitLabel(type, unit, t);
-  return label ? `${label} · ` : null;
-}

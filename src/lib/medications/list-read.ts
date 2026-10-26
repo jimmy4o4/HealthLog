@@ -13,6 +13,7 @@
  * readers. Mirrors `src/lib/dashboard/snapshot-read.ts` for the dashboard.
  */
 import { sendsMedicationReminders } from "@/lib/medications/auto-mark-taken";
+import { medicationWindow } from "@/lib/medications/course-window";
 import { loadAutoTakeRollingAnchors } from "@/lib/medications/auto-take";
 import { prisma } from "@/lib/db";
 import { annotate, getEvent } from "@/lib/logging/context";
@@ -24,7 +25,7 @@ import {
 import {
   effectiveUnitsPerDose,
   estimateUnitsRunwayDays,
-} from "@/components/medications/detail/supply-runway";
+} from "@/lib/medications/supply-runway";
 import { serializeScheduleUnitsPerDose } from "@/lib/medications/schedule-units-dto";
 import {
   computeDisplayDue,
@@ -43,6 +44,7 @@ import { liveEraStartsByMedication } from "@/lib/medications/scheduling/live-era
 import { floorWhole } from "@/lib/medications/units-per-dose";
 import { resolveIntakeActionability } from "@/lib/medications/intake-actionable";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 export type MedicationsListResult = Array<Record<string, unknown>>;
 
@@ -55,12 +57,10 @@ export async function buildMedicationsList(
     userTz,
   );
 
-  // v1.15.10 — the slots the user has already acted on near "now", so the
-  // next-due search can skip them. A resolved slot is a taken, deliberately
-  // skipped, or cron-auto-missed row. Bound the window to [today-start,
-  // today-end + 2d] — the next-due lookahead only needs the slots adjacent to
-  // now, and a tight window keeps the read cheap. The 60s list cache covers
-  // the rest.
+  // The slots the user has already acted on near "now" (taken, skipped, or
+  // auto-missed), so the next-due search can skip them. The lookahead only
+  // needs the slots next to now, so the window ends two days past today; the
+  // 60s list cache covers the rest.
   const resolvedWindowEnd = new Date(
     todayEndUtc.getTime() + 2 * 24 * 60 * 60 * 1000,
   );
@@ -84,8 +84,11 @@ export async function buildMedicationsList(
     prisma.medication.findMany({
       where: { userId },
       // v1.43 — the ingredient count only, for `hasIngredients`.
-      include: { schedules: true, _count: { select: { ingredients: true } } },
-      orderBy: { createdAt: "desc" },
+      include: {
+        schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
+        _count: { select: { ingredients: true } },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     }),
     prisma.medicationIntakeEvent.groupBy({
       by: ["medicationId"],
@@ -100,13 +103,11 @@ export async function buildMedicationsList(
     }),
     prisma.medicationIntakeEvent.groupBy({
       by: ["medicationId"],
-      // v1.7.0 sync — exclude tombstoned rows from the today-count map.
-      // v1.16.9 — count only ACTIONED rows (taken or skipped). The
-      // dashboard projector mints pending rows for every slot of the
-      // day, so counting all rows made `todayEventCount` cover every
-      // passed dose after any dashboard visit — and the cards'
-      // overdue-pill suppression (`todayEventCount < passedDoseCount`)
-      // went dark nondeterministically for genuinely overdue doses.
+      // Live, ACTIONED rows only (taken or skipped). The dashboard projector
+      // mints pending rows for every slot of the day, so counting all rows
+      // made `todayEventCount` cover every passed dose after any dashboard
+      // visit, and the cards' overdue pill (`todayEventCount <
+      // passedDoseCount`) went dark for genuinely overdue doses.
       where: {
         userId,
         deletedAt: null,
@@ -184,7 +185,7 @@ export async function buildMedicationsList(
       entry._max.takenAt ? entry._max.takenAt.toISOString() : null,
     ]),
   );
-  // v1.7.0 SB-SCHED-3 — Date-typed last-intake map for the engine
+  // v1.7.0 — Date-typed last-intake map for the engine
   // (rolling cadences re-anchor on it). Same groupBy as the ISO map.
   const lastTakenAtDateByMedicationId = Object.fromEntries(
     latestIntakes.map((entry) => [entry.medicationId, entry._max.takenAt]),
@@ -216,7 +217,7 @@ export async function buildMedicationsList(
     getEvent()?.addWarning("Medication categories could not be loaded");
   }
 
-  // v1.7.0 SB-SCHED-3 — server-computed next due instant. Time-derived;
+  // v1.7.0 — server-computed next due instant. Time-derived;
   // the list GET is cached 60 s on userId, so a 60 s staleness window is
   // accepted here as it already is for `todayEventCount`.
   const now = new Date();
@@ -244,8 +245,7 @@ export async function buildMedicationsList(
     const display = computeDisplayDue({
       medication: {
         id: m.id,
-        startsOn: m.startsOn,
-        endsOn: m.endsOn,
+        ...medicationWindow(m),
         oneShot: m.oneShot,
         createdAt: m.createdAt,
       },

@@ -2,7 +2,6 @@
 
 import dynamic from "next/dynamic";
 import { Activity, Sparkles } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { TileHeader } from "@/components/insights/tile-header";
@@ -12,7 +11,7 @@ import { useTranslations } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import type { CorrelationResult } from "@/lib/insights/correlations";
 import type { CoachScopeSource } from "@/lib/ai/coach/types";
-import { CONFIDENCE_BADGE_CLASS } from "./confidence-badge";
+import { CONFIDENCE_TONE, ScorePill } from "@/components/ui/score-pill";
 import { AskCoachAction } from "./ask-coach-action";
 import {
   PatternDismissButton,
@@ -21,7 +20,7 @@ import {
 } from "./pattern-dismiss-action";
 
 /**
- * v1.4.20 phase B3 — single Correlation card.
+ * v1.4.20 — single Correlation card.
  *
  * Each card surfaces ONE pre-defined hypothesis (BP × compliance,
  * mood × pulse, weight × weekday). Below-threshold results render an
@@ -40,7 +39,7 @@ const ScatterCorrelationChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      // v1.4.43 W11 — mirror the loaded chart's responsive aspect-
+      // v1.4.43 — mirror the loaded chart's responsive aspect-
       // ratio classes (`scatter-correlation-chart.tsx:100`) so the
       // skeleton reserves the same space across breakpoints. The
       // legacy `h-[180px]` was ~60 px shorter than the painted chart
@@ -79,7 +78,7 @@ const CONFIDENCE_LABEL_KEY: Record<"low" | "moderate" | "high", string> = {
   low: "insights.correlationRow.confidenceLow",
 };
 
-// v1.21.0 (C4 H2) — the two sources each correlation pair spans, so the
+// v1.21.0 — the two sources each correlation pair spans, so the
 // Coach hand-off narrows its snapshot to exactly the relationship the
 // card describes.
 const COACH_SOURCES_BY_KIND: Record<
@@ -91,7 +90,7 @@ const COACH_SOURCES_BY_KIND: Record<
   "weight-weekday": ["weight"],
 };
 
-// v1.22 (W6) — i18n keys (resolved at the call site), not hardcoded English.
+// v1.22 — i18n keys (resolved at the call site), not hardcoded English.
 const COACH_QUESTION_BY_KIND: Record<CorrelationResult["kind"], string> = {
   "bp-compliance": "insights.coach.seed.correlationBpCompliance",
   "mood-pulse": "insights.coach.seed.correlationMoodPulse",
@@ -134,16 +133,12 @@ export function CorrelationCard({ result }: CorrelationCardProps) {
             title={title}
             right={
               result.status === "ok" ? (
-                <Badge
+                <ScorePill
                   data-slot="correlation-card-confidence"
-                  variant="outline"
-                  className={cn(
-                    "shrink-0 text-xs",
-                    CONFIDENCE_BADGE_CLASS[result.confidenceBand.label],
-                  )}
+                  tone={CONFIDENCE_TONE[result.confidenceBand.label]}
                 >
                   {t(CONFIDENCE_LABEL_KEY[result.confidenceBand.label])}
-                </Badge>
+                </ScorePill>
               ) : undefined
             }
           />
@@ -194,12 +189,14 @@ export function CorrelationCard({ result }: CorrelationCardProps) {
                 data-slot="correlation-card-cta"
                 className="gap-1.5"
                 title={t("insights.correlationRow.experimentTooltip")}
-                aria-label={t("insights.correlationRow.experimentTooltip")}
               >
                 <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>{t("insights.correlationRow.experimentCta")}</span>
+                <span className="sr-only">
+                  , {t("insights.correlationRow.experimentTooltip")}
+                </span>
               </Button>
-              {/* v1.21.0 (C4 H2) — the live Coach hand-off sits beside the
+              {/* v1.21.0 — the live Coach hand-off sits beside the
                   roadmap CTA: it scopes to both sources in the pair. */}
               <AskCoachAction
                 question={t(COACH_QUESTION_BY_KIND[result.kind])}

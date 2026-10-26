@@ -33,10 +33,9 @@
  * matches nothing fails instead of passing.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { readSourceText, walkSourceFiles } from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -55,7 +54,7 @@ function appFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 function appFilesMatching(re: RegExp): string[] {
@@ -115,6 +114,14 @@ describe("S1 — the direct session-resolution set is frozen", () => {
       "consent decision on a route outside apiHandler",
     // Provider OAuth callbacks. The browser arrives as a top-level
     // navigation, so the code is bound to the session user and redirected.
+    // v1.44 — Withings and Google Health join: a navigation cannot carry the
+    // record-session header a record resolver needs, and the session user may
+    // be a guardian finishing a managed profile's connect, which
+    // `verifyCallbackActor` checks against a live MANAGE grant.
+    "app/api/google-health/callback/route.ts":
+      "binds the OAuth code to the session user",
+    "app/api/withings/callback/route.ts":
+      "binds the OAuth code to the session user",
     "app/api/oura/callback/route.ts":
       "binds the OAuth code to the session user",
     "app/api/polar/callback/route.ts":
@@ -183,10 +190,13 @@ describe("S1 — the direct session-resolution set is frozen", () => {
     /\b(getSession|getUnswitchedSession|getSessionUserLocale|validateSessionFromCookieValue|validateSessionWithCreatedAt|loadOnboardingFlowState)\s*\(/;
 
   /**
-   * Reaching for the cookie by name is the way around the helpers. Both the
-   * exported constant and the raw literal count.
+   * Reaching for the cookie by name is the way around the helpers. The
+   * reader (`readSessionCookie`, which tries both names), the exported names
+   * and either raw literal all count; the `__Host-` name joined the old one
+   * when a `Secure` session cookie started being issued under it.
    */
-  const RAW_SESSION_COOKIE = /\bSESSION_COOKIE_NAME\b|"healthlog_session"/;
+  const RAW_SESSION_COOKIE =
+    /\b(readSessionCookie|SESSION_COOKIE_NAMES?|HOST_SESSION_COOKIE|LEGACY_SESSION_COOKIE)\b|"(__Host-)?healthlog_session"/;
 
   it("no file under src/app derives a session outside requireAuth unlisted", () => {
     const resolvers = appFilesMatching(SESSION_DERIVING_HELPERS);

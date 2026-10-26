@@ -23,12 +23,12 @@
  */
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import {
-  MEDICATION_INTAKE_IMPORT_QUEUE,
   MEDICATION_INTAKE_IMPORT_SEND_OPTIONS,
   MEDICATION_INTAKE_IMPORT_STALE_AFTER_MS,
   type MedicationImportPayload,
   type MedicationImportProgress,
 } from "@/lib/jobs/medication-intake-import";
+import { MEDICATION_INTAKE_IMPORT_QUEUE } from "@/lib/jobs/medication-intake-import-queue";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma, toJson } from "@/lib/db";
 
@@ -171,6 +171,10 @@ export async function admitIntakeImportJob({
         completedAt,
       },
     });
+    // An audit row, unlike the upload refusals of the export imports, which
+    // are signals: this one is shown to the record's owner in the activity
+    // feed (`record-activity/activity-verb.ts`) as an import that was
+    // admitted and never ran, and it carries the delegate who started it.
     await auditLog("medication.intake.import.kickoff.denied", {
       userId: recordUserId,
       actorUserId,

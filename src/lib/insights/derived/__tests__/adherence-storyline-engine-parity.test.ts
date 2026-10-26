@@ -1,5 +1,5 @@
 /**
- * v1.26.0 SEAM-N3 — the adherence storyline must read the SAME
+ * v1.26.0 — the adherence storyline must read the SAME
  * schedule-anchored, cadence-aware adherence number the dashboard tile does.
  *
  * The regression this pins: the storyline used to derive its adherence % from
@@ -209,5 +209,19 @@ describe("adherence storyline course window", () => {
       lastDay.getTime(),
     );
     expect(where.OR[1].endsOn.gte.toISOString()).toBe(lastDay.toISOString());
+  });
+
+  it("leaves out a course ended with End course on its last day (#1280)", async () => {
+    await buildAdherenceStoryline(
+      "user-1",
+      "UTC",
+      new Date("2026-06-21T12:00:00.000Z"),
+    );
+    // The candidate read is the one that bounds the window by `endsOn`.
+    const where = mocks.medicationFindMany.mock.calls
+      .map(([args]) => (args as { where?: Record<string, unknown> }).where)
+      .reverse()
+      .find((w) => w && "OR" in w);
+    expect(where).toHaveProperty("endedAt", null);
   });
 });

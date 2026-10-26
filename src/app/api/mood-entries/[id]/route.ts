@@ -5,20 +5,20 @@ import {
   apiSuccess,
   apiError,
   getClientIp,
-  returnAllZodIssues,
-  safeJson,
   sanitiseZodIssues,
 } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { updateMoodEntrySchema, getScoreForMood } from "@/lib/validations/mood";
 import { NextRequest } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { moodDateKey } from "@/lib/mood/date-key";
+import { MOOD_ENTRY_WIRE_INCLUDE, toMoodEntryWire } from "@/lib/mood/list-read";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import { deriveA1, shapeLevelA } from "@/lib/mood/level-a";
 import { contextForWire, persistMoodContext } from "@/lib/mood/context";
-import { encryptNote, shapeMoodNote } from "@/lib/crypto/note-cipher";
+import { encryptNote } from "@/lib/crypto/note-cipher";
 import { invalidateUserMood } from "@/lib/cache/invalidate";
 import { recomputeMoodBucketsForEntry } from "@/lib/rollups/mood-rollups";
 import {
@@ -50,9 +50,9 @@ export const GET = apiHandler(
     // (not `findUnique`) because `deletedAt` is not part of a unique index.
     const entry = await prisma.moodEntry.findFirst({
       where: { id, deletedAt: null },
-      // v1.38 — the day context rides with the entry rather than behind a
-      // second request: the edit surface needs both or neither.
-      include: { context: true },
+      // The same joins and the same projection as the list read, so an
+      // entry opened on its own carries `tagKeys` and `ratedFactors` too.
+      include: MOOD_ENTRY_WIRE_INCLUDE,
     });
 
     if (!entry || entry.userId !== user.id) {
@@ -64,14 +64,7 @@ export const GET = apiHandler(
       meta: { moodEntryId: id },
     });
 
-    const { context, ...row } = entry;
-    return apiSuccess({
-      // v1.37 — level-A values under the keys the write path takes.
-      ...shapeLevelA(shapeMoodNote(row)),
-      tags: parseTags(row.tags),
-      // v1.38 — lists decoded, note decrypted, ciphertext dropped.
-      context: context ? contextForWire(context) : null,
-    });
+    return apiSuccess(toMoodEntryWire(entry));
   },
 );
 
@@ -94,39 +87,33 @@ export const PUT = apiHandler(
       });
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    // v1.4.43 — mood edit hot path; multi-issue 422 + audit
+    // breadcrumb keyed `mood-entries.update.validation-failed`.
+    const parsed = await parseJsonBody(request, updateMoodEntrySchema, {
       maxBytes: 64 * 1024,
+      action: "mood-entries.update.validation-failed",
+      countIssues: true,
+      meta: { moodEntryId: id },
+      errorCode: "mood.update.invalid",
+      onInvalid: (error) => {
+        // v1.4.49 — strip `message` from the audit-ledger row; mood
+        // update carries free-text `note` + `tags`.
+        const auditIssues = sanitiseZodIssues(error.issues, {
+          stripValuesFromMessage: true,
+        });
+        // v1.37.0 — through `auditLog()` rather than a bare `prisma.auditLog
+        // .create`, because that helper is the only writer that stamps
+        // `actorUserId`. Filed under the resolved record either way; without
+        // the stamp a manager's malformed payload would read as the owner's own.
+        void auditLog("mood-entries.update.validation-failed", {
+          userId: user.id,
+          details: { issues: auditIssues, moodEntryId: id },
+        }).catch(() => {
+          /* swallow — 422 response is the contract */
+        });
+      },
     });
-
-    if (jsonError) return jsonError;
-    const parsed = updateMoodEntrySchema.safeParse(body);
-    if (!parsed.success) {
-      // v1.4.43 W6 — mood edit hot path; multi-issue 422 + audit
-      // breadcrumb keyed `mood-entries.update.validation-failed`.
-      const issues = sanitiseZodIssues(parsed.error.issues);
-      annotate({
-        action: { name: "mood-entries.update.validation-failed" },
-        meta: { issue_count: issues.length, moodEntryId: id },
-      });
-      // v1.4.49 — strip `message` from the audit-ledger row; mood
-      // update carries free-text `note` + `tags`.
-      const auditIssues = sanitiseZodIssues(parsed.error.issues, {
-        stripValuesFromMessage: true,
-      });
-      // v1.37.0 — through `auditLog()` rather than a bare `prisma.auditLog
-      // .create`, because that helper is the only writer that stamps
-      // `actorUserId`. Filed under the resolved record either way; without the
-      // stamp a manager's malformed payload would read as the owner's own.
-      void auditLog("mood-entries.update.validation-failed", {
-        userId: user.id,
-        details: { issues: auditIssues, moodEntryId: id },
-      }).catch(() => {
-        /* swallow — 422 response is the contract */
-      });
-      return returnAllZodIssues(parsed.error, 422, {
-        errorCode: "mood.update.invalid",
-      });
-    }
+    if (!parsed.ok) return parsed.error;
 
     const data = parsed.data;
 
@@ -161,7 +148,7 @@ export const PUT = apiHandler(
     if (data.a4 !== undefined) updateData.connectionA4 = data.a4;
     if (data.a5 !== undefined) updateData.stabilityA5 = data.a5;
     if (data.moodLoggedAt !== undefined) {
-      // v1.4.25 W7b — re-anchor the row's `date` to the user's current
+      // v1.4.25 — re-anchor the row's `date` to the user's current
       // displayTimezone. Also refresh the `tz` column so the row's
       // attribution stays consistent with the new `date`. Legacy rows
       // promoted via this PUT therefore migrate to per-row tz without
@@ -294,7 +281,7 @@ export const PUT = apiHandler(
     await auditLog("moodEntry.update", {
       userId: user.id,
       ipAddress: getClientIp(request),
-      // C4 — the replaced fields. The note and the free-text tags are named
+      // The replaced fields. The note and the free-text tags are named
       // and never quoted; the note is encrypted at rest.
       details: {
         moodEntryId: id,
@@ -330,10 +317,10 @@ export const PUT = apiHandler(
       },
     });
 
-    // v1.4.34 IW-G — bust per-user mood + achievements + analytics caches.
+    // v1.4.34 — bust per-user mood + achievements + analytics caches.
     invalidateUserMood(user.id);
 
-    // v1.4.39 W-MOOD — refresh the persisted rollup for the new
+    // v1.4.39 — refresh the persisted rollup for the new
     // bucket AND the old bucket when the entry's `moodLoggedAt`
     // changed. The two recomputes are independent (different
     // (user, day) tuples) so we fan them out in parallel. Best-
@@ -420,10 +407,10 @@ export const DELETE = apiHandler(
       meta: { moodEntryId: id },
     });
 
-    // v1.4.34 IW-G — bust per-user mood + achievements + analytics caches.
+    // v1.4.34 — bust per-user mood + achievements + analytics caches.
     invalidateUserMood(user.id);
 
-    // v1.4.39 W-MOOD — refresh the persisted rollup for the
+    // v1.4.39 — refresh the persisted rollup for the
     // deleted entry's bucket; the recompute helper handles the
     // "now-empty day → drop the rollup row" branch internally.
     try {

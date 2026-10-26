@@ -35,12 +35,13 @@
  * names other delegates, and a grant is not an introduction to the household.
  */
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import { apiSuccess } from "@/lib/api-response";
 import { DELEGATED_ACCESS_ACTION } from "@/lib/auth/audit";
 import { prisma } from "@/lib/db";
 import { getAuditLogRetentionDays } from "@/lib/jobs/audit-log-cleanup";
 import { annotate } from "@/lib/logging/context";
 import { GRANT_PARTY_SELECT } from "@/lib/sharing/grant-view";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const dynamic = "force-dynamic";
 
@@ -99,29 +100,31 @@ export const GET = apiHandler(async () => {
   const retentionDays = getAuditLogRetentionDays();
   const windowStart = new Date(Date.now() - retentionDays * 86_400_000);
 
-  const rows = await prisma.auditLog.findMany({
-    where: {
-      userId: user.id,
-      actorUserId: { not: null },
-      // A switch into one's own record is not a delegation and has nothing to
-      // report. `actingActorFor` already refuses to stamp one, so this is the
-      // second end of that rule rather than its only enforcement.
-      NOT: { actorUserId: user.id },
-      // The window the copy promises. The purge job makes it true eventually;
-      // this makes it true now, which matters on an instance whose retention
-      // was shortened after rows were already written.
-      createdAt: { gte: windowStart },
-    },
-    orderBy: { createdAt: "desc" },
-    take: MAX_ROWS,
-    select: {
-      id: true,
-      actorUserId: true,
-      action: true,
-      details: true,
-      createdAt: true,
-    },
-  });
+  const { rows, cap } = await listPage(MAX_ROWS, (take) =>
+    prisma.auditLog.findMany({
+      where: {
+        userId: user.id,
+        actorUserId: { not: null },
+        // A switch into one's own record is not a delegation and has nothing to
+        // report. `actingActorFor` already refuses to stamp one, so this is the
+        // second end of that rule rather than its only enforcement.
+        NOT: { actorUserId: user.id },
+        // The window the copy promises. The purge job makes it true eventually;
+        // this makes it true now, which matters on an instance whose retention
+        // was shortened after rows were already written.
+        createdAt: { gte: windowStart },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        id: true,
+        actorUserId: true,
+        action: true,
+        details: true,
+        createdAt: true,
+      },
+    }),
+  );
 
   const actorIds = [
     ...new Set(rows.map((r) => r.actorUserId).filter((id) => id !== null)),
@@ -140,23 +143,24 @@ export const GET = apiHandler(async () => {
     createdAt: row.createdAt.toISOString(),
   }));
 
-  // Equality, not `>=`: `take` cannot return more than it was given, and a
-  // `>` would be a comparison that can never be true.
-  const truncated = rows.length === MAX_ROWS;
-
   annotate({
     action: { name: "sharing.activity.list" },
-    meta: { entry_count: entries.length, truncated },
+    meta: { entry_count: entries.length, truncated: cap.truncated },
   });
 
-  return apiSuccess({
-    entries,
-    // The bound the view states out loud. Resolved here so the UI never has to
-    // hardcode a number the operator can change.
-    retentionDays,
+  return apiListSuccess(
+    {
+      entries,
+      // The bound the view states out loud. Resolved here so the UI never has to
+      // hardcode a number the operator can change.
+      retentionDays,
+      // Deprecated copy of `meta.truncated`. It was a required field of `data`
+      // through v1.43.6, and a client built against that contract must keep
+      // decoding it; it goes in a minor release. The web reads `meta`.
+      truncated: cap.truncated,
+    },
     // Whether the list is everything inside that window, or its most recent
-    // hundred rows. The view says which; silence would let the oldest line
-    // read as the beginning.
-    truncated,
-  });
+    // hundred rows, rides the envelope like every capped list's (`meta`).
+    cap,
+  );
 });

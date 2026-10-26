@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { resolveAnnotationPositions } from "../health-chart";
+import { resolveAnnotationPositions } from "../health-chart/series-math";
 
 /**
- * v1.4.20 phase B4 — storyboard-annotation pinning.
+ * v1.4.20 — storyboard-annotation pinning.
  *
  * The chart maps incoming `{date, label, color}[]` annotations onto
  * the bucketed series so each annotation paints a vertical reference

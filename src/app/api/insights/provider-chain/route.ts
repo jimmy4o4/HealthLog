@@ -1,11 +1,7 @@
 import type { NextRequest } from "next/server";
 import { apiHandler, HttpError, requireAuth } from "@/lib/api-handler";
-import {
-  apiSuccess,
-  apiValidationError,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { probeProviderChain, resolveProviderChain } from "@/lib/ai/provider";
 import {
@@ -18,7 +14,7 @@ import { isReasoningProviderType } from "@/lib/ai/reasoning-effort";
 import { providerChainPutSchema } from "@/lib/validations/ai-provider";
 
 /**
- * v1.4.16 phase B5b — read-only chain summary for the Settings → AI
+ * v1.4.16 — read-only chain summary for the Settings → AI
  * section. Returns:
  *   - `activeProvider`: first entry in the resolved chain (priority
  *     order). Null when the user has no providers configured at all.
@@ -43,7 +39,7 @@ import { providerChainPutSchema } from "@/lib/validations/ai-provider";
 export const GET = apiHandler(async () => {
   const { user } = await requireAuth();
 
-  // v1.4.16 phase D reconcile (code-review H2) — the GET response used
+  // v1.4.16 (code-review H2) — the GET response used
   // to surface the resolveProviderChain()-filtered list, which DROPS
   // disabled entries. The Settings UI seeded `enabled: true` for every
   // returned row, so disabling an entry made it disappear from the
@@ -90,19 +86,11 @@ export const PUT = apiHandler(async (request: NextRequest) => {
   const { user } = await requireAuth();
   annotate({ action: { name: "insights.provider_chain.update" } });
 
-  const { data: body, error } = await safeJson<unknown>(request, {
+  const parsed = await parseJsonBody(request, providerChainPutSchema, {
     maxBytes: 64 * 1024,
+    message: "Invalid provider chain payload",
   });
-  if (error) return error;
-
-  const parsed = providerChainPutSchema.safeParse(body);
-  if (!parsed.success) {
-    return apiValidationError(
-      "Invalid provider chain payload",
-      sanitiseZodIssues(parsed.error.issues),
-      422,
-    );
-  }
+  if (!parsed.ok) return parsed.error;
 
   // Defence-in-depth: reject duplicate provider types so a stale-tab
   // resubmit cannot create a chain that walks the same entry twice.

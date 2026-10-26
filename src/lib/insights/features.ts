@@ -14,9 +14,13 @@ import {
   SCHEDULE_COMPLIANCE_SELECT,
 } from "@/lib/analytics/compliance";
 import { resolveUserTimezone } from "@/lib/tz/resolver";
-import { DEFAULT_TIMEZONE, userDayKey } from "@/lib/tz/format";
+import {
+  DEFAULT_TIMEZONE,
+  daysBetweenDateKeys,
+  userDayKey,
+} from "@/lib/tz/format";
+import { readMoodDailyPoints } from "@/lib/insights/mood-daily-points";
 import { readingsMean } from "@/lib/measurements/day-mean";
-import { usesHourlyMeanDay } from "@/lib/measurements/day-statistic";
 import { isCurrentForTodayClaim } from "@/lib/insights/measurement-freshness";
 import { computeMoodDimensionSeries } from "@/lib/insights/mood-dimension-series";
 import { computeContextMoodComparison } from "@/lib/insights/mood-context-crosstab";
@@ -30,17 +34,19 @@ import {
 import { loadUserSourcePriority } from "@/lib/rollups/measurement-read";
 import { getBpTargets } from "@/lib/analytics/bp-targets";
 import { isBpReadingInTarget } from "@/lib/analytics/bp-in-target";
+import { READING_SPREAD } from "@/lib/stats/spread";
+import {
+  avgInWindow,
+  roundedSpread,
+  toDataPoints,
+} from "@/lib/insights/feature-window";
 import {
   pairByTimestamp,
-  pearsonCorrelation,
+  significantPearsonCorrelation,
   type CorrelationResult,
 } from "@/lib/analytics/correlations";
 import { getMedicationCategories } from "@/lib/medication-category";
 import { sanitizeForPrompt } from "@/lib/insights/sanitize";
-import {
-  ensureUserMoodRollupsFresh,
-  readMoodDayRollups,
-} from "@/lib/rollups/mood-rollups";
 import {
   readAllTimeExtremes,
   readBucketedSeries,
@@ -789,7 +795,7 @@ export interface AggregatedFeatures {
     } | null;
   };
   /**
-   * S10 — ECG recording descriptor (device-verdict only, NON-DIAGNOSTIC). A
+   * ECG recording descriptor (device-verdict only, NON-DIAGNOSTIC). A
    * bounded, existence-and-count read of the user's on-device ECG recordings so
    * the nightly narrative can reference them FACTUALLY and attributed to the
    * device. `deviceVerdicts` / `latestDeviceVerdict` are the RECORDING DEVICE's
@@ -846,7 +852,7 @@ export interface RawFeatures extends AggregatedFeatures {
 }
 
 /**
- * v1.4.36 W3 T1 — payload size ceiling. The Codex provider rejects
+ * v1.4.36 — payload size ceiling. The Codex provider rejects
  * any prompt-string above 10 MB; the features payload is roughly half
  * the eventual prompt (the JSON dump plus the system + comparison
  * blocks), so a 5 MB feature payload sits comfortably below the
@@ -857,7 +863,7 @@ export interface RawFeatures extends AggregatedFeatures {
 export const FEATURES_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
- * v1.18.11 P1 — default bounded read window for the comprehensive briefing.
+ * v1.18.11 — default bounded read window for the comprehensive briefing.
  *
  * The briefing's prose only ever cites 7 / 30 / 90-day windows plus all-time
  * extremes; the unbounded `measurement.findMany` it used to run materialised
@@ -894,20 +900,6 @@ export class FeaturesPayloadTooLargeError extends Error {
   }
 }
 
-export function stdDev(values: number[]): number | null {
-  if (values.length < 2) return null;
-  const mean = values.reduce((s, v) => s + v, 0) / values.length;
-  const variance =
-    values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
-  return Math.round(Math.sqrt(variance) * 10) / 10;
-}
-
-export function toDataPoints(
-  records: Array<{ value: number; measuredAt: Date }>,
-): DataPoint[] {
-  return records.map((r) => ({ date: r.measuredAt, value: r.value }));
-}
-
 function computeCoverage(
   records: Array<{ measuredAt: Date }>,
   now: number,
@@ -937,35 +929,6 @@ function computeCoverage(
   };
 }
 
-/**
- * Compute average of values within a time window (days ago from now).
- *
- * `day` names the type and the zone its days are read in. For a type whose
- * day is the mean of its hours' means (pulse, see `day-mean.ts`) the window
- * is then the mean of its day values; every other type keeps the plain mean.
- */
-export function avgInWindow(
-  records: Array<{ value: number; measuredAt: Date }>,
-  now: number,
-  fromDaysAgo: number,
-  toDaysAgo: number = 0,
-  day?: { type: string; tz: string },
-): number | null {
-  const fromMs = now - fromDaysAgo * 24 * 60 * 60 * 1000;
-  const toMs = now - toDaysAgo * 24 * 60 * 60 * 1000;
-  const filtered = records.filter((r) => {
-    const t = r.measuredAt.getTime();
-    return t >= fromMs && t <= toMs;
-  });
-  if (filtered.length === 0) return null;
-  if (day && usesHourlyMeanDay(day.type)) {
-    const mean = readingsMean(day.type, filtered, day.tz);
-    return mean === null ? null : Math.round(mean * 100) / 100;
-  }
-  const sum = filtered.reduce((s, r) => s + r.value, 0);
-  return Math.round((sum / filtered.length) * 100) / 100;
-}
-
 // ─── v1.22 — cross-signal integration blocks (briefing-scoped) ────────────
 
 /**
@@ -993,103 +956,12 @@ async function readMoodFeature(
   dailyPoints: Array<{ measuredAt: Date; value: number; count: number }>;
 }> {
   let feature: AggregatedFeatures["mood"];
-  // Mood
-  //
-  // v1.4.40 — swap the unbounded `prisma.moodEntry.findMany` for the
-  // persistent mood-rollup DAY tier (audit Critical Finding #2). The
-  // feature block downstream consumes:
-  //   - `avg7` / `avg30` over recent rollup means
-  //   - `trend30` from first-half vs second-half of last 30 days
-  //   - `latest` = newest individual entry score (one bounded row)
-  //   - `totalEntries` = sum of rollup `count` across all DAY rows
-  //   - `oldest` / `newest` = first and last rollup `bucketStart`
-  //   - `moodPoints` for cross-metric correlations (one per-day mean
-  //     DataPoint — same resolution as the legacy raw-score series for
-  //     single-entry-per-day power users, slightly different on
-  //     multi-entry days, which is the rollup-tier semantic the
-  //     v1.4.39 `/api/mood/analytics` already shipped)
-  //
-  // Coverage-fallback: when raw entries exist but the rollup tier is
-  // still empty (legacy account before boot-time backfill caught up),
-  // we fall back to a bounded 1-year raw walk and fire the warm-up so
-  // the next request lands on the rollup tier. Same posture as
-  // `/api/mood/analytics`.
-  void ensureUserMoodRollupsFresh(userId);
-  // Five-year window mirrors the mood-rollup writer default; covers
-  // every realistic user history span without an unbounded scan.
-  const moodSince = laterDate(
-    new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000),
-    historyFloor,
-  );
-  const moodRollupDayRows = await readMoodDayRollups(userId, moodSince);
-
-  type MoodDayPoint = {
-    measuredAt: Date;
-    value: number;
-    count: number;
-  };
-  let moodDailyPoints: MoodDayPoint[] = [];
-  let moodLatestScore: number | null = null;
-  let moodTotalEntries = 0;
-
-  if (moodRollupDayRows.length > 0) {
-    moodDailyPoints = moodRollupDayRows.map((r) => ({
-      measuredAt: r.bucketStart,
-      value: r.mean,
-      count: r.count,
-    }));
-    moodTotalEntries = moodRollupDayRows.reduce((s, r) => s + r.count, 0);
-    // Latest score = newest individual entry (one bounded row).
-    const latestEntry = await prisma.moodEntry.findFirst({
-      // v1.7.0 sync — exclude tombstoned rows.
-      where: {
-        userId,
-        deletedAt: null,
-        ...(historyFloor ? { moodLoggedAt: { gte: historyFloor } } : {}),
-      },
-      orderBy: { moodLoggedAt: "desc" },
-      select: { score: true },
-    });
-    moodLatestScore = latestEntry?.score ?? null;
-  } else {
-    // Coverage-fallback. Bounded 1-year walk (instead of the legacy
-    // unbounded `findMany`) so even a cache miss is capped.
-    const oneYearAgo = laterDate(
-      new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
-      historyFloor,
-    );
-    const moodEntriesRaw = await prisma.moodEntry.findMany({
-      // v1.7.0 sync — exclude tombstoned rows.
-      where: { userId, deletedAt: null, moodLoggedAt: { gte: oneYearAgo } },
-      orderBy: { moodLoggedAt: "asc" },
-      select: { score: true, moodLoggedAt: true, date: true },
-    });
-    if (moodEntriesRaw.length > 0) {
-      // Bucket per `date` (TZ-anchored YYYY-MM-DD label, same key the
-      // rollup tier would emit for Berlin-anchored single-entry days)
-      // so the fallback shape matches the rollup-tier shape.
-      const byDay = new Map<string, { sum: number; count: number; ts: Date }>();
-      for (const e of moodEntriesRaw) {
-        const k = e.date;
-        const cur = byDay.get(k) ?? { sum: 0, count: 0, ts: e.moodLoggedAt };
-        cur.sum += e.score;
-        cur.count += 1;
-        // Pin the bucket's measuredAt to the latest entry's timestamp
-        // — close enough for the trailing-window filters below.
-        if (e.moodLoggedAt > cur.ts) cur.ts = e.moodLoggedAt;
-        byDay.set(k, cur);
-      }
-      moodDailyPoints = Array.from(byDay.values())
-        .map((b) => ({
-          measuredAt: b.ts,
-          value: b.sum / b.count,
-          count: b.count,
-        }))
-        .sort((a, b) => a.measuredAt.getTime() - b.measuredAt.getTime());
-      moodTotalEntries = moodEntriesRaw.length;
-      moodLatestScore = moodEntriesRaw[moodEntriesRaw.length - 1].score;
-    }
-  }
+  const {
+    points: moodDailyPoints,
+    totalEntries: moodTotalEntries,
+    latestScore: moodLatestScore,
+  } = await readMoodDailyPoints(userId, historyFloor);
+  type MoodDayPoint = (typeof moodDailyPoints)[number];
 
   if (moodDailyPoints.length > 0) {
     const moodNow = Date.now();
@@ -1126,11 +998,17 @@ async function readMoodFeature(
       }
     }
 
-    const oldest = moodDailyPoints[0].measuredAt;
-    const newest = moodDailyPoints[moodDailyPoints.length - 1].measuredAt;
-    const spanDays = Math.round(
-      (newest.getTime() - oldest.getTime()) / (24 * 60 * 60 * 1000),
+    // Ages and span in calendar days: the entries' own day labels against
+    // the reader's today. A rollup point sits at its label's UTC midnight,
+    // and elapsed hours rounded to days called a morning entry a day old
+    // from noon UTC on, so the answer depended on the hour of the question.
+    const todayKey = userDayKey(
+      new Date(moodNow),
+      await resolveUserTimezone(userId),
     );
+    const oldestKey = moodDailyPoints[0].dayKey;
+    const newestKey = moodDailyPoints[moodDailyPoints.length - 1].dayKey;
+    const spanDays = daysBetweenDateKeys(oldestKey, newestKey);
     const avgDaysBetween =
       moodTotalEntries > 1
         ? Math.round((spanDays / (moodTotalEntries - 1)) * 10) / 10
@@ -1150,12 +1028,8 @@ async function readMoodFeature(
         count: moodTotalEntries,
         spanDays,
         avgDaysBetween,
-        oldestDaysAgo: Math.round(
-          (moodNow - oldest.getTime()) / (24 * 60 * 60 * 1000),
-        ),
-        newestDaysAgo: Math.round(
-          (moodNow - newest.getTime()) / (24 * 60 * 60 * 1000),
-        ),
+        oldestDaysAgo: daysBetweenDateKeys(oldestKey, todayKey),
+        newestDaysAgo: daysBetweenDateKeys(newestKey, todayKey),
       },
     };
   }
@@ -1276,7 +1150,7 @@ export async function extractFeatures(
         // BP pairing, sleep reconstruction) see the same shape as before the cap.
         .then((rows) => rows.reverse());
 
-  // v1.18.11 P1 — when the bulk read is bounded to a recent window, the
+  // v1.18.11 — when the bulk read is bounded to a recent window, the
   // windowed `summarize()` no longer covers the full history, so the `allTime*`
   // fields would silently become "last `sinceDays` days" extremes. Source the
   // genuine full-history min / max / mean from one grouped aggregation (no row
@@ -1364,7 +1238,7 @@ export async function extractFeatures(
       avg7: summary.avg7,
       avg30: summary.avg30,
       avg90: avgInWindow(weightData, now, 90),
-      // v1.18.11 P1 — full-history extremes from the grouped aggregation when
+      // v1.18.11 — full-history extremes from the grouped aggregation when
       // the bulk read is windowed; the in-window summary otherwise.
       allTimeAvg: allTimeExtremes
         ? roundMean(allTimeExtremes.get("WEIGHT")?.mean ?? null)
@@ -1413,7 +1287,7 @@ export async function extractFeatures(
         const sysVal = sysByTime.get(dia.measuredAt.getTime());
         if (sysVal === undefined) continue;
         pairedCount++;
-        // v1.4.16 A2 — one-sided ceiling semantics with hypotension
+        // v1.4.16 — one-sided ceiling semantics with hypotension
         // floor. See lib/analytics/bp-in-target.ts.
         if (isBpReadingInTarget(sysVal, dia.value, bpTargets)) {
           inTargetCount++;
@@ -1430,7 +1304,7 @@ export async function extractFeatures(
       avgDia30: diaSummary?.avg30 ?? null,
       avgSys90: sysData.length > 0 ? avgInWindow(sysData, now, 90) : null,
       avgDia90: diaData.length > 0 ? avgInWindow(diaData, now, 90) : null,
-      // v1.18.11 P1 — full-history extremes when the bulk read is windowed.
+      // v1.18.11 — full-history extremes when the bulk read is windowed.
       allTimeAvgSys: allTimeExtremes
         ? roundMean(allTimeExtremes.get("BLOOD_PRESSURE_SYS")?.mean ?? null)
         : sysSummary?.count
@@ -1468,14 +1342,14 @@ export async function extractFeatures(
         const vals = sysData
           .filter((m) => m.measuredAt.getTime() >= fromMs)
           .map((m) => m.value);
-        return stdDev(vals);
+        return roundedSpread(vals, READING_SPREAD);
       })(),
       sdDia30: (() => {
         const fromMs = now - 30 * 24 * 60 * 60 * 1000;
         const vals = diaData
           .filter((m) => m.measuredAt.getTime() >= fromMs)
           .map((m) => m.value);
-        return stdDev(vals);
+        return roundedSpread(vals, READING_SPREAD);
       })(),
       pulsePressure30: (() => {
         const avgSys = sysSummary?.avg30 ?? null;
@@ -1508,7 +1382,7 @@ export async function extractFeatures(
       avg7: pulseMean(7),
       avg30: pulseMean(30),
       avg90: pulseMean(90),
-      // v1.18.11 P1 — full-history extremes when the bulk read is windowed.
+      // v1.18.11 — full-history extremes when the bulk read is windowed.
       allTimeAvg: allTimeExtremes
         ? roundMean(allTimeExtremes.get("PULSE")?.mean ?? null)
         : allPulse === null
@@ -1656,7 +1530,7 @@ export async function extractFeatures(
   }));
 
   const computeCorr = (a: DataPoint[], b: DataPoint[]) =>
-    pearsonCorrelation(pairByTimestamp(a, b));
+    significantPearsonCorrelation(pairByTimestamp(a, b));
 
   const sleepPoints = toDataPoints(sleepData);
 
@@ -1793,8 +1667,8 @@ export async function extractFeatures(
     include: {
       schedules: { select: SCHEDULE_COMPLIANCE_SELECT },
       // v1.16.3 — archived schedule eras for era-aware compliance.
-      scheduleRevisions: { orderBy: { validFrom: "asc" } },
-      // v1.25 H-MED1 — pause eras so paused days drop out of the denominator.
+      scheduleRevisions: { orderBy: [{ validFrom: "asc" }, { id: "asc" }] },
+      // v1.25 — pause eras so paused days drop out of the denominator.
       pauseEras: { select: { pausedAt: true, resumedAt: true } },
       // v1.40 (#1024) — the courses, so a gap between two expects nothing.
       courses: COURSES_COMPLIANCE_SELECT,
@@ -1822,7 +1696,7 @@ export async function extractFeatures(
         medicationId: { in: medications.map((med) => med.id) },
         scheduledFor: { gte: ninetyDaysAgo },
       },
-      orderBy: { scheduledFor: "desc" },
+      orderBy: [{ scheduledFor: "desc" }, { id: "desc" }],
       select: {
         medicationId: true,
         takenAt: true,
@@ -1845,7 +1719,7 @@ export async function extractFeatures(
       eventsByMed.set(e.medicationId, list);
     }
 
-    // v1.7.0 SB-SCHED-2 — resolve the user timezone once so every
+    // v1.7.0 — resolve the user timezone once so every
     // per-med compliance call can route its denominator through the
     // canonical engine (RRULE / rolling / one-shot / PRN / cyclic).
     const userTz = await resolveUserTimezone(userId);
@@ -1953,7 +1827,7 @@ export async function extractFeatures(
       readLabsBriefingBlock(userId, now),
       readPreventiveCareBlock(userId, now, preventiveTz),
       readWorkoutsBlock(userId, now),
-      // S10 — ECG device-verdict descriptor (never the waveform). Weaves the
+      // ECG device-verdict descriptor (never the waveform). Weaves the
       // ECG silo into the narrative; the model may reference it, attributed to
       // the device, but never interprets the trace (it never sees one).
       readEcgBriefingBlock(userId, now),
@@ -1964,7 +1838,7 @@ export async function extractFeatures(
     if (ecg) features.ecg = ecg;
   }
 
-  // v1.4.36 W3 T1 — "raw" mode no longer dumps every measurement row
+  // v1.4.36 — "raw" mode no longer dumps every measurement row
   // into the prompt. Instead we attach DAY / WEEK / MONTH bucket means
   // from `measurement_rollups` so the model gets the same temporal
   // shape (granular near-term, coarser deep history) at O(buckets)

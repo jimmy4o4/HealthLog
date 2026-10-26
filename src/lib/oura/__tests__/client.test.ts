@@ -1,20 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  OURA_OAUTH_LEGACY_TOKEN_URL,
-  OURA_OAUTH_SCOPE,
-  OURA_OAUTH_TOKEN_URL,
-  RESILIENCE_LEVELS,
-  derivePeriodDaysFromCyclePhases,
-  exchangeCode,
   fetchCardiovascularAge,
   fetchDailyCyclePhases,
   fetchReadiness,
   fetchResilience,
   fetchVo2Max,
-  getAuthorizationUrl,
-  getOuraCredentials,
-  isAcceptedOuraIssuer,
+} from "../client";
+import {
+  RESILIENCE_LEVELS,
+  derivePeriodDaysFromCyclePhases,
   mapCardiovascularAge,
   mapDailyActivity,
   mapDailySleep,
@@ -23,7 +18,8 @@ import {
   mapResilience,
   mapSleep,
   mapVo2Max,
-  refreshAccessToken,
+} from "@/lib/oura/map";
+import {
   type OuraCardiovascularAge,
   type OuraDailyActivity,
   type OuraDailySleep,
@@ -32,8 +28,15 @@ import {
   type OuraResilience,
   type OuraSleep,
   type OuraVo2Max,
-} from "../client";
+} from "@/lib/oura/wire-types";
+import {
+  OURA_OAUTH_LEGACY_TOKEN_URL,
+  OURA_OAUTH_TOKEN_URL,
+  getOuraCredentials,
+  isAcceptedOuraIssuer,
+} from "@/lib/oura/oauth";
 import { OuraApiError } from "../response-classifier";
+import { ouraOAuth, exchangeOuraCode } from "../oauth";
 
 const CREDS = { clientId: "cid", clientSecret: "csecret" };
 
@@ -76,9 +79,11 @@ describe("getOuraCredentials", () => {
 
 describe("getAuthorizationUrl", () => {
   it("builds the Oura authorize URL", () => {
-    const url = getAuthorizationUrl("signed", CREDS);
+    const url = ouraOAuth.authorizationUrl("signed", CREDS);
     expect(url).toContain("cloud.ouraring.com/oauth/authorize");
-    expect(url).toContain("scope=daily+personal");
+    expect(url).toContain(
+      "scope=daily+spo2+heart_health+stress+workout+heartrate+personal",
+    );
     expect(url).toContain("state=signed");
   });
 });
@@ -91,7 +96,7 @@ describe("exchangeCode / refreshAccessToken", () => {
         body: { access_token: "a", refresh_token: "r", expires_in: 86400 },
       },
     ]);
-    const t = await exchangeCode("code", CREDS);
+    const t = await exchangeOuraCode("code", CREDS);
     expect(t.access_token).toBe("a");
     expect(t.refresh_token).toBe("r");
   });
@@ -103,7 +108,7 @@ describe("exchangeCode / refreshAccessToken", () => {
         body: { access_token: "a2", refresh_token: "r2", expires_in: 86400 },
       },
     ]);
-    const t = await refreshAccessToken("r1", CREDS);
+    const t = await ouraOAuth.refresh("r1", CREDS);
     expect(t.refresh_token).toBe("r2");
     const [, init] = fetchMock.mock.calls[0]!;
     expect(init!.body).toContain("grant_type=refresh_token");
@@ -111,7 +116,7 @@ describe("exchangeCode / refreshAccessToken", () => {
 
   it("throws OuraApiError on a 400 invalid_grant", async () => {
     installFetchMock([{ status: 400, body: { error: "invalid_grant" } }]);
-    await expect(refreshAccessToken("dead", CREDS)).rejects.toBeInstanceOf(
+    await expect(ouraOAuth.refresh("dead", CREDS)).rejects.toBeInstanceOf(
       OuraApiError,
     );
   });
@@ -121,7 +126,7 @@ describe("exchangeCode / refreshAccessToken", () => {
   // TypeError. It must surface as a classified transient integration error.
   it("classifies a 2xx with an empty body instead of casting null", async () => {
     installFetchMock([{ status: 200, body: null }]);
-    await expect(exchangeCode("code", CREDS)).rejects.toMatchObject({
+    await expect(exchangeOuraCode("code", CREDS)).rejects.toMatchObject({
       classification: "transient",
       reason: "empty_token_body",
     });
@@ -129,7 +134,7 @@ describe("exchangeCode / refreshAccessToken", () => {
 
   it("classifies a 2xx with a non-object body on refresh", async () => {
     installFetchMock([{ status: 200, body: "not-json" }]);
-    await expect(refreshAccessToken("r1", CREDS)).rejects.toBeInstanceOf(
+    await expect(ouraOAuth.refresh("r1", CREDS)).rejects.toBeInstanceOf(
       OuraApiError,
     );
   });
@@ -152,7 +157,7 @@ describe("token endpoint order", () => {
 
   it("exchanges a code at the live endpoint, sending the secret in the body", async () => {
     const fetchMock = installFetchMock([OK]);
-    await exchangeCode("code", CREDS, MOI_ISS);
+    await exchangeOuraCode("code", CREDS, MOI_ISS);
     expect(OURA_OAUTH_TOKEN_URL).toBe(
       "https://moi.ouraring.com/oauth/v2/ext/oauth-token",
     );
@@ -168,7 +173,9 @@ describe("token endpoint order", () => {
       { status: 400, body: { error: "invalid_request" } },
       OK,
     ]);
-    await expect(exchangeCode("code", CREDS, MOI_ISS)).rejects.toMatchObject({
+    await expect(
+      exchangeOuraCode("code", CREDS, MOI_ISS),
+    ).rejects.toMatchObject({
       upstreamError: "invalid_request",
     });
     expect(urls(fetchMock)).toEqual([OURA_OAUTH_TOKEN_URL]);
@@ -180,7 +187,7 @@ describe("token endpoint order", () => {
       { status: 401, body: { error: "invalid_client" } },
       OK,
     ]);
-    const t = await exchangeCode("code", CREDS);
+    const t = await exchangeOuraCode("code", CREDS);
     expect(t.access_token).toBe("a");
     expect(urls(fetchMock)).toEqual([
       OURA_OAUTH_TOKEN_URL,
@@ -190,13 +197,13 @@ describe("token endpoint order", () => {
 
   it("does not try the legacy endpoint once the live one accepted the code", async () => {
     const fetchMock = installFetchMock([OK]);
-    await exchangeCode("code", CREDS);
+    await exchangeOuraCode("code", CREDS);
     expect(urls(fetchMock)).toEqual([OURA_OAUTH_TOKEN_URL]);
   });
 
   it("refreshes at the live endpoint first", async () => {
     const fetchMock = installFetchMock([OK]);
-    await refreshAccessToken("r1", CREDS);
+    await ouraOAuth.refresh("r1", CREDS);
     expect(urls(fetchMock)).toEqual([OURA_OAUTH_TOKEN_URL]);
   });
 
@@ -207,7 +214,7 @@ describe("token endpoint order", () => {
     "falls back to the legacy endpoint on a %i from the live one",
     async (status, body) => {
       const fetchMock = installFetchMock([{ status, body }, OK]);
-      const t = await refreshAccessToken("r1", CREDS);
+      const t = await ouraOAuth.refresh("r1", CREDS);
       expect(t.refresh_token).toBe("r");
       expect(urls(fetchMock)).toEqual([
         OURA_OAUTH_TOKEN_URL,
@@ -221,7 +228,7 @@ describe("token endpoint order", () => {
       { status: 400, body: { error: "invalid_grant" } },
       { status: 400, body: { error: "invalid_request" } },
     ]);
-    await expect(refreshAccessToken("dead", CREDS)).rejects.toMatchObject({
+    await expect(ouraOAuth.refresh("dead", CREDS)).rejects.toMatchObject({
       upstreamError: "invalid_grant",
     });
   });
@@ -229,7 +236,7 @@ describe("token endpoint order", () => {
   it("does not fall back on a server error or a rate limit", async () => {
     for (const status of [429, 503]) {
       const fetchMock = installFetchMock([{ status }, OK]);
-      await expect(refreshAccessToken("r1", CREDS)).rejects.toBeInstanceOf(
+      await expect(ouraOAuth.refresh("r1", CREDS)).rejects.toBeInstanceOf(
         OuraApiError,
       );
       expect(urls(fetchMock)).toEqual([OURA_OAUTH_TOKEN_URL]);
@@ -285,6 +292,23 @@ describe("fetchReadiness pagination", () => {
       endDate: "2026-06-10",
     });
     expect(r).toHaveLength(2);
+  });
+
+  it("ends on an empty next_token without reading the first page again", async () => {
+    const page = {
+      status: 200,
+      body: {
+        data: [{ id: "1", day: "2026-06-09", score: 70 }],
+        next_token: "",
+      },
+    };
+    const fetchMock = installFetchMock([page, page]);
+    const r = await fetchReadiness("tok", {
+      startDate: "2026-06-01",
+      endDate: "2026-06-10",
+    });
+    expect(r).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -455,7 +479,7 @@ describe("mapSleep", () => {
 });
 
 describe("mapDailyActivity", () => {
-  it("maps steps, active energy, and equivalent walking distance (m)", () => {
+  it("maps steps and active energy, and never the equivalent walking distance", () => {
     const a: OuraDailyActivity = {
       id: "1",
       day: "2026-06-10",
@@ -468,12 +492,12 @@ describe("mapDailyActivity", () => {
     expect(mapped.find((m) => m.type === "ACTIVE_ENERGY_BURNED")?.value).toBe(
       412,
     );
-    const dist = mapped.find((m) => m.type === "WALKING_RUNNING_DISTANCE");
-    expect(dist).toMatchObject({
-      value: 6543,
-      unit: "m",
-      fieldTag: "distance",
-    });
+    // An activity equivalent, not distance travelled: no distance row at all.
+    expect(mapped.map((m) => m.type).sort()).toEqual([
+      "ACTIVE_ENERGY_BURNED",
+      "ACTIVITY_STEPS",
+    ]);
+    expect(mapped.some((m) => m.fieldTag === "distance")).toBe(false);
   });
 });
 
@@ -687,14 +711,44 @@ describe("mapResilience", () => {
   });
 });
 
-describe("OURA_OAUTH_SCOPE", () => {
-  it("requests daily, personal and the scopes behind SpO2 and heart health", () => {
-    expect(OURA_OAUTH_SCOPE.split(" ")).toEqual([
-      "daily",
-      "personal",
-      "spo2",
-      "heart_health",
+describe("collection refusals", () => {
+  const query = { startDate: "2026-06-01", endDate: "2026-06-10" };
+
+  it("reads a 401 that names a scope as a missing permission, not a dead token", async () => {
+    installFetchMock([
+      {
+        status: 401,
+        body: { detail: "Token is not authorized access stress scope." },
+      },
     ]);
+    const err = await fetchResilience("tok", query).catch((e) => e);
+    expect(err).toBeInstanceOf(OuraApiError);
+    expect(err.httpStatus).toBe(401);
+    expect(err.missingScope).toBe("stress");
+    expect(err.reason).toBe("scope_missing");
+  });
+
+  it("keeps a dead token's 401 a token refusal", async () => {
+    installFetchMock([
+      {
+        status: 401,
+        body: {
+          detail:
+            "The access token provided is expired, revoked, malformed, or invalid for other reasons.",
+        },
+      },
+    ]);
+    const err = await fetchReadiness("tok", query).catch((e) => e);
+    expect(err.httpStatus).toBe(401);
+    expect(err.missingScope).toBeUndefined();
+    expect(err.classification).toBe("reauth_required");
+  });
+
+  it("classifies a 403 (lapsed membership) as persistent rather than a reconnect", async () => {
+    installFetchMock([{ status: 403, body: { detail: "forbidden" } }]);
+    const err = await fetchReadiness("tok", query).catch((e) => e);
+    expect(err.httpStatus).toBe(403);
+    expect(err.classification).toBe("persistent");
   });
 });
 

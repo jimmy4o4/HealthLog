@@ -1,7 +1,7 @@
 /**
  * GET /api/dashboard/snapshot
  *
- * v1.7.0 W6 — unified above-the-fold first-paint payload for the web
+ * v1.7.0 — unified above-the-fold first-paint payload for the web
  * dashboard. One `apiHandler`-wrapped GET that assembles every tile
  * field in a single round-trip via `buildDashboardSnapshot` so the
  * whole strip shares one completion moment instead of the legacy
@@ -26,7 +26,7 @@
  * so a regression is attributable without re-instrumenting.
  *
  * No LLM is reachable from the builder — the daily briefing is lifted
- * read-only from `User.insightsCachedText`. The nightly
+ * read-only from `User.insightsCachedTextEncrypted`. The nightly
  * `insight-pregenerate` cron keeps that cache warm.
  */
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";

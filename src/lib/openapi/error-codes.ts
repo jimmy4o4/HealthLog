@@ -1,3 +1,5 @@
+import { DEFAULT_ERROR_CODES } from "@/lib/api/default-error-codes";
+
 /**
  * Every `meta.errorCode` the API emits, grouped by the surface that emits it.
  *
@@ -38,6 +40,8 @@
  */
 export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
   {
+    account: ["account.deletion.no_guardian", "account.deletion.not_pending"],
+    activity: ["activity.calendar.future_date", "activity.calendar.too_old"],
     ai: [
       "ai.budget.exceeded",
       "ai.provider.none",
@@ -53,6 +57,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
     aiRuns: [
       "aiRuns.failed",
       "aiRuns.notFound",
+      "aiRuns.readerBusy",
       "aiRuns.timedOut",
       "aiRuns.workerUnavailable",
     ],
@@ -69,6 +74,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "anamnesis.lifeSections.invalid",
     ],
     auth: [
+      "auth.account.deletion_pending",
       "auth.admin.required",
       "auth.already_authenticated",
       "auth.mfa.code_invalid",
@@ -81,6 +87,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "auth.reproof.too_weak",
       "auth.scope.insufficient",
       "auth.session.insecure_transport",
+      "auth.session.unavailable",
       "auth.stepup.required",
       "auth.token.expired",
       "auth.token.invalid",
@@ -128,6 +135,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
     ],
     "cycle-prefs": ["cycle-prefs.body.invalid_json", "cycle-prefs.invalid"],
     "disable-coach": ["disable-coach.body.invalid_json"],
+    data_wipe: ["data_wipe.copy_failed"],
     dawarich: [
       "dawarich.credentials_rejected",
       "dawarich.home_place_unknown",
@@ -157,8 +165,10 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "documents.inbound.invalidQuery",
       "documents.inbound.invalidUpdate",
       "documents.inbound.localOcrDisabled",
+      "documents.inbound.notDeleted",
       "documents.inbound.notFound",
       "documents.inbound.notIndexed",
+      "documents.inbound.outputLimit",
       "documents.inbound.pdfNeedsAnthropic",
       "documents.inbound.providerUnsupported",
       "documents.inbound.quotaExceeded",
@@ -193,7 +203,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "encounter.reminder-conflict",
       "encounter.reminder-not-found",
     ],
-    encryption: ["encryption.keyBackup.stale", "encryption.key_mismatch"],
+    encryption: ["encryption.key_mismatch"],
     environment: [
       "environment.backfill_pending",
       "environment.backfill_rate_limited",
@@ -210,6 +220,9 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "health_score_config.invalid",
       "health_score_config.too_narrow",
     ],
+    // The status defaults, derived from the table `apiHandler` applies so the
+    // two cannot drift apart.
+    http: [...new Set(Object.values(DEFAULT_ERROR_CODES))].sort(),
     illness: [
       "illness.day-log.invalid",
       "illness.disabled",
@@ -219,7 +232,14 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "illness.episode.parent-not-found",
       "illness.insights.invalid",
     ],
-    import: ["import.apple_health.busy", "import.write_failed"],
+    import: [
+      "import.apple_health.busy",
+      "import.csv.content_type",
+      "import.csv.empty",
+      "import.csv.too_large",
+      "import.rate_limited",
+      "import.write_failed",
+    ],
     ingest: ["ingest.rate_limited"],
     insights: [
       "insights.generate.budgetExceeded",
@@ -243,9 +263,11 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "labs.ocr.fileTooLarge",
       "labs.ocr.fileType",
       "labs.ocr.localOcrDisabled",
+      "labs.ocr.outputLimit",
       "labs.ocr.pdfNeedsAnthropic",
       "labs.ocr.providerUnsupported",
       "labs.ocr.rateLimited",
+      "labs.ocr.tooLarge",
       "labs.restore.invalid",
       "labs.result.notFound",
       "labs.unit.mismatch",
@@ -294,6 +316,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "medications.course.invalid",
       "medications.course.invalidRange",
       "medications.course.notFound",
+      "medications.course.notRunning",
       "medications.course.oneShot",
       "medications.course.overlap",
       "medications.course.windowRequired",
@@ -379,13 +402,16 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "profile_claim.taken",
     ],
     record_write: ["record_write.rate_limited"],
+    recovery: ["recovery.kit.stale"],
     "report-selection": [
       "report-selection.body.invalid_json",
       "report-selection.body.invalid_shape",
       "report-selection.leaves.unknown",
     ],
+    request: ["request.cross_site"],
     route: ["route.retired"],
     search: ["search.invalid"],
+    security_activity: ["security_activity.invalid"],
     "share-link": [
       "share-link.document.decryptFailed",
       "share-link.document.notFound",
@@ -406,6 +432,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "sharing.invite.invalid",
       "sharing.invite.invalid_scope",
       "sharing.invite.manage_browser_only",
+      "sharing.invite.no_account",
       "sharing.invite.refused",
       "sharing.invite.self",
       "sharing.not_permitted",
@@ -432,6 +459,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
     tokens: [
       "tokens.documents.ceiling_reached",
       "tokens.measurements.ceiling_reached",
+      "tokens.mirror.not_measurement_token",
       "tokens.workouts.ceiling_reached",
     ],
     vaccination: [
@@ -476,6 +504,7 @@ export const ERROR_CODE_CATALOGUE: Readonly<Record<string, readonly string[]>> =
       "oidc_only",
       "private_origin_not_approved",
       "private_origin_not_grantable",
+      "provider_retired",
       "rate_limited_self",
       "sync_in_progress",
       "too_many_rows",

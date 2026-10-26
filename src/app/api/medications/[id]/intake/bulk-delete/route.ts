@@ -2,28 +2,23 @@ import { prisma } from "@/lib/db";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { bulkDeleteIntakeEventsSchema } from "@/lib/validations/medication";
 import { restoreForIntake } from "@/lib/medications/inventory/consumption";
 import { assertMedicationOwnership } from "@/lib/medications/route-guards";
 import {
   dayKeyForScheduledFor,
-  recomputeMedicationComplianceForDay,
-} from "@/lib/rollups/medication-compliance-rollups";
+  refreshDoseDay,
+} from "@/lib/medications/dose-day-refresh";
 import { invalidateUserMedications } from "@/lib/cache/invalidate";
 import { queueMedicationIntakeSync } from "@/lib/notifications/medication-intake-sync";
 import { NextRequest } from "next/server";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// v1.5.5 F-1 H-6 — match the glp1 POST shape so a caller firing
+// v1.5.5 — match the glp1 POST shape so a caller firing
 // repeated 500-id bulk deletes cannot pin the per-dayKey recompute
 // path. 30/min/user is generous for a hand-driven multi-select and
 // tight enough to cut off the spam case.
@@ -67,7 +62,7 @@ export const POST = apiHandler(
     const guard = await assertMedicationOwnership(id, user.id);
     if (guard) return guard;
 
-    // v1.5.5 F-1 H-6 — per-caller cap matches the glp1 POST so a caller
+    // v1.5.5 — per-caller cap matches the glp1 POST so a caller
     // firing repeated 500-id bulk deletes cannot pin the per-dayKey
     // recompute path.
     //
@@ -84,14 +79,10 @@ export const POST = apiHandler(
       });
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, bulkDeleteIntakeEventsSchema, {
       maxBytes: 256 * 1024,
     });
-    if (jsonError) return jsonError;
-    const parsed = bulkDeleteIntakeEventsSchema.safeParse(body);
-    if (!parsed.success) {
-      return returnAllZodIssues(parsed.error, 422);
-    }
+    if (!parsed.ok) return parsed.error;
     const { eventIds } = parsed.data;
 
     // Tz the rollups are anchored on. The detail-page caller persists
@@ -138,7 +129,7 @@ export const POST = apiHandler(
       }
     }
 
-    // v1.15.18 LOW-6 — soft-delete to match the single-event DELETE handler
+    // v1.15.18 — soft-delete to match the single-event DELETE handler
     // and the iOS tombstone contract: an intake is an immutable fact, so a
     // bulk "delete" sets `deletedAt` (+ bumps `syncVersion`) so the
     // `/api/sync/changes` feed surfaces each removal as a tombstone keyed on
@@ -159,26 +150,11 @@ export const POST = apiHandler(
       },
     });
 
-    // Best-effort rollup refresh — one trip per unique dayKey so a
-    // 14-row delete spanning two days closes in two SQL trips. The
-    // helper is idempotent and the catch swallows transient
-    // populator failures (same contract as the single-event delete).
+    // Best-effort dose-day refresh, one per unique dayKey, so a 14-row
+    // delete spanning two days refreshes two days (same contract as the
+    // single-event delete).
     for (const dayKey of dayKeysToRefresh) {
-      try {
-        await recomputeMedicationComplianceForDay(user.id, id, dayKey, tz);
-      } catch (err) {
-        annotate({
-          action: {
-            name: "medications.intake.bulk-delete.recompute-failed",
-            entity_type: "medication",
-            entity_id: id,
-          },
-          meta: {
-            day_key: dayKey,
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      }
+      await refreshDoseDay({ userId: user.id, medicationId: id, dayKey, tz });
     }
 
     await auditLog("medication.intake.bulk_delete", {

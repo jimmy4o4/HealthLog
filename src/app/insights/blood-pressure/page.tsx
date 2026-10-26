@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceProvenanceLink } from "@/components/provenance/source-provenance-link";
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, HeartPulse } from "lucide-react";
 
@@ -21,7 +22,7 @@ import { SubPageShell } from "@/components/insights/sub-page-shell";
 import { useBpTargetBand } from "@/lib/queries/use-bp-target-band";
 
 /**
- * v1.4.25 W4 — `/insights/blood-pressure`.
+ * v1.4.25 — `/insights/blood-pressure`.
  *
  * Routed Blood-Pressure sub-page. The mother page hosts the overview
  * (hero + briefing + advisor); this page concentrates on BP-only depth:
@@ -29,15 +30,15 @@ import { useBpTargetBand } from "@/lib/queries/use-bp-target-band";
  * assessment, and the chart's target zones — the band the server resolved
  * for the record on screen (the user's own target, else the age default).
  *
- * v1.4.27 F17 — when the user has zero BP observations, the page
+ * v1.4.27 — when the user has zero BP observations, the page
  * short-circuits to an empty-state CTA pointing at
  * `/measurements?add=BLOOD_PRESSURE`. Apple Health convention: empty
  * surfaces lead to onboarding hints rather than chart skeletons.
- * v1.4.27 MB6 — the previous `/measurements/new` href hit a 404; the
+ * v1.4.27 — the previous `/measurements/new` href hit a 404; the
  * measurements page now consumes `?add=<TYPE>` and auto-opens the
  * dialog with the matching default type.
  *
- * v1.4.28 R3d (BK-F-H1 + BK-F-M1) — the analytics fetch and the
+ * v1.4.28 — the analytics fetch and the
  * empty-state render were lifted into `useInsightsAnalytics()` and
  * `<MetricEmptyState>`; the page module is now Apple-Health-lean.
  */
@@ -204,7 +205,7 @@ export default function InsightsBlutdruckPage() {
           // edge, ~16–24 px left of every neighbouring card's text) — and
           // foreground, not muted: multi-sentence explainer prose is
           // content, muted stays reserved for meta.
-          <Card data-slot="bp-derived-caption" className="gap-2 py-3 md:py-4">
+          <Card data-slot="bp-derived-caption" density="compact">
             <CardContent>
               <p className="text-sm leading-relaxed">
                 {t("insights.subPage.bpDerived.pulsePressure", {
@@ -226,6 +227,8 @@ export default function InsightsBlutdruckPage() {
         slug="blood-pressure"
         icon={<HeartPulse className="h-5 w-5" />}
       />
+      {/* v1.44 (#1204) — where these values come from. */}
+      <SourceProvenanceLink type="BLOOD_PRESSURE_SYS" />
     </SubPageShell>
   );
 }

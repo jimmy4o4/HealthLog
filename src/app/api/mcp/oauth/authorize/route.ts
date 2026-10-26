@@ -266,7 +266,7 @@ async function validate(
     };
   }
 
-  // L1 — the VERIFIED origin. For CIMD the `client_id` IS the document URL, so
+  // The VERIFIED origin. For CIMD the `client_id` IS the document URL, so
   // its host is cryptographically tied to the fetched-and-matched document; for
   // DCR there is no verified origin (anyone can self-register), so the consent
   // screen labels it unverified rather than trusting the self-asserted name.
@@ -298,7 +298,7 @@ async function validate(
 }
 
 /**
- * L3 — same-origin assertion for the consent POST. A non-browser caller sends
+ * Same-origin assertion for the consent POST. A non-browser caller sends
  * neither `Origin` nor `Sec-Fetch-Site`, so their absence is allowed; a present
  * `Origin` that is not our own origin, or a `Sec-Fetch-Site` that is not
  * `same-origin`, is refused. Mirrors the `/mcp` DNS-rebinding posture.
@@ -414,12 +414,13 @@ async function authorizeGet(request: NextRequest): Promise<Response> {
     // Consent screen — a plain POST form (no inline script/style, CSP-safe).
     const hidden = (name: string, value: string) =>
       `<input type="hidden" name="${name}" value="${htmlEscape(value)}">`;
-    // L1 — show the VERIFIED origin (or an explicit "unverified" label for DCR)
+    // Show the VERIFIED origin (or an explicit "unverified" label for DCR)
     // next to the self-asserted name so the user authorizes who, not just what.
     const provenance =
       v.clientSource === "cimd"
         ? `<p>Verified origin: <code>${htmlEscape(v.clientOrigin)}</code></p>`
         : `<p><strong>Unverified application</strong> (dynamically registered, the name above is self-reported and not verified).</p>`;
+    const destination = consentDestination(v.redirectUri, v.clientSource);
     // Plain-language access summary. When write is granted, say so explicitly —
     // the app will be able to READ and LOG/WRITE health data, not just read.
     const writeGranted = v.scope.split(/\s+/).includes(SCOPE_HEALTH_WRITE);
@@ -436,8 +437,10 @@ async function authorizeGet(request: NextRequest): Promise<Response> {
       html(
         `<main>
         <h1>Authorize access</h1>
+        ${destination.warning}
         <p><strong>${htmlEscape(v.clientName)}</strong> is requesting access to your HealthLog data.</p>
         ${provenance}
+        ${destination.line}
         <p>Scope: <code>${htmlEscape(v.scope)}</code></p>
         ${accessSummary}
         ${readSummary}
@@ -450,7 +453,7 @@ async function authorizeGet(request: NextRequest): Promise<Response> {
           ${hidden("scope", v.scope)}
           ${hidden("resource", v.resource)}
           ${v.state !== undefined ? hidden("state", v.state) : ""}
-          <button type="submit" name="decision" value="allow">Allow</button>
+          <button type="submit" name="decision" value="allow">${destination.allowLabel}</button>
           <button type="submit" name="decision" value="deny">Deny</button>
         </form>
       </main>`,
@@ -458,6 +461,55 @@ async function authorizeGet(request: NextRequest): Promise<Response> {
       v.redirectUri,
     );
   });
+}
+
+/**
+ * Where an Allow sends the access, said on the consent page in words a person
+ * checks: the redirect URI's host, or "an application on this device" for a
+ * loopback redirect.
+ *
+ * Dynamic registration is open by specification and the client names itself,
+ * so anyone can register "Claude" with a redirect to a host of their own and
+ * send a signed-in person the authorize link; the page used to show the
+ * borrowed name and never the host the code would go to. The host is now on
+ * every consent page and on the Allow button. For an unverified client whose
+ * redirect leaves this device, a warning leads the page.
+ *
+ * Registration itself stays open: the hosted assistants register this way
+ * with their own https callback, so closing it or allowlisting hosts would
+ * break them on every instance, and a switch left at its default would
+ * protect nobody. Naming where the access goes is what a phished person can
+ * act on.
+ */
+function consentDestination(
+  redirectUri: string,
+  clientSource: string,
+): { warning: string; line: string; allowLabel: string } {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return { warning: "", line: "", allowLabel: "Allow" };
+  }
+  const loopback =
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+  if (loopback) {
+    return {
+      warning: "",
+      line: `<p><strong>Access goes to:</strong> an application running on this device (<code>${htmlEscape(url.host)}</code>).</p>`,
+      allowLabel: "Allow",
+    };
+  }
+  const host = htmlEscape(url.host);
+  return {
+    warning:
+      clientSource === "cimd"
+        ? ""
+        : `<p><strong>Check where this access goes before you allow it.</strong> Whoever runs <code>${host}</code> will be able to use it. Allow only if you started this connection from <code>${host}</code> yourself; the application's name below is its own claim.</p>`,
+    line: `<p><strong>Access goes to:</strong> <code>${host}</code></p>`,
+    allowLabel: `Allow access for ${host}`,
+  };
 }
 
 async function authorizePost(request: NextRequest): Promise<Response> {
@@ -469,7 +521,7 @@ async function authorizePost(request: NextRequest): Promise<Response> {
       );
     }
 
-    // L3 — defence-in-depth same-origin assertion on the consent decision. The
+    // Defence-in-depth same-origin assertion on the consent decision. The
     // session cookie is already SameSite=Lax (a cross-site POST carries none),
     // but reject an explicit cross-origin Origin / Sec-Fetch-Site outright so a
     // forged "allow" cannot ride a present session.

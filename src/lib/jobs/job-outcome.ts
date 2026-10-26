@@ -43,6 +43,16 @@ export type JobFacts = Readonly<Record<string, JobFact>>;
  */
 export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "access_tokens_deleted",
+  // The account-deletion purge: accounts whose grace window ended and
+  // were erased, ones whose erasure was refused and stays pending, and the
+  // copies taken before a data wipe that aged out with their window; the
+  // erasures that threw, and the due accounts left for the next run when
+  // its time budget ran out.
+  "account_deletions_deferred",
+  "account_deletions_due",
+  "account_deletions_failed",
+  "account_deletions_purged",
+  "account_deletions_refused",
   "accounts_completed",
   // v1.40 — the document AI run reaper's three outcomes.
   "ai_runs_deleted",
@@ -57,11 +67,18 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "assessments_warmed",
   "auto_resolved",
   "backed",
+  // The nightly measurements check: heap size over what the live rows need,
+  // in percent (130 is a heap 1.3 times the size its live rows need).
+  "bloat_percent",
   "buckets_collapsed",
   "buckets_recomputed",
   "budget_blocked",
   "cached",
+  // The daily Withings OAuth-state cleanup also sweeps the callback claims.
+  "callback_claims_deleted",
   "candidates_scanned",
+  // The nightly sign-in ledger cleanup (`auth-ledger-cleanup`).
+  "challenges_deleted",
   "connect_tickets_deleted",
   "connections_deleted",
   "considered",
@@ -71,6 +88,12 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "continued",
   "conversation_titles_migrated",
   "created",
+  // The nightly whole-database dump: where it went and how big.
+  "database_backup_bytes",
+  "database_backup_local",
+  "database_backup_offhost",
+  "database_backup_removed",
+  "database_backup_status",
   "daily_rows_retired",
   "days_consolidated",
   "days_rebuilt",
@@ -78,6 +101,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "days_skipped",
   "days_skipped_no_tombstones",
   "days_stored",
+  "dead_rows",
   // Tombstone purge: accounts left for the next run because a restore of
   // the account was running.
   "deferred_accounts",
@@ -140,6 +164,11 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "inventory_expired_count",
   "inventory_items_migrated",
   "jobs",
+  // A batch whose every job named an account pending deletion
+  // (`pending-deletion-gate.ts`): completed without running.
+  "jobs_skipped_deletion_pending",
+  // Heavy jobs that found the lane taken and went back to their queue.
+  "lane_deferred",
   "legacy_rows_soft_deleted",
   "linked",
   "malformed",
@@ -168,7 +197,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "module_off",
   "mood_entries_migrated",
   "mood_pruned",
-  // v1.37.19 (A3-6) — ignored Coach reminders auto-dismissed at the nag cap.
+  // v1.37.19 — ignored Coach reminders auto-dismissed at the nag cap.
   "nag_dismissed",
   "notifications_dispatched",
   "notifications_failed",
@@ -191,6 +220,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "persisted",
   "plan_reviews_minted",
   "practitioner_contacts_migrated",
+  "pre_wipe_copies_deleted",
   "pr_detection_inserted",
   "pr_detection_jobs",
   "pr_detection_ties",
@@ -203,6 +233,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "records_oversized",
   "records_read",
   "refreshed",
+  "refresh_tokens_deleted",
   "refused",
   "reminders_due",
   "removed",
@@ -223,6 +254,13 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "restore_drill_plaintext_bytes",
   "restore_drill_unchecked",
   "restore_drill_stale",
+  // The hourly recovery readiness evaluation: the overall verdict, how many
+  // signals need attention or are failing, notices sent, admins reached.
+  "recovery_readiness_admins",
+  "recovery_readiness_attention",
+  "recovery_readiness_failing",
+  "recovery_readiness_notices",
+  "recovery_readiness_state",
   "restore_fail_cause",
   "restore_failed",
   "restore_measurements",
@@ -246,6 +284,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "scheduled",
   "sent",
   "served",
+  "sessions_deleted",
   "side_effects_migrated",
   // v1.42.4 — integration watchdog: sources newly flagged as silent.
   "silences_flagged",
@@ -264,7 +303,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "stored",
   "subscription_repair_failed",
   "summaries_enqueued",
-  // v1.37.19 (A7-4) — stale-PENDING summary rows the hourly reaper healed.
+  // v1.37.19 — stale-PENDING summary rows the hourly reaper healed.
   "summary_pending_healed",
   "suppressed_client_managed",
   "suppressed_discreet",
@@ -272,6 +311,7 @@ export const JOB_FACT_ALLOWLIST: ReadonlySet<string> = new Set([
   "tls_pin_monitor_known_count",
   "tls_pin_monitor_outcome",
   "total",
+  "trusted_devices_deleted",
   "unchanged",
   "updated",
   "users",
@@ -355,46 +395,86 @@ function assertStableCode(value: string, label: string): void {
   }
 }
 
-function validateFacts(facts: JobFacts): JobFacts {
+/**
+ * A measured quantity as a fact: a duration or an amount computed in floating
+ * point, rounded on purpose. A fact is a non-negative whole number, and a
+ * value that is not one fails the outcome's validation.
+ */
+export function wholeFact(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
+/**
+ * A ratio as a fact, in whole percent: 1.3 is 130. A ratio is not a whole
+ * number, so it cannot be a fact as it stands; this is the one way to report
+ * one. Absent or unmeasurable is 0.
+ */
+export function percentFact(ratio: number | null | undefined): number {
+  if (ratio == null || !Number.isFinite(ratio)) return 0;
+  return wholeFact(ratio * 100);
+}
+
+/** Why one fact is refused, or null when it is a valid fact. */
+function invalidFact(key: string, value: unknown): string | null {
+  if (!JOB_FACT_ALLOWLIST.has(key))
+    return `job fact key is not allowed: ${key}`;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0
+      ? null
+      : `job fact ${key} must be a non-negative safe integer`;
+  }
+  if (typeof value === "string") {
+    return STABLE_CODE_PATTERN.test(value)
+      ? null
+      : `job fact ${key} must be a stable lowercase code`;
+  }
+  return typeof value === "boolean"
+    ? null
+    : `job fact ${key} must be a bounded scalar`;
+}
+
+/**
+ * Called for each fact the serializer drops instead of throwing over it. A
+ * caller that passes it has already done the run's work: refusing the whole
+ * outcome over one malformed fact would fail completed work, and pg-boss
+ * would retry it.
+ */
+export type InvalidFactHandler = (key: string, reason: string) => void;
+
+function validateFacts(
+  facts: JobFacts,
+  onInvalidFact?: InvalidFactHandler,
+): JobFacts {
   const entries = Object.entries(facts);
 
   if (entries.length > MAX_JOB_FACTS) {
     throw new RangeError(`job outcome exceeds ${MAX_JOB_FACTS} facts`);
   }
 
+  const kept: Array<[string, JobFact]> = [];
   for (const [key, value] of entries) {
-    if (!JOB_FACT_ALLOWLIST.has(key)) {
-      throw new TypeError(`job fact key is not allowed: ${key}`);
-    }
-
-    if (typeof value === "number") {
-      if (!Number.isSafeInteger(value) || value < 0) {
-        throw new TypeError(
-          `job fact ${key} must be a non-negative safe integer`,
-        );
-      }
+    const reason = invalidFact(key, value);
+    if (reason === null) {
+      kept.push([key, value]);
       continue;
     }
-
-    if (typeof value === "string") {
-      assertStableCode(value, `job fact ${key}`);
-      continue;
-    }
-
-    if (typeof value !== "boolean") {
-      throw new TypeError(`job fact ${key} must be a bounded scalar`);
-    }
+    if (!onInvalidFact) throw new TypeError(reason);
+    onInvalidFact(key, reason);
   }
 
-  return Object.freeze(Object.fromEntries(entries)) as JobFacts;
+  return Object.freeze(Object.fromEntries(kept)) as JobFacts;
 }
 
 /**
  * Produce the only representation suitable for persistence or structured
  * logging. The raw `cause` deliberately remains in-process for retry handling.
  */
-export function serializeJobOutcome(outcome: JobOutcome): SerializedJobOutcome {
-  const did = validateFacts(outcome.did ?? {});
+export function serializeJobOutcome(
+  outcome: JobOutcome,
+  options: { onInvalidFact?: InvalidFactHandler } = {},
+): SerializedJobOutcome {
+  const did = validateFacts(outcome.did ?? {}, options.onInvalidFact);
   const serialized: SerializedJobOutcome = outcome.ok
     ? { ok: true, did }
     : (() => {

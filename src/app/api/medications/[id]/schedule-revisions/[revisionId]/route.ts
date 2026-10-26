@@ -32,20 +32,14 @@ import {
   destroyedDetails,
   overwriteDetails,
 } from "@/lib/sharing/audit-details";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { assertMedicationOwnership } from "@/lib/medications/route-guards";
 import { scheduleRevisionUpdateSchema } from "@/lib/validations/schedule-revision";
 import {
   toRevisionPayloadEntry,
   type ScheduleRevisionEntry,
 } from "@/lib/medications/scheduling/schedule-eras";
-import { enqueueUserMedicationComplianceBackfill } from "@/lib/rollups/medication-compliance-rollups";
 import { invalidateUserMedications } from "@/lib/cache/invalidate";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -69,15 +63,11 @@ export const PATCH = apiHandler(
       return apiError("Medication not found", 404);
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, scheduleRevisionUpdateSchema, {
       maxBytes: 16 * 1024,
+      input: (body) => body ?? {},
     });
-    if (jsonError) return jsonError;
-
-    const parsed = scheduleRevisionUpdateSchema.safeParse(body ?? {});
-    if (!parsed.success) {
-      return returnAllZodIssues(parsed.error, 422);
-    }
+    if (!parsed.ok) return parsed.error;
 
     const validFrom = new Date(parsed.data.validFrom);
     const validUntil = new Date(parsed.data.validUntil);
@@ -246,7 +236,7 @@ export const PATCH = apiHandler(
     await auditLog("medication.schedule_revision.updated", {
       userId: user.id,
       ipAddress: getClientIp(request),
-      // C4 — the era boundaries the correction replaced. An era is a window
+      // The era boundaries the correction replaced. An era is a window
       // the compliance engine reads months of history through; moving it
       // silently re-scores days nobody looked at again.
       details: {
@@ -286,13 +276,10 @@ export const PATCH = apiHandler(
       },
     });
 
-    // The corrected era re-segments history; refresh the pre-aggregated
-    // compliance rollups asynchronously (best-effort).
     // v1.16.9 — an era write re-segments the bands every cached payload
     // (list next-due, compliance cells, dashboard tally) was built on;
     // hard-evict so the next read reflects the new history immediately.
     invalidateUserMedications(user.id, { evict: true });
-    await enqueueUserMedicationComplianceBackfill(user.id);
 
     return apiSuccess({
       id: outcome.revision.id,
@@ -379,7 +366,7 @@ export const DELETE = apiHandler(
     await auditLog("medication.schedule_revision.deleted", {
       userId: user.id,
       ipAddress: getClientIp(request),
-      // C3 — the era's dates and its dosing summary. Without them the feed
+      // The era's dates and its dosing summary. Without them the feed
       // says an era was deleted and the compliance history it explained
       // becomes unexplainable.
       details: {
@@ -404,13 +391,10 @@ export const DELETE = apiHandler(
       meta: { revision_id: revisionId },
     });
 
-    // History re-segments without the era; refresh the pre-aggregated
-    // compliance rollups asynchronously (best-effort).
     // v1.16.9 — an era write re-segments the bands every cached payload
     // (list next-due, compliance cells, dashboard tally) was built on;
     // hard-evict so the next read reflects the new history immediately.
     invalidateUserMedications(user.id, { evict: true });
-    await enqueueUserMedicationComplianceBackfill(user.id);
 
     return apiSuccess({ deleted: true });
   },

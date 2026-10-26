@@ -28,6 +28,7 @@ import { useTranslations, useFormatters } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { apiGet } from "@/lib/api/api-fetch";
 import { helpfulRateColour } from "./_shared";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface CoachFeedbackBucket {
   promptVersion: string;
@@ -63,7 +64,7 @@ export function CoachFeedbackSection() {
   const buckets = summary?.coachBuckets ?? [];
   const hasData = !!summary && buckets.length > 0;
 
-  // v1.4.25 W8 — keep the section's outer card + header rendered across
+  // v1.4.25 — keep the section's outer card + header rendered across
   // every query state (loading / error / empty / data) so the heading
   // baseline stays at a constant Y-offset. Previously the loading branch
   // returned a thin flex-row stub and the error branch a p-4 alert with
@@ -99,15 +100,19 @@ export function CoachFeedbackSection() {
         </div>
       ) : query.isError ? (
         <QueryErrorRow
+          inset
+          error={query.error}
           message={t("admin.coachFeedback.loadError")}
           onRetry={() => void query.refetch()}
         />
       ) : !hasData ? (
-        <p className="text-muted-foreground text-sm">
-          {t("admin.coachFeedback.empty")}
-        </p>
+        <EmptyState
+          variant="plain"
+          size="compact"
+          title={t("admin.coachFeedback.empty")}
+        />
       ) : (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full text-sm" data-slot="coach-feedback-table">
             <thead>
               <tr className="text-muted-foreground border-border border-b text-left text-xs tracking-wider uppercase">

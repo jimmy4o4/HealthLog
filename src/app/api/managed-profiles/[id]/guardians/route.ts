@@ -6,12 +6,8 @@ import {
   requireCookieAuth,
   requireFreshMfa,
 } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { prisma } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";
 import {
@@ -20,7 +16,10 @@ import {
 } from "@/lib/managed-profiles/guardian-list";
 import { ManagedProfileLifecycleError } from "@/lib/managed-profiles/lifecycle";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { GRANT_PARTY_SELECT } from "@/lib/sharing/grant-view";
+import {
+  GRANT_PARTY_SELECT,
+  INVITE_NO_ACCOUNT_CODE,
+} from "@/lib/sharing/grant-view";
 import { GrantError, inviteManagedProfileGuardian } from "@/lib/sharing/grants";
 import { inviteManagedProfileGuardianSchema } from "@/lib/validations/managed-profiles";
 
@@ -89,12 +88,12 @@ export const POST = apiHandler(
     if (!rateLimit.allowed) {
       return apiError("Too many invitations, try again later", 429);
     }
-    const { data: body, error: jsonError } = await safeJson(request, {
-      maxBytes: 8 * 1024,
-    });
-    if (jsonError) return jsonError;
-    const parsed = inviteManagedProfileGuardianSchema.safeParse(body);
-    if (!parsed.success) return returnAllZodIssues(parsed.error, 422);
+    const parsed = await parseJsonBody(
+      request,
+      inviteManagedProfileGuardianSchema,
+      { maxBytes: 8 * 1024 },
+    );
+    if (!parsed.ok) return parsed.error;
     const { id } = await params;
 
     const invitee = await prisma.user.findFirst({
@@ -106,16 +105,16 @@ export const POST = apiHandler(
       },
       select: GRANT_PARTY_SELECT,
     });
-    // No `errorCode`, deliberately, and the same for the 429 above. Rate-limit
-    // refusals carry none anywhere in this application, and the sibling
-    // invitation route (`POST /api/account/grants`) answers an unknown
-    // identifier with a bare 404 too. A code here would make one route in the
-    // family unlike both. The published contract says so, and says that a
-    // client resolves on `meta.errorCode` FIRST: this route's other 404 —
-    // "you are not a Guardian of that profile" — does carry one, and branching
-    // on the status would tell somebody to check a spelling when the real
-    // answer is that the profile is no longer theirs to administer.
-    if (!invitee) return apiError("No account with that name or e-mail", 404);
+    // The same code the sibling invitation route (`POST /api/account/grants`)
+    // answers an unknown identifier with. This route has a second 404 — "you
+    // are not a Guardian of that profile", `managed_profile.not_found` — and
+    // the two need different next steps, so each names itself and a client
+    // never has to tell them apart by status.
+    if (!invitee) {
+      return apiError("No account with that name or e-mail", 404, {
+        errorCode: INVITE_NO_ACCOUNT_CODE,
+      });
+    }
 
     try {
       const grant = await inviteManagedProfileGuardian({

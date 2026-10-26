@@ -1,5 +1,5 @@
 /**
- * v1.15.20 — unit tests for the shared 02:xx status-cron discovery.
+ * Unit tests for the shared 02:xx status-cron discovery.
  *
  * Pins the three gates the discovery applies:
  *   1. the operator assistant kill-switch (`insightStatus` flag),
@@ -9,8 +9,8 @@
  *   3. the pregenerate-candidate skip (a stale or missing comprehensive
  *      cache → the 04:30 pass owns the user; the 02:xx crons keep the
  *      fresh-cache accounts), applied only while `briefing` is on,
- * plus the mood-status queue registration in the worker source (the
- * v1.4.37 dead-queue class guard).
+ * plus the nightly status batch's declaration in the worker registry (the
+ * dead-queue class guard).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
@@ -25,6 +25,15 @@ vi.mock("@/lib/feature-flags", async () =>
 
 import { findStatusCronCandidates } from "../status-cron-candidates";
 import { PREGENERATE_STALE_MS } from "../insight-pregenerate";
+import { handleGeneralStatusGenerate } from "../reminder/insights-handlers";
+import { nightlyInsightPassOptions } from "../reminder/registrar-shared";
+import { allJobDefinitions } from "../registry";
+import {
+  groupNamed,
+  groupOf,
+  jobOf,
+  loadedHandler,
+} from "../registry/__tests__/registry-helpers";
 
 const NOW = new Date("2026-06-10T02:00:00.000Z");
 const STALE_AT = new Date(NOW.getTime() - PREGENERATE_STALE_MS - 60_000);
@@ -91,7 +100,10 @@ describe("findStatusCronCandidates — gates", () => {
     const { prisma, findMany } = makePrisma([userRow()]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await findStatusCronCandidates(prisma as any, NOW);
-    expect(findMany.mock.calls[0][0].where).toEqual({});
+    // Only the accounts pending deletion are left out.
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      deletionRequestedAt: null,
+    });
     expect(JSON.stringify(findMany.mock.calls[0][0])).not.toContain(
       "disableCoach",
     );
@@ -108,6 +120,7 @@ describe("findStatusCronCandidates — gates", () => {
     // The module key rides as a bound parameter, never spliced.
     expect(queryRaw.mock.calls[0].slice(1)).toContain("insights");
     expect(findMany.mock.calls[0][0].where).toEqual({
+      deletionRequestedAt: null,
       id: { notIn: ["opted-out-a", "opted-out-b"] },
     });
     expect(result).toEqual([{ id: "kept", locale: "de" }]);
@@ -175,44 +188,45 @@ describe("findStatusCronCandidates — gates", () => {
   });
 });
 
-describe("mood-status queue registration (dead-queue guard)", () => {
-  // v1.18.1 — the nightly status-ladder wiring moved out of the 2143-LOC
-  // reminder-worker boot file into the status registrar. The dead-queue guard
-  // follows the wiring there.
-  const workerSrc = fs.readFileSync(
-    path.resolve(__dirname, "../reminder/register-status.ts"),
-    "utf8",
-  );
+describe("the nightly status batch is the one status cron", () => {
+  const GENERAL_STATUS_QUEUE = "insights-general-status";
+  const RETIRED = [
+    "insights-blood-pressure-status",
+    "insights-weight-status",
+    "insights-pulse-status",
+    "insights-bmi-status",
+    "insights-mood-status",
+    "insights-medication-compliance-status",
+  ];
 
-  it("registers the queue in the allQueues createQueue loop", () => {
-    const match = workerSrc.match(/const allQueues\s*=\s*\[([\s\S]*?)\];/);
-    expect(match).not.toBeNull();
-    expect(match![1]).toMatch(/\bMOOD_STATUS_QUEUE\b/);
-  });
-
-  it("schedules the 02:30 cron with the nightly pass options (retries and expiry)", () => {
-    expect(workerSrc).toMatch(
-      /\[\s*MOOD_STATUS_QUEUE\s*,\s*MOOD_STATUS_CRON\s*,\s*nightlyInsightPassOptions\s*\]/,
+  it("registers and schedules the 02:00 batch with the nightly pass options", async () => {
+    expect(groupOf(GENERAL_STATUS_QUEUE).name).toBe("status");
+    const job = jobOf(GENERAL_STATUS_QUEUE);
+    expect(job.cron).toBe("0 2 * * *");
+    expect(job.scheduleOptions).toBe(nightlyInsightPassOptions);
+    expect(await loadedHandler(GENERAL_STATUS_QUEUE)).toBe(
+      handleGeneralStatusGenerate,
     );
-    expect(workerSrc).toMatch(/MOOD_STATUS_CRON\s*=\s*"30 2 \* \* \*"/);
   });
 
-  it("registers a createAndWork handler for the queue", () => {
-    expect(workerSrc).toMatch(/createAndWork[\s\S]{0,120}MOOD_STATUS_QUEUE/);
+  it("retires the six per-metric crons on an instance that still has them", () => {
+    expect([...(groupNamed("status").retired ?? [])].sort()).toEqual(
+      [...RETIRED].sort(),
+    );
+    const live = allJobDefinitions().map((job) => job.queue);
+    for (const name of RETIRED) expect(live).not.toContain(name);
   });
 
-  it("drives all seven status crons through the shared discovery", () => {
+  it("drives the batch through the shared discovery", () => {
     const statusSrc = fs.readFileSync(
       path.resolve(__dirname, "../reminder/insights-handlers.ts"),
       "utf8",
     );
-    expect(statusSrc).toMatch(/findStatusCronCandidates\(prisma\)/);
-    // The old iterate-every-user discovery must be gone from the status
-    // handlers (the WHOOP/data-backup cohort reads keep their own scans).
     const statusBlock = statusSrc.slice(
-      statusSrc.indexOf("async function runStatusCronGenerate"),
+      statusSrc.indexOf("async function runStatusBatchCron"),
       statusSrc.indexOf("async function handleInsightPregenerateJob"),
     );
+    expect(statusBlock).toMatch(/findStatusCronCandidates\(prisma\)/);
     expect(statusBlock).not.toMatch(/prisma\.user\.findMany/);
   });
 });

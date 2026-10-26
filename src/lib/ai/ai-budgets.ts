@@ -76,7 +76,8 @@ export const AI_BUDGETS = {
    * per-user `aiResponseTimeoutSeconds` setting still overrides this default
    * for operators on even slower backends; this only lifts the floor for
    * accounts that never set it. The worker cap in `insight-pregenerate.ts`
-   * derives from this value plus fixed headroom, so it tracks automatically.
+   * derives from this value times `COMPREHENSIVE_MODEL_CALLS` plus fixed
+   * headroom, so it tracks automatically.
    */
   comprehensive: { temperature: 0.3, timeoutMs: 180_000 },
 
@@ -186,17 +187,18 @@ export const AI_BUDGETS = {
   selfContext: { temperature: 0.4 },
 
   /**
-   * v1.18.9 — Lab-OCR structured extraction. ONE vision call transcribes a
-   * photo / PDF of a paper lab report into a JSON array of analyte rows
-   * (analyte + value/valueText + unit + reference range + date + per-field
-   * confidence). A full panel is a dozen-plus rows of compact JSON; 8000
-   * tokens leaves room for GPT-5 reasoning plus the dense report envelope.
-   * Temperature 0 — the task
-   * is faithful transcription, not generation, so the lowest setting minimises
-   * invented values. Vision input tokens are expensive, so the route also
-   * gates with a tight 6/hour rate bucket + reserveBudget + upload-size cap.
+   * v1.18.9 — Lab-OCR structured extraction, PER READ. A report is read a page
+   * at a time (`src/lib/labs/ocr-run.ts`), so this ceiling covers one page's
+   * JSON, not the whole document: a dense page is 30-50 rows at roughly 90
+   * tokens each, and 8000 leaves room for that. It is the answer budget only;
+   * the call carries an explicit reasoning off, and a model that cannot stop
+   * thinking gets its minimum thinking budget added on top by its client.
+   * One call used to carry the whole report under this ceiling, and a long
+   * one stopped mid-row. Temperature 0 — faithful transcription, not
+   * generation. `timeoutMs` 120 s: one page of JSON on a slower model runs
+   * past the shared 60 s default; the person's own setting still wins.
    */
-  ocrExtract: { temperature: 0, maxTokens: 8000 },
+  ocrExtract: { temperature: 0, maxTokens: 8000, timeoutMs: 120_000 },
 
   /**
    * v1.43 — a supplement label photo read into its ingredients. One vision
@@ -206,14 +208,12 @@ export const AI_BUDGETS = {
   supplementLabel: { temperature: 0, maxTokens: 4000 },
 
   /**
-   * v1.20.1 — Lab-OCR text-mode structuring. The browser OCR's the image
-   * (tesseract.js) and POSTs only the extracted TEXT, so the provider does a
-   * plain text→JSON structuring pass — no expensive vision input tokens. The
-   * output contract is identical (the same dozen-plus analyte rows), but the
-   * spend ceiling is far lower than the vision path's 4000, so the day-budget
-   * reservation should reflect that rather than over-charging a text call at
-   * the vision rate. 1500 tokens comfortably covers a dense report's JSON
-   * envelope. Temperature 0 — faithful structuring, not generation.
+   * v1.20.1 — Lab-OCR text-mode reservation. The browser OCR's the image
+   * (tesseract.js) and POSTs only the extracted TEXT, so no vision input
+   * tokens are spent. This is what the route reserves against the day's
+   * budget when it queues the read; the structuring calls themselves run
+   * under `ocrExtract`'s per-read ceiling, and the run settles what the
+   * provider reported it spent.
    */
   ocrExtractText: { temperature: 0, maxTokens: 1500 },
 
@@ -249,6 +249,32 @@ export const AI_BUDGETS = {
    */
   documentChat: { temperature: 0.3, maxTokens: 600 },
 } as const satisfies Record<string, AiBudget>;
+
+/**
+ * The most model calls one comprehensive generation makes one after another:
+ * the generation itself, the JSON retry when its reply does not parse, the
+ * grounding retry when the briefing quotes a figure the server never
+ * computed and the repair when the outbound screen withholds the payload,
+ * plus the one repeat the Local and gateway clients send when a thinking
+ * model answered with reasoning alone. Every one of them has the person's
+ * response timeout (or `comprehensive.timeoutMs`) to itself, so whatever
+ * waits on the whole generation from outside (the warm's abort in
+ * `insight-pregenerate.ts`, the Insights page's poll for the warm) waits for
+ * this many (#1274). `ai-call-timeout-guard.test.ts` holds the generator's
+ * stages to this count.
+ */
+export const COMPREHENSIVE_MODEL_CALLS = 5;
+
+/**
+ * The most model calls one status run (`runStatusCompletion`: a status card,
+ * the batched assessment, a derived score, a period narrative, a workout
+ * line, a Coach memory pass) makes one after another: the call itself, plus
+ * the one repeat the Local and gateway clients send when a thinking model
+ * answered with reasoning alone. Each has the person's response timeout to
+ * itself, so the run's outer bound, the jobs around it and the page that
+ * polls for its text all wait for this many (#1274).
+ */
+export const STATUS_MODEL_CALLS = 2;
 
 /** Bounds + default for the comprehensive / briefing output-token ceiling. */
 const INSIGHTS_MAX_TOKENS_DEFAULT = 2500;

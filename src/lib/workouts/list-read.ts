@@ -18,10 +18,18 @@ import { z } from "zod/v4";
 
 import { prisma } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";
-import { pickCanonicalWorkoutRows } from "@/lib/measurements/pick-canonical-workout-rows";
+import {
+  canonicalWorkoutsInRange,
+  readWorkoutsAroundRange,
+  rowsInRange,
+} from "@/lib/workouts/canonical-read";
 import { cached, caches } from "@/lib/cache/server-cache";
 import { workoutSportTypeEnum } from "@/lib/validations/workout";
 import { isoDateTime } from "@/lib/validations/datetime";
+import {
+  readTrainingLoad,
+  type TrainingLoad,
+} from "@/lib/insights/training-load";
 
 function emptyQueryValueToUndefined(value: unknown): unknown {
   if (value == null) return undefined;
@@ -113,6 +121,12 @@ export interface WorkoutsResult {
     offset: number;
     droppedDuplicates: number;
   };
+  /**
+   * v1.44 — fitness, fatigue and form from the stored training impulse.
+   * Account-wide (no filter applies) and on the first page only, so a client
+   * paging through history does not recompute it per page.
+   */
+  trainingLoad?: TrainingLoad;
 }
 
 export async function buildWorkoutsProjection(
@@ -121,62 +135,63 @@ export async function buildWorkoutsProjection(
 ): Promise<WorkoutsProjection> {
   const { since, until, sportType } = params;
 
-  const where: Record<string, unknown> = { userId };
-  if (since || until) {
-    const range: Record<string, Date> = {};
-    if (since) {
-      const d = new Date(since);
-      if (!Number.isNaN(d.getTime())) range.gte = d;
-    }
-    if (until) {
-      const d = new Date(until);
-      if (!Number.isNaN(d.getTime())) range.lte = d;
-    }
-    if (Object.keys(range).length > 0) {
-      where.startedAt = range;
-    }
-  }
-  if (sportType) {
-    where.sportType = sportType;
-  }
+  const parse = (value: string | null): Date | null => {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const range = {
+    from: parse(since),
+    to: parse(until),
+    inclusiveEnd: true,
+  };
 
   // Independent reads — the sourcePriorityJson lookup doesn't depend on the
   // row read, so run them concurrently rather than paying two sequential
-  // round trips.
-  const [rows, userRow] = await Promise.all([
-    prisma.workout.findMany({
-      where,
-      orderBy: [{ startedAt: "desc" }, { id: "asc" }],
-      select: {
-        id: true,
-        source: true,
-        externalId: true,
-        sportType: true,
-        startedAt: true,
-        endedAt: true,
-        durationSec: true,
-        totalDistanceM: true,
-        totalEnergyKcal: true,
-        avgHeartRate: true,
-        maxHeartRate: true,
-        metadata: true,
-        createdAt: true,
-        route: { select: { id: true } },
-        samples: { select: { sampleCount: true } },
-      },
-    }),
+  // round trips. The rows come through the windowed reader: a twin just past
+  // `until`, or a cluster that began just before `since`, decides which row
+  // of the range is canonical exactly as it does for the detail route.
+  const [userRow, around] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
       select: { sourcePriorityJson: true },
     }),
+    readWorkoutsAroundRange(range, (bounds) =>
+      prisma.workout.findMany({
+        where: {
+          userId,
+          startedAt: bounds,
+          ...(sportType ? { sportType } : {}),
+        },
+        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          source: true,
+          externalId: true,
+          sportType: true,
+          startedAt: true,
+          endedAt: true,
+          durationSec: true,
+          totalDistanceM: true,
+          totalEnergyKcal: true,
+          avgHeartRate: true,
+          maxHeartRate: true,
+          metadata: true,
+          createdAt: true,
+          route: { select: { id: true } },
+          samples: { select: { sampleCount: true } },
+        },
+      }),
+    ),
   ]);
 
-  const canonical = pickCanonicalWorkoutRows(
-    rows,
+  const canonical: CanonicalWorkoutRow[] = canonicalWorkoutsInRange(
+    around,
     userRow?.sourcePriorityJson ?? null,
   );
+  const rawCount = rowsInRange(around).length;
 
-  // `pickCanonicalWorkoutRows` re-sorts its output to `startedAt ASC` (its
+  // The canonical pick comes back in `startedAt ASC` order (its
   // documented contract for the rollup callers). This surface is a
   // most-recent-first list, so the DB `orderBy startedAt desc` must be
   // re-established AFTER the pick — otherwise `offset`/`limit` slice the
@@ -187,7 +202,7 @@ export async function buildWorkoutsProjection(
     return a.id.localeCompare(b.id);
   });
 
-  return { canonical, rawCount: rows.length };
+  return { canonical, rawCount };
 }
 
 export function sliceWorkoutsProjection(
@@ -257,5 +272,7 @@ export async function readWorkoutsListCached(
     annotate,
   );
 
-  return sliceWorkoutsProjection(projection, params.limit, params.offset);
+  const page = sliceWorkoutsProjection(projection, params.limit, params.offset);
+  if (params.offset !== 0) return page;
+  return { ...page, trainingLoad: await readTrainingLoad(userId) };
 }

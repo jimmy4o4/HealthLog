@@ -12,6 +12,12 @@
  * same suite: every dependency bump failed on a launch error that said nothing
  * about the bump. One workflow was fixed, one class was not.
  *
+ * Since v1.46 the suite also carries the `browser` project
+ * (`*.browser.test.tsx`, see `tests/browser/`), which launches the same
+ * headless shell through Vitest's Playwright provider for every interaction
+ * test. A slice without the browser now fails on many files rather than one;
+ * the install it needs is the same, so this guard covers both.
+ *
  * The sweep is textual and file-scoped, which is its limit: a workflow with two
  * jobs, only one of which installs the browser, satisfies it. It catches the
  * thing that actually went wrong — a whole workflow running the suite with no
@@ -23,8 +29,14 @@ import { join } from "node:path";
 
 const WORKFLOWS = join(process.cwd(), ".github", "workflows");
 
-/** `run: pnpm test` — the whole unit suite, geometry check included. */
-const RUNS_UNIT_SUITE = /^\s*(?:-\s*)?run:\s*pnpm test\s*$/m;
+/**
+ * `run: pnpm test`, or a direct `vitest run` of the unit config with flags
+ * only (the sharded CI job, the nightly shuffled run): the whole unit suite
+ * or a slice of it, geometry check included. A run that names a path or
+ * another `--config` is a different, narrower suite and does not count.
+ */
+const RUNS_UNIT_SUITE =
+  /^\s*(?:-\s*)?run:\s*pnpm test\s*$|pnpm exec vitest run(?![^\n]*--config)(?=\s*$|\s+--)/m;
 const INSTALLS_BROWSER = /playwright install --only-shell chromium/;
 
 describe("the browser the unit suite measures with", () => {
@@ -52,8 +64,8 @@ describe("the browser the unit suite measures with", () => {
     expect(
       missing,
       "a workflow runs the unit suite without installing the headless " +
-        "Chromium the hero-geometry check measures with — that check refuses " +
-        "to skip under CI, so the job fails on a launch error instead",
+        "Chromium the hero-geometry check and the browser project launch — " +
+        "neither skips under CI, so the job fails on a launch error instead",
     ).toEqual([]);
   });
 });

@@ -9,6 +9,9 @@ import type {
   ScorePillarResult,
 } from "@/lib/analytics/score/types";
 import { SCORE_VERSION } from "@/lib/analytics/score/types";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 // The "generated" freshness line reads the profile timezone via `useAuth`; stub
 // it so the SSR render does not reach for a QueryClient the test omits.
@@ -196,7 +199,7 @@ describe("<HeroStrip>", () => {
       /data-slot="insights-hero-strip-greeting"[^>]*class="([^"]*)"/,
     );
     expect(greeting).not.toBeNull();
-    // App H1 weight is bold (UI-STANDARDS §5) — never font-semibold.
+    // App H1 weight is bold (ui-standards.md §5) — never font-semibold.
     expect(greeting![1]).toContain("font-bold");
     expect(greeting![1]).not.toContain("font-semibold");
     // No off-scale arbitrary type sizes (§5) — round to the neighbouring step.
@@ -299,13 +302,39 @@ describe("<HeroStrip>", () => {
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
       const html = render(
         <HeroStrip
-          briefing={null}
+          briefing={sampleBriefing}
           updatedAt={fiveMinutesAgo}
           now={morningLocal}
         />,
       );
       expect(html).toMatch(/data-slot="insights-hero-strip-generated"/);
       expect(html).toContain("Updated today");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The caption dates the subtitle. The read withholds a briefing written on
+   * an earlier day while the cache stamp still reads today (a warm that kept
+   * the old text re-stamps the row), so with no briefing the hero showed
+   * "Updated today" under the generic fallback sentence and the card below
+   * it said there was no briefing.
+   */
+  it("withholds the freshness caption when there is no briefing", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(morningLocal);
+    try {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+      const html = render(
+        <HeroStrip
+          briefing={null}
+          updatedAt={fiveMinutesAgo}
+          now={morningLocal}
+        />,
+      );
+      expect(html).not.toContain('data-slot="insights-hero-strip-generated"');
+      expect(html).not.toContain("Updated today");
     } finally {
       vi.useRealTimers();
     }
@@ -334,7 +363,7 @@ describe("<HeroStrip>", () => {
     expect(html).not.toContain('data-slot="insights-hero-strip-action-coach"');
   });
 
-  // v1.4.25 W3 — the regenerate button moved from the hero action row
+  // v1.4.25 — the regenerate button moved from the hero action row
   // to the dedicated `<InsightsTabStrip>` component. The hero strip no
   // longer renders the rerun slot under any prop combination.
   it("does NOT render a regenerate button in the hero action row", () => {
@@ -509,7 +538,7 @@ describe("<HeroStrip>", () => {
   });
 
   it("does not render any Ask-the-Coach affordance in the hero band", () => {
-    // v1.4.27 F8 — the inline HSC Ask-the-Coach button was retired.
+    // v1.4.27 — the inline HSC Ask-the-Coach button was retired.
     // v1.18.7 — the hero action-row coach button was removed too; the
     // Coach is the bottom-right drawer, not a hero affordance.
     const html = render(<HeroStrip briefing={null} now={morningLocal} />);

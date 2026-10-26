@@ -1,9 +1,10 @@
 # HealthLog UI Guidelines
 
-> Single source of truth for visual & interaction patterns in the HealthLog
-> PWA. Consult this document before adding a new component, page, or
-> setting. If a pattern below doesn't fit your case, propose an addition
-> here in the same PR.
+> Visual & interaction patterns in the HealthLog PWA. The binding rules
+> for card anatomy, spacing, text colour, tokens and primitives live in
+> [`contributing/ui-standards.md`](./contributing/ui-standards.md); where
+> this document disagrees with them, the standards win. If a pattern
+> below doesn't fit your case, propose an addition in the same PR.
 
 Last updated: 2026-05-08 (v1.4 cycle)
 
@@ -132,7 +133,8 @@ helper text explaining why. Silent disabled buttons frustrate users.
 
 ### 2.2 Inputs and forms
 
-We use `react-hook-form` + Zod schemas from `src/lib/validations/`.
+Forms keep a controlled draft in component state and validate it with the
+Zod schemas from `src/lib/validations/`; the server's schema is the authority.
 Wrap inputs in `<label>` (visible) plus `aria-describedby` for helper text.
 
 - **Text / number / email**: `<Input>`. Always set `autocomplete`. See §4.4.
@@ -309,7 +311,7 @@ Tiles at the top of the dashboard live in a **single row**. Width caps
 at the chart's width directly below. **Never** wrap to a second row.
 
 If the user enables more tiles than fit, the dashboard surfaces a banner
-inviting them to deactivate or reorder via Settings → Dashboard. The
+inviting them to deactivate or reorder via Settings → Arrangement. The
 layout editor in Settings shows a live preview of the constraint and
 flags overflow before save.
 
@@ -425,8 +427,7 @@ control. Behavior:
 
 ### 4.6 Server actions and mutations
 
-We use `react-hook-form` + TanStack Query mutations, never raw fetch
-calls in components. Every mutation:
+Mutations go through TanStack Query, never raw fetch calls in components. Every mutation:
 
 1. Optimistically updates the cache with a rollback handler.
 2. Toast on success ("Saved" — translated) and on error (with retry).

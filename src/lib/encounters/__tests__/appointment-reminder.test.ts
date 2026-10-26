@@ -18,6 +18,8 @@ import { describe, expect, it } from "vitest";
 import {
   appointmentNextDueAfterFiring,
   appointmentNotifyHour,
+  appointmentReminderAddress,
+  appointmentReminderVisitPath,
 } from "@/lib/encounters/appointment-reminder";
 
 const TZ = "Europe/Berlin";
@@ -82,5 +84,64 @@ describe("the hour the nudge fires", () => {
 
   it("follows the record's zone, so the same instant differs by zone", () => {
     expect(appointmentNotifyHour(APPOINTMENT, "UTC")).toBe(7);
+  });
+});
+
+describe("the address an appointment reminder names", () => {
+  const reminder = (practitionerUserId: string) => ({
+    userId: "u1",
+    origin: "ENCOUNTER",
+    location: null,
+    encounters: [
+      {
+        userId: "u1",
+        practitioner: {
+          userId: practitionerUserId,
+          location: "Hauptstraße 1",
+          locationEncrypted: null,
+        },
+      },
+    ],
+  });
+
+  it("is the practice of the visit's practitioner, deleted from the address book or not", () => {
+    // The select carries no `deletedAt`: the booked visit still shows the
+    // practitioner, so the reminder names the same practice.
+    expect(appointmentReminderAddress(reminder("u1"))).toBe("Hauptstraße 1");
+  });
+
+  it("counter-check: another account's practitioner names nothing", () => {
+    expect(appointmentReminderAddress(reminder("u2"))).toBeNull();
+    expect(
+      appointmentReminderAddress({ ...reminder("u1"), encounters: [] }),
+    ).toBeNull();
+  });
+});
+
+describe("where an appointment's push opens", () => {
+  const appointment = (visitUserId: string) => ({
+    userId: "u1",
+    origin: "ENCOUNTER",
+    encounters: [{ id: "visit-1", userId: visitUserId }],
+  });
+
+  it("opens the visit, on the visits tab", () => {
+    expect(appointmentReminderVisitPath(appointment("u1"))).toBe(
+      "/checkups?visit=visit-1",
+    );
+  });
+
+  it("counter-check: a checkup keeps the event's default, the checkups list", () => {
+    expect(
+      appointmentReminderVisitPath({
+        ...appointment("u1"),
+        origin: "VORSORGE",
+      }),
+    ).toBeNull();
+    expect(
+      appointmentReminderVisitPath({ ...appointment("u1"), encounters: [] }),
+    ).toBeNull();
+    // Another account's visit is never a tap target.
+    expect(appointmentReminderVisitPath(appointment("u2"))).toBeNull();
   });
 });

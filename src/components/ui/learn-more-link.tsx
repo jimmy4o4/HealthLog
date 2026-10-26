@@ -5,6 +5,7 @@ import { ExternalLink } from "lucide-react";
 
 import { learnLinkForMetric, learnUrl } from "@/lib/learn-links";
 import { useTranslations } from "@/lib/i18n/context";
+import { InlineAction } from "@/components/ui/inline-action";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,25 +41,23 @@ export function LearnMoreLink({ concept, className }: LearnMoreLinkProps) {
   const label = t("common.learnMore");
 
   return (
-    <a
-      href={guide.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      data-slot="learn-more-link"
-      aria-label={`${label}: ${guide.title}`}
-      className={cn(
-        "text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-2 transition-colors hover:underline",
-        className,
-      )}
-    >
-      {label}
-      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
-    </a>
+    <InlineAction asChild tone="muted" className={className}>
+      <a
+        href={guide.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-slot="learn-more-link"
+        aria-label={`${label}: ${guide.title}`}
+      >
+        {label}
+        <ExternalLink className="size-3" aria-hidden="true" />
+      </a>
+    </InlineAction>
   );
 }
 
 /**
- * v1.22 (W5) — inline, catalog-whitelisted Learn anchor for AI prose.
+ * v1.22 — inline, catalog-whitelisted Learn anchor for AI prose.
  *
  * Where `LearnMoreLink` resolves a *concept* to its guide for a deterministic
  * UI surface, this variant linkifies a `/learn/<slug>` reference that already

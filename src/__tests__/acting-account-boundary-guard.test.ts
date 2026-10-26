@@ -14,10 +14,18 @@
  * those.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import {
+  API_HANDLER,
+  authGuardModules,
+  guardSourceOf,
+} from "./helpers/auth-guards";
+import {
+  readSource,
+  readSourceText,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -30,7 +38,7 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 function filesMatching(re: RegExp): string[] {
@@ -77,8 +85,16 @@ describe("the acting-account carrier is read in one place", () => {
     // Reads it. The one statement of "what does this request say it is acting
     // as", for both transports and for every caller that has to ask.
     "lib/auth/acting-carrier.ts",
-    // The resolver. The only thing that acts on the value.
-    "lib/api-handler.ts",
+    // The resolver. The only thing that acts on the value: the guard module
+    // that reads the carrier off the auth context.
+    "lib/auth/guards/acting.ts",
+    // Declares the field on the auth context the resolvers pass around, and
+    // explains it in prose. Holds no logic that could read it.
+    "lib/auth/guards/context.ts",
+    // Names the column in prose only: the record resolver's note on why the
+    // fence and the carrier read one session row. It reads the carrier
+    // through `acting.ts`.
+    "lib/auth/guards/record.ts",
     // v1.36.0 — the only thing that WRITES it: the switch endpoint sets it
     // through here, ending a grant clears it through here. The routes
     // themselves call these two functions and never name the column, which is
@@ -177,7 +193,7 @@ describe("the cookie-only helpers cannot see the acting account", () => {
   const COOKIE_ONLY = ["requireAdmin", "requireCookieAuth", "requireFreshMfa"];
 
   it.each(COOKIE_ONLY)("%s resolves the actor and nothing else", (name) => {
-    const body = functionBody(read("lib/api-handler.ts"), name);
+    const body = functionBody(guardSourceOf(name), name);
 
     // Non-zero proof, twice over: the slice found a function, and the slice is
     // the function it claims to be. A renamed helper must fail here rather
@@ -191,7 +207,7 @@ describe("the cookie-only helpers cannot see the acting account", () => {
   });
 
   it("substitutes a data-scope user in exactly two functions", () => {
-    const src = read("lib/api-handler.ts");
+    const src = guardSourceOf("requireRecordAuth", ["requireGuardianAuth"]);
     const record = functionBody(src, "requireRecordAuth");
     expect(record).toContain("readActingCarrier");
 
@@ -207,8 +223,22 @@ describe("the cookie-only helpers cannot see the acting account", () => {
     // `readActingCarrier` is what turns a request into "acting as somebody
     // else". Three callers: the bare path, which refuses on it, and the two
     // record paths, which act on it. A fourth would be a mode nobody declared.
-    const callers = (src.match(/await readActingCarrier\(/g) ?? []).length;
+    // Counted over the whole auth layer, the wrapper included, because the
+    // bare path lives in another guard module than the record paths.
+    const callers = (
+      [API_HANDLER, ...authGuardModules().map(([rel]) => rel)]
+        .map((rel) => read(rel))
+        .join("\n")
+        .match(/await readActingCarrier\(/g) ?? []
+    ).length;
     expect(callers).toBe(3);
+    expect(
+      (
+        functionBody(guardSourceOf("requireAuth"), "requireAuth").match(
+          /await readActingCarrier\(/g,
+        ) ?? []
+      ).length,
+    ).toBe(1);
   });
 });
 
@@ -292,7 +322,7 @@ describe("ending a grant and clearing the switch are one act", () => {
 
   it("runs the transition and the cleanup in one transaction", () => {
     const body = privateFunctionBody(
-      read("lib/sharing/grants.ts"),
+      readSource("src/lib/sharing/grants.ts", "endAndClear"),
       "endAndClear",
     );
     // Non-zero proof: a renamed helper fails here rather than asserting
@@ -309,7 +339,7 @@ describe("ending a grant and clearing the switch are one act", () => {
     // claim's own transaction (it takes `tx`), so the guard here is that the
     // cleanup is part of the same function as the ending.
     const body = functionBody(
-      read("lib/sharing/grants.ts"),
+      readSource("src/lib/sharing/grants.ts", "settleHandoverGuardianGrant"),
       "settleHandoverGuardianGrant",
     );
     expect(body.length).toBeGreaterThan(0);

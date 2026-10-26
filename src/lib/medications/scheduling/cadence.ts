@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W19e — pure cadence helpers for the medication detail page.
+ * v1.4.25 — pure cadence helpers for the medication detail page.
  *
  * Reads existing `MedicationSchedule` rows (`windowStart`, `windowEnd`,
  * `daysOfWeek` encoded via `serializeScheduleRecurrence`) plus the
@@ -16,7 +16,7 @@
  * the API JSON that drives the Compliance chips. Sharing one pure
  * module keeps the two surfaces from drifting.
  *
- * v1.4.25 W21 Fix-O — the local-day boundary helpers accept an
+ * v1.4.25 — the local-day boundary helpers accept an
  * optional IANA `timeZone` argument (`Europe/Berlin`, `Asia/Tokyo`,
  * …). When supplied, every day/week boundary and every `HH:mm`
  * window-application is interpreted in the user's zone via
@@ -84,7 +84,7 @@ export interface ScheduleLike {
   /** Encoded recurrence string per `serializeScheduleRecurrence`. */
   daysOfWeek: string | null;
   /**
-   * v1.7.0 SB-SCHED-2 — canonical-engine fields. As of v1.7.3 (B15),
+   * v1.7.0 — canonical-engine fields. As of v1.7.3 (B15),
    * `expandScheduleSlots` delegates the expected-slot grid to the
    * canonical recurrence engine (`occurrencesBetween`) for EVERY schedule
    * shape whenever the caller supplies a `CadenceEngineContext` — these
@@ -119,7 +119,7 @@ export interface ScheduleLike {
 }
 
 /**
- * v1.7.0 SB-SCHED-2 — medication-level context the canonical engine
+ * v1.7.0 — medication-level context the canonical engine
  * needs to expand a schedule's expected slots. Passed once per
  * medication into the cadence helpers; threaded down to
  * `expandScheduleSlots`. When omitted, every schedule falls back to the
@@ -128,6 +128,8 @@ export interface ScheduleLike {
 export interface CadenceEngineContext {
   startsOn: Date | null;
   endsOn: Date | null;
+  /** #1280 — when "End course" ended the latest course; null: whole day. */
+  endedAt: Date | null;
   oneShot: boolean;
   createdAt: Date;
   /** Latest non-skipped intake — only read by rolling cadences. */
@@ -150,18 +152,17 @@ export interface CadenceEngineContext {
 }
 
 /** v1.40 (#1024) — the span a timeline expands over (see `courses`). */
-function mintWindow(engineCtx: CadenceEngineContext): {
-  startsOn: Date | null;
-  endsOn: Date | null;
-} {
+function mintWindow(engineCtx: CadenceEngineContext) {
   const courses = engineCtx.courses;
+  const endedAt = engineCtx.endedAt ?? null;
   if (!courses || courses.length < 2) {
-    return { startsOn: engineCtx.startsOn, endsOn: engineCtx.endsOn };
+    return { startsOn: engineCtx.startsOn, endsOn: engineCtx.endsOn, endedAt };
   }
   const sorted = sortCourses(courses);
   return {
     startsOn: sorted[0].startsOn,
     endsOn: sorted[sorted.length - 1].endsOn,
+    endedAt,
   };
 }
 
@@ -169,7 +170,7 @@ function mintWindow(engineCtx: CadenceEngineContext): {
 function onCourseDay(engineCtx: CadenceEngineContext, at: Date): boolean {
   const courses = engineCtx.courses;
   if (!courses || courses.length < 2) return true;
-  return isInsideCourses(userDayKey(at, engineCtx.timeZone), courses);
+  return isInsideCourses(userDayKey(at, engineCtx.timeZone), courses, at);
 }
 
 /** Build a `CanonicalSchedule` from a `ScheduleLike` + its index. */
@@ -201,8 +202,7 @@ function toRecurrenceContext(
   return {
     medication: {
       id: "cadence-med",
-      startsOn: window.startsOn,
-      endsOn: window.endsOn,
+      ...window,
       oneShot: engineCtx.oneShot,
       createdAt: engineCtx.createdAt,
     },
@@ -403,7 +403,7 @@ export function expandScheduleSlots(
 ): ExpectedDose[] {
   if (to <= from) return [];
 
-  // v1.7.3 B15 — canonical-engine delegation. When the caller supplies a
+  // v1.7.3 — canonical-engine delegation. When the caller supplies a
   // medication context, expand the expected-slot grid through the
   // canonical engine for EVERY schedule shape (rrule / rolling / one-shot
   // / PRN / cyclic AND plain legacy `daysOfWeek`). The engine's
@@ -500,7 +500,7 @@ export function expandScheduleSlots(
       }
     }
 
-    // v1.7.3 B15 — defence-in-depth for the context-less legacy path. A
+    // v1.7.3 — defence-in-depth for the context-less legacy path. A
     // schedule carrying multiple `timesOfDay` must emit one slot per time
     // per qualifying day, mirroring the engine's `expandLegacy`. Pre-fix
     // this walker only ever emitted a single `windowStart..windowEnd`
@@ -908,16 +908,14 @@ function missedFromLedger(
   const window = mintWindow(engineCtx);
   const medication: BandMinterMedication = {
     id: "missed-tally",
-    startsOn: window.startsOn,
-    endsOn: window.endsOn,
+    ...window,
     oneShot: engineCtx.oneShot,
     createdAt: engineCtx.createdAt,
   };
   const recurrenceCtx: RecurrenceContext = {
     medication: {
       id: "missed-tally",
-      startsOn: window.startsOn,
-      endsOn: window.endsOn,
+      ...window,
       oneShot: engineCtx.oneShot,
       createdAt: engineCtx.createdAt,
     },

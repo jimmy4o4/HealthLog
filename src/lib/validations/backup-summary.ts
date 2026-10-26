@@ -59,6 +59,8 @@ export interface BackupSummary {
   documentConditionLinks: number;
   /** Facts staged out of a document, with their review decision. */
   extractedFacts: number;
+  /** Import source keys of documents the person deleted. */
+  documentImportKeys: number;
   /** 1 when the account's durable self-context rides the file, 0 otherwise. */
   healthProfile: number;
   /** Effective-dated structured health-profile revisions. */
@@ -75,15 +77,15 @@ export interface BackupSummary {
   healthScoreRecords: number;
   /** 1 when the record's setup answers ride the file, 0 otherwise. */
   onboardingRecords: number;
-  /** v1.37.19 (A6-8) — the visit address book. */
+  /** v1.37.19 — the visit address book. */
   practitioners: number;
-  /** v1.37.19 (A6-8) — doctor visits, planned and past. */
+  /** v1.37.19 — doctor visits, planned and past. */
   encounters: number;
-  /** v1.37.19 (A6-8) — the three encounter link tables, summed. */
+  /** v1.37.19 — the three encounter link tables, summed. */
   encounterLinks: number;
-  /** v1.37.19 (A6-8) — immunization log entries. */
+  /** v1.37.19 — immunization log entries. */
   vaccinations: number;
-  /** v1.37.19 (A6-8) — vaccination↔document links. */
+  /** v1.37.19 — vaccination↔document links. */
   vaccinationLinks: number;
   /** v1.43 — the five relation link tables, summed. */
   relationLinks: number;
@@ -159,6 +161,7 @@ export function summarizeBackup(payload: BackupPayload): BackupSummary {
     // did for visits.
     documentConditionLinks: payload.documentConditionLinks.length,
     extractedFacts: payload.extractedFacts.length,
+    documentImportKeys: payload.documentImportKeys.length,
     healthProfile: payload.healthProfile ? 1 : 0,
     healthProfileFactRevisions: payload.healthProfileFacts.length,
     customMetrics: payload.customMetrics.length,
@@ -170,7 +173,7 @@ export function summarizeBackup(payload: BackupPayload): BackupSummary {
     intradayProfiles: payload.intradayProfiles.length,
     healthScoreRecords: payload.healthScoreRecords.length,
     onboardingRecords: payload.onboardingRecord ? 1 : 0,
-    // v1.37.19 (A6-8) — the sections restored since 08-01 were written and
+    // v1.37.19 — the sections restored since 08-01 were written and
     // restored but absent from this report, so the admin's "what did I just
     // restore" answer silently under-counted a file that carried visits or
     // an Impfpass.

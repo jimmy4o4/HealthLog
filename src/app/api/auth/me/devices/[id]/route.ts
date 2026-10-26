@@ -1,7 +1,7 @@
 /**
  * DELETE /api/auth/me/devices/[id]
  *
- * v1.4.23 W4 F7b — revoke a single device.
+ * v1.4.23 — revoke a single device.
  *
  * Behaviour:
  *   1. Confirms the device row belongs to the current user (ownership
@@ -17,7 +17,7 @@
  * keep using /api/auth/logout. The two surfaces address different
  * blast radii.
  *
- * v1.4.23 W6 — the four-write cascade now runs through the shared
+ * v1.4.23 — the four-write cascade now runs through the shared
  * `revokeDeviceCascade` helper so the writes commit atomically inside
  * a single `prisma.$transaction`. Previously a partial failure could
  * leave the device row alive with all its tokens revoked.
@@ -25,12 +25,8 @@
 import { NextRequest } from "next/server";
 import { z } from "zod/v4";
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma } from "@/lib/db";
@@ -56,14 +52,10 @@ export const PATCH = apiHandler(
     const { user } = await requireAuth();
     const { id } = await context.params;
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, devicePatchSchema, {
       maxBytes: 64 * 1024,
     });
-    if (jsonError) return jsonError;
-    const parsed = devicePatchSchema.safeParse(body);
-    if (!parsed.success) {
-      return returnAllZodIssues(parsed.error, 422);
-    }
+    if (!parsed.ok) return parsed.error;
 
     // Ownership boundary — scope the update by userId so a cross-user id
     // can't be patched, and 404 rather than leak existence.

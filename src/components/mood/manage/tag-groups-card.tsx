@@ -81,6 +81,7 @@ import {
   type ManageCatalog,
   type MoodTagLayoutResolved,
 } from "./use-mood-tag-manage";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * v1.17 — group management card for `/settings/mood`. Lists every
@@ -149,7 +150,7 @@ export function TagGroupsCard({ catalog }: TagGroupsCardProps) {
       reorderGroups(current, nextOrder),
     );
     try {
-      // v1.32.22 (R5b) — echo the base token this order was based on. The two
+      // v1.32.22 — echo the base token this order was based on. The two
       // cards on this page write DIFFERENT fields of the same blob (group order
       // vs tag placements); a stale merge would resurrect the other card's
       // overwritten field, which the token now 409s instead. Seed the token
@@ -223,7 +224,7 @@ export function TagGroupsCard({ catalog }: TagGroupsCardProps) {
     // `relative` anchors the sr-only drag-hint paragraph: `sr-only` is
     // absolutely positioned, and without a positioned ancestor its 1px box
     // lands below the list in DOCUMENT coordinates and makes the document
-    // itself scrollable (second scrollbar — UI-STANDARDS §9 one-scroll-floor).
+    // itself scrollable (second scrollbar — ui-standards.md §9 one-scroll-floor).
     <div className="relative space-y-3" data-slot="mood-tag-groups-card">
       <div className="flex items-center justify-between gap-2">
         <p className="text-muted-foreground min-w-0 text-xs">
@@ -245,12 +246,12 @@ export function TagGroupsCard({ catalog }: TagGroupsCardProps) {
       </div>
 
       {customGroupCount === 0 && (
-        <p
-          className="text-muted-foreground text-sm"
+        <EmptyState
+          variant="plain"
+          size="compact"
+          title={t("mood.manage.groupEmpty")}
           data-slot="mood-groups-empty"
-        >
-          {t("mood.manage.groupEmpty")}
-        </p>
+        />
       )}
 
       <DndContext

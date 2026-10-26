@@ -20,13 +20,8 @@
 import { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { lifeEventCreateSchema } from "@/lib/day/wire-schemas";
 import { withIdempotency } from "@/lib/idempotency";
@@ -36,7 +31,6 @@ import {
   toLifeEventDTO,
 } from "@/lib/life-events/service";
 import { annotate } from "@/lib/logging/context";
-import { checkRecordWriteRateLimit } from "@/lib/rate-limit";
 
 export const GET = apiHandler(async () => {
   const { user } = await requireAuth();
@@ -53,24 +47,11 @@ export const POST = apiHandler(withIdempotency<[NextRequest]>(postLifeEvent));
 async function postLifeEvent(request: NextRequest): Promise<Response> {
   const { user } = await requireAuth();
 
-  const writeRl = await checkRecordWriteRateLimit(user.id);
-  if (!writeRl.allowed) {
-    return apiError("Too many writes, try again later", 429, {
-      errorCode: "record_write.rate_limited",
-    });
-  }
-
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, lifeEventCreateSchema, {
     maxBytes: 16 * 1024,
+    errorCode: "life_event.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = lifeEventCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "life_event.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const created = await createLifeEvent(user.id, parsed.data);
 

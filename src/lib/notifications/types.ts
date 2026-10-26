@@ -34,7 +34,7 @@ export const EVENT_TYPES = [
   "COMPLIANCE_LOW",
   "WITHINGS_SYNC_FAILED",
   "SYSTEM_ALERT",
-  // v1.4.25 W16c — PR detection. Default OFF (see DEFAULT_EVENT_PREFS
+  // v1.4.25 — PR detection. Default OFF (see DEFAULT_EVENT_PREFS
   // below) so a multi-year Apple Health backfill doesn't fire hundreds
   // of pushes during initial sync.
   "PERSONAL_RECORD",
@@ -104,7 +104,7 @@ export const EVENT_TYPES = [
   // would defeat the feature. An explicit per-channel `NotificationPreference`
   // row still wins for a user who opts out.
   "SECURITY_ALERT",
-  // S5 — the once-daily calm morning briefing. Default OFF (see
+  // The once-daily calm morning briefing. Default OFF (see
   // EVENT_DEFAULT_ENABLED, the PERSONAL_RECORD precedent): the user opts in
   // per-channel from the /notifications matrix, so the channel choice is
   // explicit at opt-in. It reads the CACHED daily digest — never a fresh AI
@@ -125,6 +125,13 @@ export const EVENT_TYPES = [
   // dispatcher addresses a userId, and under record substitution that userId
   // is the owner by design). Default ON, see EVENT_DEFAULT_ENABLED.
   "SHARED_RECORD_INTAKE",
+  // Recovery readiness, for admins only: a backup signal turned to
+  // attention or failing, is still failing a day later, or is back to normal
+  // (`src/lib/recovery/readiness-notify.ts`). Default ON: the whole point is
+  // that a stopped backup is pushed rather than found on a page weeks later.
+  // An admin routes it per channel in the /notifications matrix, where only
+  // admins see the row (`eventTypesForRole`).
+  "BACKUP_HEALTH",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -200,7 +207,7 @@ export const EVENT_DEFAULT_ENABLED: Record<EventType, boolean> = {
   // needs surfaced. An explicit per-channel `NotificationPreference` row
   // (enabled=false) still suppresses it for a user who opts out.
   SECURITY_ALERT: true,
-  // S5 — OFF by default (the PERSONAL_RECORD precedent). The calm daily
+  // OFF by default (the PERSONAL_RECORD precedent). The calm daily
   // briefing stays silent until the user explicitly opts in per-channel at
   // /notifications; the dispatcher's default-policy gate suppresses every
   // channel that has no explicit enabled row, so a fresh account never
@@ -214,7 +221,20 @@ export const EVENT_DEFAULT_ENABLED: Record<EventType, boolean> = {
   // sits in the /notifications matrix from day one, so an owner who finds it
   // noisy silences it per channel with one switch.
   SHARED_RECORD_INTAKE: true,
+  // ON by default; see the note on `EVENT_TYPES`. Only admins are ever
+  // addressed, and at most once per state change per signal.
+  BACKUP_HEALTH: true,
 };
+
+/** Event types only an admin is ever sent, and only an admin is shown. */
+export const ADMIN_ONLY_EVENT_TYPES: readonly EventType[] = ["BACKUP_HEALTH"];
+
+/** The event types a person with `role` can receive, in matrix order. */
+export function eventTypesForRole(role: string): EventType[] {
+  return role === "ADMIN"
+    ? [...EVENT_TYPES]
+    : EVENT_TYPES.filter((type) => !ADMIN_ONLY_EVENT_TYPES.includes(type));
+}
 
 export const CHANNEL_TYPE_LABELS: Record<ChannelType, string> = {
   TELEGRAM: "Telegram",

@@ -26,6 +26,7 @@ import { prefersReducedMotion } from "@/lib/charts/reduced-motion";
 import { useTranslations } from "@/lib/i18n/context";
 import { formatDose } from "@/lib/medications/format-dose";
 import { runSaveMedicationListOrder } from "@/lib/queries/use-medication-list-layout";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * v1.16.10 — manual medication ordering, shared by BOTH /medications
@@ -150,12 +151,14 @@ export function MedicationOrderEditor({
     // `relative` anchors the sr-only drag-hint paragraph: `sr-only` is
     // absolutely positioned, and without a positioned ancestor its 1px box
     // lands below the list in DOCUMENT coordinates and makes the document
-    // itself scrollable (second scrollbar — UI-STANDARDS §9 one-scroll-floor).
+    // itself scrollable (second scrollbar — ui-standards.md §9 one-scroll-floor).
     <div className="relative space-y-4" data-slot="medication-order-editor">
       {medications.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          {t("medications.emptyTitle")}
-        </p>
+        <EmptyState
+          variant="plain"
+          size="compact"
+          title={t("medications.emptyTitle")}
+        />
       )}
       {activeIds.length > 0 && (
         <ReorderSection

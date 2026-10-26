@@ -25,12 +25,14 @@ import {
   lastNonSkippedTakenAt,
   tallyComplianceFromLedger,
 } from "@/lib/analytics/compliance";
-import type {
-  CanonicalCollapseRow,
-  DoctorReportCompliance,
-  DoctorReportComplianceIntake,
-  DoctorReportComplianceMedication,
-  DoctorReportRange,
+import {
+  WELLNESS_SCORE_REPORT_TYPES,
+  type CanonicalCollapseRow,
+  type DoctorReportCompliance,
+  type DoctorReportComplianceIntake,
+  type DoctorReportComplianceMedication,
+  type DoctorReportRange,
+  type DoctorReportStats,
 } from "./doctor-report-types";
 
 /**
@@ -189,6 +191,46 @@ export function summariseCanonicalRecovery(
 }
 
 /**
+ * The wellness summary of a report: one row per wellness score leaf the
+ * report admits and holds readings for, from the same stats the measurement
+ * table prints, so the two cannot disagree. RECOVERY_SCORE carries both the
+ * native row and the computed proxy for one day; it resolves to the canonical
+ * row so the PDF reads the SAME value the tile shows. Null when no row is
+ * left.
+ */
+export function summariseWellnessScores(input: {
+  admits: (type: (typeof WELLNESS_SCORE_REPORT_TYPES)[number]) => boolean;
+  stats: Readonly<Record<string, DoctorReportStats>>;
+  byType: Readonly<Record<string, ReadonlyArray<{ measuredAt: string }>>>;
+  measurements: readonly RecoveryMeasurementRow[];
+  timezone: string;
+}): WellnessScoreSummary[] | null {
+  const { admits, stats, byType, measurements, timezone } = input;
+  const summaries = WELLNESS_SCORE_REPORT_TYPES.flatMap((type) => {
+    if (!admits(type)) return [];
+    if (type === "RECOVERY_SCORE") {
+      const summary = summariseCanonicalRecovery(measurements, timezone);
+      return summary ? [summary] : [];
+    }
+    const s = stats[type];
+    const rows = byType[type];
+    if (!s || !rows || rows.length === 0) return [];
+    return [
+      {
+        type,
+        latest: Math.round(s.latest),
+        avg: Math.round(s.avg),
+        min: Math.round(s.min),
+        max: Math.round(s.max),
+        count: s.count,
+        latestAt: rows[rows.length - 1].measuredAt,
+      },
+    ];
+  });
+  return summaries.length > 0 ? summaries : null;
+}
+
+/**
  * Validate and normalise the requested reporting window.
  * Accepts an unknown value (typically `body.days`); falls back to 90.
  */
@@ -323,7 +365,7 @@ export function normaliseDateRange(
 }
 
 /**
- * v1.17 W1a — doctor-report medication adherence through the dose-ledger
+ * v1.17 — doctor-report medication adherence through the dose-ledger
  * authority.
  *
  * The previous implementation tallied RAW intake rows: `taken = takenAt != null`,

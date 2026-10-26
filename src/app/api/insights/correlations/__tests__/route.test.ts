@@ -3,6 +3,10 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    // v1.44 — the extended channel families (intake, training, room climate).
+    nutrientIntakeDay: { findMany: async () => [] },
+    workout: { findMany: async () => [] },
+    strainTrimpCache: { findMany: async () => [] },
     auditLog: { create: vi.fn() },
     appSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     user: {
@@ -26,7 +30,7 @@ vi.mock("@/lib/db", () => ({
     illnessDayLog: { findMany: vi.fn().mockResolvedValue([]) },
     // v1.22 — labs ↔ outcome pass fetches lab draws; default empty.
     labResult: { findMany: vi.fn().mockResolvedValue([]) },
-    // v1.25 (W-ENV) — the route folds the environmental-exposure behaviour
+    // v1.25 — the route folds the environmental-exposure behaviour
     // channels in (read from EnvironmentContext); default empty so no env
     // channel produces a point.
     environmentContext: { findMany: vi.fn().mockResolvedValue([]) },

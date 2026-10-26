@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "@/lib/i18n/context";
 import { useAuth } from "@/hooks/use-auth";
-import { DEMO_READ_ONLY_CODE } from "@/lib/demo-refusal";
 import {
   parseChartTokens,
   tokenToMetric,
@@ -38,86 +37,23 @@ import type {
   CoachMemoryNote as CoachMemoryNoteFrame,
   CoachProvenanceMetric,
 } from "@/lib/ai/coach/types";
+import { translateOrNull } from "@/lib/i18n/translate-code";
+import { InlineAction } from "@/components/ui/inline-action";
+import { errorCodeToI18nKey } from "./coach-error-key";
 
 /**
  * Per-message bubble renderer for the Coach thread, split out of
  * `message-thread.tsx` (v1.28.26 file-size split). Owns the user + assistant
  * `ChatBubble` (steps, accompanying charts, the action row from
  * `message-actions.tsx`, and the follow-up chips under the latest answer),
- * the typing indicator, the chart-token grounding selector, and the
- * error-code → i18n resolver. `message-thread.tsx` re-exports the
- * previously public names so external call sites are unchanged.
+ * the typing indicator and the chart-token grounding selector. The
+ * error-code → i18n resolver lives in `coach-error-key.ts`.
+ * `message-thread.tsx` re-exports the previously public names so external
+ * call sites are unchanged.
  */
 
 /**
- * v1.4.25 W5 — map server-emitted error codes to specific Coach i18n
- * keys. The chat route distinguishes the daily user-quota
- * (`coach.budget.exceeded`, returned as a JSON 429) from the provider
- * rate-limit (`coach.provider.rate_limited`, streamed as an SSE error
- * frame). Both used to surface as the generic provider-unavailable
- * copy; we now route each to its dedicated translation so the user
- * understands whether the limit is on their side (reset at UTC
- * midnight) or transient on the provider side (retry in ~5 min).
- *
- * Exported so the resolver can be pinned by unit tests without
- * standing up the whole thread renderer.
- */
-export function errorCodeToI18nKey(code: string): string {
-  switch (code) {
-    case "coach.budget.exceeded":
-      return "insights.coach.dailyLimitBody";
-    case "coach.provider.rate_limited":
-      return "insights.coach.providerRateLimitBody";
-    case "coach.network":
-      // v1.4.43 QoL (M6) — a dropped network is the user's local
-      // problem and needs a different next action ("come back online")
-      // than a provider failure ("try again in a moment"). Split out
-      // so the user sees the actionable copy in the offline branch.
-      return "insights.coach.errorNetwork";
-    case "coach.provider.credential_expired":
-      // v1.11.0 W1 — the user's primary AI provider credential is dead
-      // (auth-class failure). The next action is "reconnect", not "try
-      // again later", so it carries its own copy pointing at Settings.
-      return "insights.coach.errorCredentialExpired";
-    case "coach.provider.none":
-      // v1.18.6 — no AI provider is configured anywhere, so "try again
-      // in a moment" is the wrong instruction (it will 422 forever). Send
-      // the user to guided setup with a one-line explainer + a Settings
-      // link rendered alongside the bubble copy.
-      return "insights.coach.errorNoProvider";
-    case "coach.provider.unavailable":
-    case "coach.provider.empty":
-    case "coach.stream":
-      return "insights.coach.errorProvider";
-    // v1.39 — the capability refusals (`meta.errorCode` on a 403/422/503
-    // before the stream opens). Each says what is off and who can change it.
-    case "consent.ai.required":
-      return "insights.coach.errorConsent";
-    case "ai.record.notPermitted":
-      return "insights.coach.errorNotPermitted";
-    case "ai.unavailable":
-      return "insights.coach.errorUnavailable";
-    case "ai.provider.none":
-      return "insights.coach.errorNoProvider";
-    case "module.disabled":
-      return "insights.coach.errorCoachOff";
-    // A demo deploy refuses every write, the chat POST included. That is
-    // the demo's nature, not an outage, and the line says so.
-    case DEMO_READ_ONLY_CODE:
-      return "insights.coach.errorDemo";
-    default:
-      // The operator switched the Coach (or all AI) off on this server.
-      if (code.startsWith("assistant.disabled.")) {
-        return "insights.coach.errorOperatorOff";
-      }
-      // Forward-compat: try `insights.coach.<code>` for codes that
-      // ship their own translation (e.g. legacy `errorProvider`).
-      return `insights.coach.${code}`;
-  }
-}
-
-/**
- * v1.22 (W5) — Coach accompanying charts, Phase 1: the renderer half.
+ * v1.22 — Coach accompanying charts, Phase 1: the renderer half.
  *
  * The chart-token mechanism (`chart-tokens.ts`) was prepared for the
  * Insights prose but its render path was never wired for the Coach —
@@ -239,8 +175,8 @@ function coachChartTitle(
 ): string {
   const override = CHART_TITLE_KEY_OVERRIDE[metric];
   if (override) {
-    const resolved = t(override);
-    if (resolved !== override) return resolved;
+    const resolved = translateOrNull(t, override);
+    if (resolved !== null) return resolved;
   }
   const camel = metric
     .toLowerCase()
@@ -250,8 +186,7 @@ function coachChartTitle(
     )
     .join("");
   const key = `measurements.type${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
-  const resolved = t(key);
-  return resolved === key ? metric.replace(/_/g, " ").toLowerCase() : resolved;
+  return translateOrNull(t, key) ?? metric.replace(/_/g, " ").toLowerCase();
 }
 
 interface ChatBubbleProps {
@@ -259,13 +194,13 @@ interface ChatBubbleProps {
   content: string;
   metricSource?: import("@/lib/ai/coach/types").CoachProvenance | null;
   /**
-   * v1.18.1 (Workstream C) — live cadence suggestion from the streaming
+   * v1.18.1 — live cadence suggestion from the streaming
    * hook. Persisted messages carry it on `metricSource.suggestion`
    * instead; the bubble falls back to that so the card survives reload.
    */
   suggestion?: import("@/lib/ai/coach/types").CoachSuggestion | null;
   /**
-   * v1.22 (W7/W6) — live generalised confirm-card action from the streaming
+   * v1.22 — live generalised confirm-card action from the streaming
    * hook. Persisted messages carry it on `metricSource.suggestedAction`; the
    * bubble falls back to that so the card survives reload.
    */
@@ -287,7 +222,7 @@ interface ChatBubbleProps {
   inProgress?: boolean;
   errorCode?: string | null;
   /**
-   * v1.4.23 H7 — present only on persisted assistant messages.
+   * v1.4.23 — present only on persisted assistant messages.
    * Streaming bubbles (no message id yet) skip the thumbs row so the
    * user can't rate before the message lands on disk.
    */
@@ -311,7 +246,7 @@ interface ChatBubbleProps {
   tokensUsed?: number | null;
   model?: string | null;
   /**
-   * v1.22 (W5) — ISO creation timestamp for the persisted bubble's
+   * v1.22 — ISO creation timestamp for the persisted bubble's
    * hover/tap timestamp tooltip. Absent on optimistic + streaming bubbles
    * (no persisted time yet), so those render no timestamp.
    */
@@ -367,7 +302,7 @@ function sameFollowUpOffer(
 }
 
 /**
- * v1.28.46 perf (M3) — memo comparator for `ChatBubble`. The Coach thread
+ * v1.28.46 — memo comparator for `ChatBubble`. The Coach thread
  * re-renders on every streamed token (the live turn's content grows), which
  * re-runs `messages.map` and re-creates every persisted bubble. Without memo
  * each settled bubble re-runs `selectCoachChartTokens` + provenance work per
@@ -480,7 +415,7 @@ function ChatBubbleImpl({
               "text-sm leading-relaxed",
             )}
           >
-            {/* v1.22 (W5) — render real paragraph blocks so a multi-line
+            {/* v1.22 — render real paragraph blocks so a multi-line
                 message reads as paragraphs, not one run-on block. User text
                 is verbatim: no chart-token strip, no Learn linkify. */}
             <ProseBlocks text={content} strip={false} linkify={false} />
@@ -519,7 +454,7 @@ function ChatBubbleImpl({
   // #781 — the persisted cancelled-turn marker (an EMPTY assistant row the
   // server writes when the client aborts mid-generation, e.g. navigating
   // away). Rendered as a quiet interrupted note — muted meta text per
-  // UI-STANDARDS §3, never an alarm colour: nothing failed, the user left —
+  // ui-standards.md §3, never an alarm colour: nothing failed, the user left —
   // plus a retry that resubmits the question that produced the turn (the
   // regenerate closure, so the resend runs through the normal send path and
   // every budget/rate gate). No provenance, feedback, copy, or token footer:
@@ -558,26 +493,21 @@ function ChatBubbleImpl({
     );
   }
 
-  // v1.4.25 W5 — map server-emitted error codes to specific Coach
+  // v1.4.25 — map server-emitted error codes to specific Coach
   // i18n keys. Distinct user-quota and provider-rate-limit copy so the
   // user understands daily-cap (resets at their local midnight) vs. transient
   // provider load (retry in ~5 min). Codes that have no dedicated
   // translation fall back to the generic provider-unavailable copy.
   const errorKey = errorCode ? errorCodeToI18nKey(errorCode) : null;
-  const errorMessage = errorKey ? t(errorKey, {}) : null;
-  // When a translated message comes back unchanged (i.e. key missing)
-  // we fall back to a generic provider error string so the bubble
-  // doesn't surface raw `coach.http.503` text to the user.
+  // A code without a sentence falls back to the generic provider error, so
+  // the bubble never surfaces raw `coach.http.503` text to the user.
   const safeError =
-    errorMessage && errorMessage !== errorKey
-      ? errorMessage
-      : errorCode
-        ? t("insights.coach.errorProvider")
-        : null;
+    (errorKey ? translateOrNull(t, errorKey) : null) ??
+    (errorCode ? t("insights.coach.errorProvider") : null);
 
   const method = metricSource?.method ?? null;
 
-  // v1.22 (W5) — Coach charts Phase 1. Render an allowlisted, provenance-
+  // v1.22 — Coach charts Phase 1. Render an allowlisted, provenance-
   // grounded `metric:<TYPE>` chart under a SETTLED assistant turn. Skipped
   // while streaming / in-flight / errored / on a refusal; a no-op when no
   // grounded token is present (provider-agnostic — reads the inline token).
@@ -684,7 +614,7 @@ function ChatBubbleImpl({
               "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-300",
             )}
           >
-            {/* v1.4.25 W5b — strip stray Metric/enum leak tokens from the
+            {/* v1.4.25 — strip stray Metric/enum leak tokens from the
                 assistant prose. v1.18.9 — the live turn streams in
                 word-by-word with a soft fade (<StreamedProse>); a settled
                 / persisted turn renders as plain text. */}
@@ -704,7 +634,7 @@ function ChatBubbleImpl({
           <p className="text-warning text-xs">{safeError}</p>
         )}
         {/* v1.32.14 — quiet grounding caveat when the guard withheld a figure.
-            Muted meta (UI-STANDARDS §3), never a warning colour — it is a
+            Muted meta (ui-standards.md §3), never a warning colour — it is a
             grounding caveat, not an error. Static single line, decorative icon,
             no interactivity. The `[…]` marks in the prose above point here. */}
         {showUnverifiedNotice && (
@@ -716,7 +646,7 @@ function ChatBubbleImpl({
             {t("insights.coach.unverifiedFiguresNotice")}
           </p>
         )}
-        {/* v1.22 (W5) — accompanying chart(s). The token was already
+        {/* v1.22 — accompanying chart(s). The token was already
             stripped from the prose by <StreamedProse>; here it mounts the
             real, self-fetching Recharts chart for the user's own series.
             The model never emits data — only a metric identifier from a
@@ -780,15 +710,13 @@ function ChatBubbleImpl({
             setup instead of inviting an endless retry. */}
         {(errorCode === "coach.provider.none" ||
           errorCode === "ai.provider.none") && (
-          <Link
-            href="/settings/ai"
-            data-slot="coach-no-provider-cta"
-            className="text-primary text-xs font-medium underline-offset-4 hover:underline"
-          >
-            {t("insights.coach.errorNoProviderAction")}
-          </Link>
+          <InlineAction asChild className="font-medium">
+            <Link href="/settings/ai" data-slot="coach-no-provider-cta">
+              {t("insights.coach.errorNoProviderAction")}
+            </Link>
+          </InlineAction>
         )}
-        {/* v1.18.1 (Workstream C) — one-tap cadence-suggestion action
+        {/* v1.18.1 — one-tap cadence-suggestion action
             card. Live from the streaming hook, or restored from the
             persisted message provenance on reload. Not shown on
             in-flight or errored turns. */}
@@ -798,7 +726,7 @@ function ChatBubbleImpl({
             const sug = suggestion ?? metricSource?.suggestion ?? null;
             return sug ? <ReminderSuggestionCard suggestion={sug} /> : null;
           })()}
-        {/* v1.22 (W7/W6) — generalised confirm-card action. Live from the
+        {/* v1.22 — generalised confirm-card action. Live from the
             streaming hook, or restored from persisted message provenance on
             reload. Mirrors the reminder-suggestion block above. */}
         {!inProgress &&
@@ -850,7 +778,7 @@ function ChatBubbleImpl({
 }
 
 /**
- * v1.28.46 perf (M3) — memoized bubble. Skips re-render for every settled
+ * v1.28.46 — memoized bubble. Skips re-render for every settled
  * bubble while the streaming turn grows token-by-token; the streaming bubble
  * (changed `content`/`streaming`) is the only one that re-renders. `displayName`
  * is set so the name survives the memo wrapper in React DevTools.

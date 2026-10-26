@@ -35,6 +35,7 @@
  *      server-side APNs send only, and it does so in the dispatcher — the
  *      tick dispatches for every user and lets the cascade decide.
  */
+import { ownedByActiveAccount } from "@/lib/account-deletion/active-account";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { MeasurementType } from "@/generated/prisma/client";
 import { getServerTranslator } from "@/lib/i18n/server-translator";
@@ -63,6 +64,7 @@ import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import {
   APPOINTMENT_REMINDER_ADDRESS_INCLUDE,
   appointmentReminderAddress,
+  appointmentReminderVisitPath,
 } from "@/lib/encounters/appointment-reminder";
 
 /**
@@ -139,7 +141,7 @@ export interface MeasurementReminderSummary {
   skippedOutsideWindow: number;
   skippedModuleDisabled: number;
   skippedNoChannel: number;
-  /** v1.37.19 (A6-7) — slot already claimed for this local day (racing worker or crash-recovery replay). */
+  /** v1.37.19 — slot already claimed for this local day (racing worker or crash-recovery replay). */
   skippedAlreadyClaimed: number;
   /** v1.39.2 — open check-up already reminded for this slot within the week. */
   skippedRepeatHeld: number;
@@ -163,12 +165,12 @@ async function cleanupExpiredCoachReminders(
   now: Date,
 ): Promise<number> {
   const result = await prisma.measurementReminder.updateMany({
-    where: {
+    where: ownedByActiveAccount({
       deletedAt: null,
-      origin: "COACH",
+      origin: "COACH" as const,
       endsOn: { not: null, lt: now },
       nextDueAt: null,
-    },
+    }),
     data: { deletedAt: now },
   });
   return result.count;
@@ -312,11 +314,11 @@ export async function runMeasurementReminderTick(
   // cross due, before any nudge fires, so dropping future rows is safe.
   const dueFloor = new Date(now.getTime() + DUE_QUERY_SLACK_MS);
   const reminders = await prisma.measurementReminder.findMany({
-    where: {
+    where: ownedByActiveAccount({
       deletedAt: null,
       enabled: true,
       nextDueAt: { not: null, lte: dueFloor },
-    },
+    }),
     include: {
       user: {
         select: {
@@ -448,7 +450,7 @@ export async function runMeasurementReminderTick(
       // user was filed as handled and vanished from the card and the digest.
       // Now, when nothing delivers, the no-channel branch below leaves the
       // reminder overdue and visible.
-      // v1.37.19 (A6-7) — claim the slot BEFORE provider egress, the
+      // v1.37.19 — claim the slot BEFORE provider egress, the
       // documented claim-first pattern from `reminder-dedup.ts`. The old
       // order (dispatch, then advance `nextDueAt`) double-sent when the
       // worker crashed between the two; the claim is the durable record
@@ -479,6 +481,7 @@ export async function runMeasurementReminderTick(
       // An appointment's address lives encrypted on its practitioner and is
       // resolved here; a checkup's is its own free-text column.
       const address = appointmentReminderAddress(reminder);
+      const visitUrl = appointmentReminderVisitPath(reminder);
       const { title, body } = buildMeasurementReminderPayload(
         await resolveJobLocale(reminder.user.locale),
         reminder.label,
@@ -510,6 +513,9 @@ export async function runMeasurementReminderTick(
         metadata: {
           scheduledAt: now.toISOString(),
           reminderId: reminder.id,
+          // An appointment opens its visit; a checkup keeps the event's
+          // default, the checkups list.
+          ...(visitUrl ? { url: visitUrl } : {}),
         },
       });
 

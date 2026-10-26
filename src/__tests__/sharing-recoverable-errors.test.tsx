@@ -335,8 +335,11 @@ describe("a refused invitation keeps what was typed", () => {
     expect(inviteErrorKey(new TypeError("Failed to fetch"))).toBe(
       "recordSharing.invite.errorOffline",
     );
-    expect(inviteErrorKey(apiError(404))).toBe(
+    expect(inviteErrorKey(apiError(404, "sharing.invite.no_account"))).toBe(
       "recordSharing.invite.errorNoAccount",
+    );
+    expect(inviteErrorKey(apiError(404, "http.not_found"))).toBe(
+      "recordSharing.invite.errorFailed",
     );
     expect(inviteErrorKey(apiError(409, "sharing.invite.duplicate"))).toBe(
       "recordSharing.invite.errorDuplicate",
@@ -454,7 +457,7 @@ describe("the refusal stays on screen, addressed to its own row", () => {
     const alert = /<[^>]*data-slot="grant-action-error"[^>]*>/.exec(html)?.[0];
 
     expect(alert).toBeDefined();
-    // A refusal somebody has to act on is content. UI-STANDARDS §3 reserves
+    // A refusal somebody has to act on is content. ui-standards.md §3 reserves
     // muted for meta, and a sentence nobody reads is a sentence nobody acts
     // on.
     expect(alert).toContain("text-destructive");

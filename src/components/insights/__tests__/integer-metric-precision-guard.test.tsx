@@ -73,6 +73,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 
 import { CoachReadStrip } from "../derived/coach-read-strip";
 import InsightsStepsPage from "@/app/insights/steps/page";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 function render(node: React.ReactNode, locale: "en" | "de" = "de") {
   const queryClient = new QueryClient({
@@ -170,14 +173,17 @@ describe("integer-metric precision guard", () => {
     const html = render(<InsightsStepsPage />);
 
     expect(html).toContain('data-slot="metric-stat-strip"');
-    expect(html).not.toMatch(FRACTIONAL_GERMAN);
+    // Class lists carry grid templates such as `minmax(0,1fr)`; only the
+    // rendered text is under test.
+    expect(html.replace(/class="[^"]*"/g, "")).not.toMatch(FRACTIONAL_GERMAN);
     // The numbers themselves survive, thousands-grouped and whole.
     expect(html).toContain("11.762");
     expect(html).toContain("104");
     // …and the unit reads in German, not as the English word. (The route
     // slug `/insights/steps` legitimately appears in the header links, so
     // match the unit in its rendered position: right after a number.)
-    expect(html).toContain("104 Schritte");
+    // The stat strip joins a value to its unit with a no-break space.
+    expect(html).toContain("104\u00A0Schritte");
     expect(html).not.toMatch(/\d\s*steps\b/);
   });
 });

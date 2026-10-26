@@ -3,6 +3,14 @@
  * All functions are pure and work on sorted arrays of {date, value} pairs.
  */
 
+import { READING_SPREAD, standardDeviation } from "@/lib/stats/spread";
+import { linearFit } from "@/lib/stats/linear-fit";
+import {
+  isTrendWindowSufficient,
+  trendEvidenceOf,
+  type TrendEvidence,
+} from "@/lib/analytics/window-confidence";
+
 export interface DataPoint {
   date: Date;
   value: number;
@@ -17,6 +25,35 @@ export interface TrendSlope {
 }
 
 /**
+ * The one place a fitted slope becomes a published trend, shared by the JS
+ * fit below and the rollup / live-SQL summaries (which fit in Postgres or
+ * compose the fit from stored accumulators). `null` when the window's
+ * readings do not cover enough days for a trend (`isTrendWindowSufficient`),
+ * so slope, direction and confidence are present or absent together on
+ * every path.
+ */
+export function toTrendSlope(
+  slope: number | null,
+  rSquared: number | null,
+  evidence: TrendEvidence,
+  windowDays: number,
+): TrendSlope | null {
+  if (slope === null || !Number.isFinite(slope)) return null;
+  if (!isTrendWindowSufficient(evidence, windowDays)) return null;
+
+  const threshold = 0.01; // units per day threshold for "stable"
+  const direction: "up" | "down" | "stable" =
+    Math.abs(slope) < threshold ? "stable" : slope > 0 ? "up" : "down";
+
+  return {
+    slope: Math.round(slope * 1000) / 1000,
+    direction,
+    // No variance in y: a flat line explains nothing, as it always read.
+    confidence: rSquared === null ? 0 : Math.round(rSquared * 100) / 100,
+  };
+}
+
+/**
  * Linear regression slope over the last N days.
  * Uses least squares fit.
  *
@@ -25,6 +62,10 @@ export interface TrendSlope {
  * same way `summarize().avg7/avg30` returns `null`. The v3 audit caught the
  * mismatch where `trendSlope` reported a "trend" from old data while the
  * dashboard tile correctly hid the average.
+ *
+ * `null` too when the in-window readings fall on fewer than three days or
+ * span less than half the window: a fit across readings minutes apart turns
+ * a few mmHg into thousands per day (see `MIN_TREND_DAYS`).
  */
 export function trendSlope(
   data: DataPoint[],
@@ -36,8 +77,10 @@ export function trendSlope(
   const sorted = [...data].sort((a, b) => a.date.getTime() - b.date.getTime());
   const cutoff = now - windowDays * 24 * 60 * 60 * 1000;
   const window = sorted.filter((p) => p.date.getTime() >= cutoff);
-
   if (window.length < 2) return null;
+
+  const evidence = trendEvidenceOf(window.map((p) => p.date.getTime()));
+  if (!isTrendWindowSufficient(evidence, windowDays)) return null;
 
   // Convert dates to days from start
   const startTime = window[0].date.getTime();
@@ -46,36 +89,12 @@ export function trendSlope(
     y: p.value,
   }));
 
-  const n = points.length;
-  const sumX = points.reduce((s, p) => s + p.x, 0);
-  const sumY = points.reduce((s, p) => s + p.y, 0);
-  const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
-  const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
-
-  const denominator = n * sumXX - sumX * sumX;
-  if (denominator === 0) return null;
-
-  const slope = (n * sumXY - sumX * sumY) / denominator;
-  const intercept = (sumY - slope * sumX) / n;
-
-  // R² calculation
-  const meanY = sumY / n;
-  const ssTotal = points.reduce((s, p) => s + (p.y - meanY) ** 2, 0);
-  const ssResidual = points.reduce(
-    (s, p) => s + (p.y - (intercept + slope * p.x)) ** 2,
-    0,
+  const fit = linearFit(
+    points.map((p) => p.x),
+    points.map((p) => p.y),
   );
-  const rSquared = ssTotal === 0 ? 0 : 1 - ssResidual / ssTotal;
-
-  const threshold = 0.01; // units per day threshold for "stable"
-  const direction: "up" | "down" | "stable" =
-    Math.abs(slope) < threshold ? "stable" : slope > 0 ? "up" : "down";
-
-  return {
-    slope: Math.round(slope * 1000) / 1000,
-    direction,
-    confidence: Math.round(rSquared * 100) / 100,
-  };
+  if (!fit) return null;
+  return toTrendSlope(fit.slope, fit.r2, evidence, windowDays);
 }
 
 // ── Anomaly Detection ────────────────────────────────────
@@ -95,9 +114,7 @@ export function detectAnomalies(data: DataPoint[], threshold = 2.0): Anomaly[] {
 
   const values = data.map((p) => p.value);
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
-  const variance =
-    values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
-  const stdDev = Math.sqrt(variance);
+  const stdDev = standardDeviation(values, READING_SPREAD) ?? 0;
 
   if (stdDev === 0) return [];
 
@@ -133,8 +150,8 @@ export interface DataSummary {
    * for the snapshot builder, …). It is NOT guaranteed to be the trailing
    * 90-day window. The insights stat strip does not read this value — its
    * median comes from the SQL `summaries-slice` path, which fixes the
-   * window to the trailing 90 days (`PERCENTILE_CONT(0.5) … FILTER (WHERE
-   * measured_at >= NOW() - INTERVAL '90 days')`). A consumer comparing the
+   * window to the trailing 90 days (`PERCENTILE_CONT(0.5)` over the readings
+   * from 90 days before the request's `now`). A consumer comparing the
    * two must account for the differing windows. The percentile *algorithm*
    * matches (linear-interpolated midpoint), only the window differs.
    */
@@ -153,18 +170,32 @@ export interface DataSummary {
    */
   anomalyCount?: number;
   /**
-   * v1.4.16 phase B8 — average value over the 30-day window starting
+   * v1.4.16 — average value over the 30-day window starting
    * 30 days before today, i.e. the "last month" prior period the
    * dashboard tile delta callout compares against. Null when the
    * window has no data.
    */
   avg30LastMonth?: number | null;
   /**
-   * v1.4.16 phase B8 — average value over the 30-day window starting
+   * v1.4.16 — average value over the 30-day window starting
    * 365 days before today (one calendar year ago). Null when the
    * window has no data.
    */
   avg30LastYear?: number | null;
+}
+
+/**
+ * A summary as `/api/analytics` publishes it: without `anomalyCount`.
+ *
+ * The SQL summaries path cannot compute the figure, so the route's published
+ * summary has not carried it since v1.37.19. Two of its summaries are still
+ * built by `summarize()` (the per-night sleep series and the glucose
+ * meal-context split), and both put it back on the wire until they were run
+ * through this.
+ */
+export function wireSummary(summary: DataSummary): DataSummary {
+  const { anomalyCount: _inProcessOnly, ...wire } = summary;
+  return wire;
 }
 
 export function summarize(data: DataPoint[]): DataSummary {
@@ -191,7 +222,7 @@ export function summarize(data: DataPoint[]): DataSummary {
 
   const sorted = [...data].sort((a, b) => a.date.getTime() - b.date.getTime());
   const values = sorted.map((p) => p.value);
-  // v1.4.33 P0 — single-pass fold for sum/min/max replaces the previous
+  // v1.4.33 — single-pass fold for sum/min/max replaces the previous
   // `Math.min(...values)` / `Math.max(...values)` spread. V8 caps
   // function arity at ~125k-130k; Apple-Health-synced PULSE series for
   // a multi-year power user routinely exceed that, and the spread
@@ -232,7 +263,7 @@ export function summarize(data: DataPoint[]): DataSummary {
   const last7 = sorted.filter((p) => now - p.date.getTime() < 7 * DAY);
   const last30 = sorted.filter((p) => now - p.date.getTime() < 30 * DAY);
 
-  // v1.4.16 phase B8 — prior-period 30-day means powering the tile
+  // v1.4.16 — prior-period 30-day means powering the tile
   // delta callout. The lastMonth window is days [30, 60) ago; the
   // lastYear window is days [365, 395) ago. Both align to the 30-day
   // shift the chart overlay uses so the tile delta and the chart

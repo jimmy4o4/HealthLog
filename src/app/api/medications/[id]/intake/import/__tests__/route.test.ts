@@ -63,10 +63,8 @@ import { auditLog } from "@/lib/auth/audit";
 import { getSession } from "@/lib/auth/session";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import { checkRateLimit } from "@/lib/rate-limit";
-import {
-  MEDICATION_INTAKE_IMPORT_QUEUE,
-  MEDICATION_INTAKE_IMPORT_STALE_AFTER_MS,
-} from "@/lib/jobs/medication-intake-import";
+import { MEDICATION_INTAKE_IMPORT_STALE_AFTER_MS } from "@/lib/jobs/medication-intake-import";
+import { MEDICATION_INTAKE_IMPORT_QUEUE } from "@/lib/jobs/medication-intake-import-queue";
 
 const SESSION_OK = {
   session: { id: "sess-1", expiresAt: new Date(Date.now() + 3_600_000) },
@@ -344,7 +342,7 @@ describe("POST /api/medications/[id]/intake/import — durable kickoff", () => {
     await expect(res.json()).resolves.toEqual({
       data: null,
       error: "Medication intake import already in progress",
-      meta: { requestId: expect.any(String) },
+      meta: { requestId: expect.any(String), errorCode: "http.conflict" },
     });
     expect(prisma.medicationIntakeImportJob.create).not.toHaveBeenCalled();
     expect(getGlobalBoss).not.toHaveBeenCalled();

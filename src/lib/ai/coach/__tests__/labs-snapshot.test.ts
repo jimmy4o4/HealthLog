@@ -1,4 +1,17 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, onTestFinished } from "vitest";
+
+// The labs module is on unless a test switches it off.
+const { labsModule } = vi.hoisted(() => ({ labsModule: { on: true } }));
+vi.mock("@/lib/modules/gate", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/modules/gate")>();
+  return {
+    ...actual,
+    isModuleEnabled: async (
+      userId: string,
+      key: Parameters<typeof actual.isModuleEnabled>[1],
+    ) => (key === "labs" ? labsModule.on : actual.isModuleEnabled(userId, key)),
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -7,6 +20,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { buildLabsSnapshotBlock, sanitizeValueText } from "../labs-snapshot";
+import { UNBOUNDED_REACH } from "../history-reach";
 import { prisma } from "@/lib/db";
 
 const prismaMock = prisma as unknown as {
@@ -44,6 +58,21 @@ beforeEach(() => {
 });
 
 describe("buildLabsSnapshotBlock", () => {
+  it("reads no lab row and answers null with the labs module off", async () => {
+    labsModule.on = false;
+    onTestFinished(() => {
+      labsModule.on = true;
+    });
+    prismaMock.labResult.findMany.mockResolvedValue([numericRow()]);
+    expect(await buildLabsSnapshotBlock("user_1", NOW)).toBeNull();
+    expect(
+      await buildLabsSnapshotBlock("user_1", NOW, undefined, {
+        analyte: "ldl",
+      }),
+    ).toBeNull();
+    expect(prismaMock.labResult.findMany).not.toHaveBeenCalled();
+  });
+
   it("returns null when the account has no readings", async () => {
     prismaMock.labResult.findMany.mockResolvedValue([]);
     const block = await buildLabsSnapshotBlock("user_1", NOW);
@@ -113,6 +142,54 @@ describe("buildLabsSnapshotBlock", () => {
     const block = await buildLabsSnapshotBlock("user_1", NOW);
     expect(block!.recent).toHaveLength(1);
     expect(block!.recent[0].value).toBe(120);
+    // The snapshot block carries no history (#1263): it shares the prompt cap.
+    expect(block!.recent[0].history).toBeUndefined();
+  });
+
+  it("adds the earlier readings as history for a named analyte", async () => {
+    prismaMock.labResult.findMany.mockResolvedValue([
+      numericRow({ value: 120, takenAt: new Date("2026-06-10T08:00:00.000Z") }),
+      numericRow({ value: 145, takenAt: new Date("2026-01-10T08:00:00.000Z") }),
+    ]);
+    const block = await buildLabsSnapshotBlock("user_1", NOW, UNBOUNDED_REACH, {
+      analyte: "ldl",
+    });
+    expect(block!.recent[0].history).toEqual({
+      count: 2,
+      firstTakenAt: "2026-01-10T08:00:00.000Z",
+      earlier: [
+        {
+          value: 145,
+          rangeStatus: "above",
+          takenAt: "2026-01-10T08:00:00.000Z",
+        },
+      ],
+      yearly: [],
+      yearsOmitted: 0,
+    });
+  });
+
+  it("leaves a reading stored in another unit out of the history", async () => {
+    prismaMock.labResult.findMany.mockResolvedValue([
+      numericRow({ value: 120, takenAt: new Date("2026-06-10T08:00:00.000Z") }),
+      numericRow({
+        value: 3.1,
+        takenAt: new Date("2025-06-10T08:00:00.000Z"),
+        biomarker: {
+          id: "bm_ldl",
+          name: "LDL",
+          unit: "mmol/L",
+          lowerBound: 0,
+          upperBound: 3.4,
+          panel: "Lipids",
+        },
+      }),
+    ]);
+    const block = await buildLabsSnapshotBlock("user_1", NOW, UNBOUNDED_REACH, {
+      analyte: "LDL",
+    });
+    expect(block!.recent[0].value).toBe(120);
+    expect(block!.recent[0].history).toBeUndefined();
   });
 
   it("collapses two spellings of an unlinked marker by lower-cased analyte", async () => {
@@ -147,14 +224,15 @@ describe("buildLabsSnapshotBlock", () => {
     expect(block!.recent[0].value).toBe(80);
   });
 
-  it("queries with an owner-scoped, deletedAt-null, 12-month window where", async () => {
+  it("queries owner-scoped and deletedAt-null over the whole record", async () => {
     prismaMock.labResult.findMany.mockResolvedValue([]);
     await buildLabsSnapshotBlock("user_42", NOW);
     const arg = prismaMock.labResult.findMany.mock.calls[0][0];
     expect(arg.where.userId).toBe("user_42");
     expect(arg.where.deletedAt).toBeNull();
     expect(arg.where.takenAt.lte).toEqual(NOW);
-    expect(arg.where.takenAt.gte).toEqual(new Date("2025-06-21T12:00:00.000Z"));
+    // #1263 — labs are not held to a year without a lookback limit.
+    expect(arg.where.takenAt.gte).toBeUndefined();
     // Never selects the encrypted note column.
     expect(arg.select.noteEncrypted).toBeUndefined();
   });

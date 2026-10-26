@@ -21,12 +21,12 @@ import { auditLog } from "@/lib/auth/audit";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import {
-  APPLE_HEALTH_IMPORT_V2_QUEUE,
   APPLE_HEALTH_IMPORT_KIND,
   APPLE_HEALTH_IMPORT_PARSER_REVISION,
   APPLE_HEALTH_IMPORT_SEND_OPTIONS,
   type AppleHealthImportPayload,
 } from "@/lib/jobs/apple-health-import-worker";
+import { APPLE_HEALTH_IMPORT_V2_QUEUE } from "@/lib/jobs/apple-health-import-queue";
 import { streamMultipartToDisk } from "@/lib/multipart/stream-to-disk";
 import {
   createImportJobUnlessBusy,
@@ -55,6 +55,10 @@ export const POST = apiHandler(async (request: NextRequest) => {
     throw new HttpError(429, "Too many import uploads, try again later");
   }
 
+  // A refused upload is an audit row here, not the signal the user-facing
+  // import routes emit for the same refusals: this is an administrator
+  // acting on another person's account, and every attempt at that, refused
+  // ones included, belongs in the trail an operator reviews.
   const declaredBytes = Number(request.headers.get("content-length") ?? 0);
   if (declaredBytes > MAX_UPLOAD_BYTES) {
     await auditLog("admin.import-apple-health.kickoff.denied", {

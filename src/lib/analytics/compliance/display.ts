@@ -29,9 +29,9 @@ import {
 } from "./windows";
 import {
   COMPLIANCE_LEDGER_WINDOW_DAYS,
-  buildComplianceLedgerRows,
   tallyComplianceFromLedger,
-  tallyLedgerRows,
+  trailingComplianceLedger,
+  trailingComplianceTally,
 } from "./ledger";
 import { buildCurrentCycle, type CurrentCycle } from "./cycle";
 import { rollingIntakeInstants } from "./adapters";
@@ -244,6 +244,31 @@ export function buildComplianceDisplay(
  *                       that already pinned its own `now`.
  */
 /**
+ * The cadence engine's view of a compliance context, and the only place it
+ * is built: the streak timeline, the per-window timeline and the ledger must
+ * expect the same slots. The two timelines used to copy the context field
+ * by field and dropped `endedAt` (#1280), so a slot after "End course"
+ * counted as missed in the streak while the rate left it out. `endedAt` is
+ * required on both types, so a field missed here is a type error rather
+ * than a slot.
+ */
+export function cadenceEngineContextOf(
+  ctx: ComplianceMedicationContext,
+): CadenceEngineContext {
+  return {
+    startsOn: ctx.startsOn,
+    endsOn: ctx.endsOn,
+    endedAt: ctx.endedAt,
+    oneShot: ctx.oneShot,
+    createdAt: ctx.createdAt,
+    lastIntakeAt: ctx.lastIntakeAt,
+    timeZone: ctx.timeZone,
+    scheduleRevisions: ctx.scheduleRevisions,
+    courses: ctx.courses,
+  };
+}
+
+/**
  * Whether a medication expects any dose at all, and so has an adherence rate
  * worth showing.
  *
@@ -357,7 +382,7 @@ export function calculateCompliance(
     windowStart: s.windowStart,
     windowEnd: s.windowEnd,
     daysOfWeek: s.daysOfWeek ?? null,
-    // v1.7.0 SB-SCHED-2 — thread the canonical-engine fields so the
+    // v1.7.0 — thread the canonical-engine fields so the
     // cadence expander can delegate to `occurrencesBetween` when a
     // medication context is supplied. Undefined fields collapse to the
     // legacy weekday path inside `expandScheduleSlots`.
@@ -370,24 +395,12 @@ export function calculateCompliance(
     cyclicOffWeeks: s.cyclicOffWeeks ?? null,
   }));
 
-  // v1.7.0 SB-SCHED-2 — build the engine context once per medication.
+  // v1.7.0 — build the engine context once per medication.
   // When the caller supplies it, the timeline routes through the
   // canonical engine (RRULE / rolling / one-shot / PRN / cyclic);
   // otherwise the legacy weekday walker stays in force.
   const ctx = options?.medicationContext;
-  const engineCtx: CadenceEngineContext | undefined = ctx
-    ? {
-        startsOn: ctx.startsOn,
-        endsOn: ctx.endsOn,
-        oneShot: ctx.oneShot,
-        createdAt: ctx.createdAt,
-        lastIntakeAt: ctx.lastIntakeAt,
-        timeZone: ctx.timeZone,
-        scheduleRevisions: ctx.scheduleRevisions,
-        // v1.40 (#1024) — the streak walks the same course days the rate does.
-        courses: ctx.courses,
-      }
-    : undefined;
+  const engineCtx = ctx ? cadenceEngineContextOf(ctx) : undefined;
 
   // Match events against the same slot grid the cadence chart uses.
   // The chart's pairing radius is ±12 h so a late-by-six-hours dose
@@ -564,9 +577,7 @@ export function buildMedicationComplianceBundle(
       : ledgerPeriodStart;
 
   const hasSchedules = schedules.length > 0;
-  const ledgerRows = hasSchedules
-    ? buildComplianceLedgerRows(events, schedules, ctx, ledgerFrom, now, now)
-    : [];
+  const ledgerRows = trailingComplianceLedger(events, schedules, ctx, now);
 
   // ONE cadence timeline over the full ledger window. Each per-window
   // streak below walks only its own trailing `effectiveDays`, so sharing
@@ -607,10 +618,7 @@ export function buildMedicationComplianceBundle(
       1,
       Math.ceil((now.getTime() - effectiveStart.getTime()) / ONE_DAY_MS),
     );
-    const tally = tallyLedgerRows(ledgerRows, {
-      from: periodStart,
-      to: now,
-    });
+    const tally = trailingComplianceTally(ledgerRows, days, now);
     const { current: streak } = streaksFromTimeline(
       timeline,
       now,
@@ -760,17 +768,7 @@ function buildTimelineForWindow(
     cyclicOffWeeks: s.cyclicOffWeeks ?? null,
   }));
 
-  const engineCtx: CadenceEngineContext = {
-    startsOn: ctx.startsOn,
-    endsOn: ctx.endsOn,
-    oneShot: ctx.oneShot,
-    createdAt: ctx.createdAt,
-    lastIntakeAt: ctx.lastIntakeAt,
-    timeZone: ctx.timeZone,
-    scheduleRevisions: ctx.scheduleRevisions,
-    // v1.40 (#1024) — the same course days the ledger counts.
-    courses: ctx.courses,
-  };
+  const engineCtx = cadenceEngineContextOf(ctx);
 
   const normalisedEvents: IntakeEventLike[] = events
     .filter((e) => e.scheduledFor >= effectiveStart && e.scheduledFor <= now)

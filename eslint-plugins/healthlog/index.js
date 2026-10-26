@@ -14,6 +14,15 @@
  *                              src/lib/tz/format, never written out.
  *   - `no-utc-day-key`       — a day is cut through the tz module, not by
  *                              slicing an ISO string or parsing UTC midnight.
+ *   - `no-planning-tags`     — no planning-note identifier at the head of a
+ *                              comment line.
+ *   - `no-unlocalised-decimal` — a displayed number goes through the app's
+ *                              formatters, not toFixed() or a locale-less
+ *                              toLocaleString().
+ *   - `no-raw-card-shell`    — a card surface is a <Card> or a shell
+ *                              primitive, not bg-card + border + rounded-xl.
+ *   - `import-boundaries`    — src/lib never imports components or app, and
+ *                              a "use client" file imports no server module.
  */
 
 "use strict";
@@ -26,6 +35,10 @@ const spacingScale = require("./spacing-scale.js");
 const jobHandlerOutcome = require("./job-handler-outcome.js");
 const noDefaultZoneLiteral = require("./no-default-zone-literal.js");
 const noUtcDayKey = require("./no-utc-day-key.js");
+const noPlanningTags = require("./no-planning-tags.js");
+const noUnlocalisedDecimal = require("./no-unlocalised-decimal.js");
+const noRawCardShell = require("./no-raw-card-shell.js");
+const importBoundaries = require("./import-boundaries.js");
 
 module.exports = {
   rules: {
@@ -42,5 +55,9 @@ module.exports = {
     "job-handler-outcome": jobHandlerOutcome,
     "no-default-zone-literal": noDefaultZoneLiteral,
     "no-utc-day-key": noUtcDayKey,
+    "no-planning-tags": noPlanningTags,
+    "no-unlocalised-decimal": noUnlocalisedDecimal,
+    "no-raw-card-shell": noRawCardShell,
+    "import-boundaries": importBoundaries,
   },
 };

@@ -59,7 +59,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -130,6 +130,9 @@ import { generateComprehensiveInsight } from "../comprehensive-generate";
 import { OPERATOR_COST_CAP, USER_PLAN_CAP } from "@/lib/ai/coach/budget";
 import { AiUnavailableError } from "@/lib/ai/capabilities/refusal";
 
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
+
 const VALID = JSON.stringify({ dailyBriefing: { paragraph: "ok" } });
 
 beforeEach(() => {
@@ -147,7 +150,7 @@ beforeEach(() => {
   findUnique.mockResolvedValue({
     insightsPrivacyMode: "aggregated",
     insightsCachedAt: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
     insightsExcludeMetrics: [],
     insightsSnapshotHash: null,
     insightsBriefingRerollDate: null,
@@ -163,6 +166,7 @@ beforeEach(() => {
     result: { content: VALID, tokensUsed: 900, model: "m" },
     workingProvider: { providerType: "admin-openai" },
     fallbackHops: [],
+    tokensSpent: 0,
   });
 });
 
@@ -266,11 +270,13 @@ describe("generateComprehensiveInsight — daily token ceiling", () => {
         result: { content: "not json", tokensUsed: 400, model: "m" },
         workingProvider: { providerType: "admin-openai" },
         fallbackHops: [],
+        tokensSpent: 0,
       })
       .mockResolvedValueOnce({
         result: { content: VALID, tokensUsed: 900, model: "m" },
         workingProvider: { providerType: "admin-openai" },
         fallbackHops: [],
+        tokensSpent: 0,
       });
 
     const outcome = await generateComprehensiveInsight("u1", { locale: "de" });

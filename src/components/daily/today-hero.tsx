@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * S2 — the Today hero, the promoted day's read on the dashboard.
+ * The Today hero, the promoted day's read on the dashboard.
  *
  * MARC SIGN-OFF (2026-07-16, decision 1): Today is the dashboard hero
  * promoted to the default read, with the dense tile grid demoted below
@@ -14,7 +14,7 @@
  *   - the day's read: the health `ScoreRing` (`flat`, md) with its
  *     server-computed band and an honest provisional/final face — a null
  *     score paints the ring's own provisional state, never a zero;
- *   - v1.29.1 (Marc, live-use): the v1.29.0 selected-score-ring cluster is
+ *   - v1.29.1 (live use): the v1.29.0 selected-score-ring cluster is
  *     removed from the web hero — it read as uneven and wasted tile space.
  *     The health `ScoreRing` is the hero's only ring now. The score-ring
  *     SELECTION contract stays server-side (`selectedScoreRings` on the
@@ -30,7 +30,8 @@
  *     stands in its place — not an alarming empty card.
  *
  * Every `PriorityItem` action carries an `href` (dose.log → /medications,
- * sync.reconnect → /settings/integrations, checkup.view → /checkups), so
+ * sync.reconnect → /settings/integrations, checkup.view → /checkups, or the
+ * visit itself on an upcoming_visit item), so
  * `PriorityCard` wires each tap as a `<Link>` to its existing destination
  * by construction; S2 invents no new backend action.
  *
@@ -42,6 +43,7 @@
  * score composition yields entirely. The empty-account degrade and the
  * freshness note are shared by both modes.
  */
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { Moon } from "lucide-react";
 
@@ -330,12 +332,10 @@ export function TodayHero({
       {/* The ring opens the Insights overview — the destination the
           health-score card owns — so every hero ring is a door, not a
           poster. */}
-      <Link
-        href="/insights"
-        aria-label={t("daily.today.ringLink", {
+      <ScoreRingLink
+        purpose={t("daily.today.ringLink", {
           metric: t("daily.today.scoreLabel"),
         })}
-        className="focus-visible:ring-ring/50 block rounded-full focus-visible:ring-2 focus-visible:outline-none"
       >
         <ScoreRing
           score={digest.score?.value ?? null}
@@ -344,7 +344,7 @@ export function TodayHero({
           flat
           label={t("daily.today.scoreLabel")}
         />
-      </Link>
+      </ScoreRingLink>
     </div>
   );
 
@@ -538,7 +538,7 @@ export function TodayHero({
           </div>
         )}
 
-        {/* Meta row — the hero's quiet tier (UI-STANDARDS §text: `text-xs
+        {/* Meta row — the hero's quiet tier (ui-standards.md §3: `text-xs
             text-muted-foreground` is the meta floor; never an accent, never an
             opacity modifier). Freshness note (plan §2.4) — provisional day,
             last night's sleep not yet folded in. Muted, non-blocking,
@@ -562,5 +562,28 @@ export function TodayHero({
           ) : null)}
       </div>
     </section>
+  );
+}
+
+/**
+ * The hero ring as a door to the Insights overview. Named by what it shows
+ * (the score and its label) with the purpose added for screen readers, so
+ * the accessible name contains the visible text (WCAG 2.5.3).
+ */
+function ScoreRingLink({
+  purpose,
+  children,
+}: {
+  purpose: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href="/insights"
+      className="focus-visible:ring-ring/50 block rounded-full focus-visible:ring-2 focus-visible:outline-none"
+    >
+      <span className="sr-only">{purpose}</span>
+      {children}
+    </Link>
   );
 }

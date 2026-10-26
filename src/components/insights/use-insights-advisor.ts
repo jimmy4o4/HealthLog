@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { pollAttemptCount } from "@/lib/queries/refetch-interval";
 import type { InsightResult } from "@/lib/ai/types";
 // Type-only — the runtime schemas load lazily inside `fetchAdvisor` so
 // the zod module graph (`@/lib/ai/schema` is ~550 lines of zod builders)
@@ -16,16 +17,18 @@ import type {
 } from "@/lib/ai/schema";
 import { queryKeys, refetchInactiveDailyReads } from "@/lib/query-keys";
 import { apiFetchRaw } from "@/lib/api/api-fetch";
-import { useAiCapability } from "@/hooks/use-ai-capability";
+import { useAiCapability, useAiProviderState } from "@/hooks/use-ai-capability";
+import { AI_BUDGETS, COMPREHENSIVE_MODEL_CALLS } from "@/lib/ai/ai-budgets";
+import { clientAbortMs } from "@/lib/ai/effective-timeout";
 import type { BriefingFailureClass } from "@/lib/insights/briefing-failure-marker";
 
 /**
- * v1.4.16 phase D reconcile (CRITICAL C1 + C2) — shared TanStack Query
+ * v1.4.16 (CRITICAL C1 + C2) — shared TanStack Query
  * helper that reads the rich advisor payload from `/api/insights/generate`.
  *
  * Why a POST under a `useQuery` rather than a dedicated GET endpoint:
  * the route already cache-returns the most recent generation (24h TTL on
- * `User.insightsCachedAt` / `User.insightsCachedText`) without burning a
+ * `User.insightsCachedAt` / `User.insightsCachedTextEncrypted`) without burning a
  * rate-limit token, so a single POST-without-`force` is functionally a
  * GET-or-generate. Adding a separate GET would duplicate the cache-read
  * branch and split the audit-log surface; the reconcile report deferred
@@ -42,7 +45,7 @@ export interface InsightAdvisorPayload {
   cachedAt?: string | null;
   legacyPayload?: boolean;
   /**
-   * v1.4.20 phase B1 — Daily Briefing block surfaced for the new hero
+   * v1.4.20 — Daily Briefing block surfaced for the new hero
    * strip + briefing card. Lives on the cached payload alongside the
    * legacy `insights` shape (see `aiInsightResponseSchema` — the
    * `.passthrough()` lets the field round-trip through any provider).
@@ -51,7 +54,7 @@ export interface InsightAdvisorPayload {
    */
   dailyBriefing?: DailyBriefingPayload | null;
   /**
-   * v1.4.20 phase B3 — optional trend annotations for the Trends row.
+   * v1.4.20 — optional trend annotations for the Trends row.
    * Same lift-pattern as `dailyBriefing` — validated client-side and
    * left null when the cached payload predates PROMPT_VERSION 4.20.1.
    */
@@ -115,37 +118,82 @@ const ADVISOR_TIMEOUT_MS = 8_000;
 
 /**
  * v1.15.18 — the user-initiated regenerate (`force`) POSTs an INLINE
- * generation: a ~1500-token warm completion that routinely runs longer
- * than the 8 s read budget. Bounding the force branch at 8 s silently
- * discarded a slow-but-successful generation — the abort returned a null
- * payload, the mutation only invalidated (re-reading the OLD cache), yet
- * the server had often already written the fresh briefing. Give the force
- * branch a generous 45 s client budget so a slow success is kept, not
- * dropped. The READ path stays fast at 8 s — only the explicit user tap
- * may wait. Per `.planning/v1.15.18-daily-briefing-audit.md` Fix 1b.
+ * generation that routinely runs longer than the 8 s read budget; bounding it
+ * at 8 s discarded a slow-but-successful generation.
+ *
+ * #1267 — the budget follows the person's response-timeout setting instead of
+ * a constant 45 s, which cut every regenerate on a slow local model while the
+ * server still had minutes left. The route makes up to two sequential model
+ * calls (the generation and its grounding retry), and a reasoning model that
+ * answered nothing is asked once more inside the first, so three calls at the
+ * per-call timeout, at least the briefing's own 180 s default each. Never
+ * shorter than the server: the abort is only for a request nobody answers.
+ *
+ * Fewer than `COMPREHENSIVE_MODEL_CALLS` on purpose: the route runs its own
+ * pipeline (`src/lib/insights/briefing-request/`), not the background
+ * generator, and answers an unparseable reply or a screened payload with a
+ * refusal instead of the generator's JSON retry and screen repair.
+ * `ai-call-timeout-guard.test.ts` holds that pipeline to these two stages.
  */
-const FORCE_ADVISOR_TIMEOUT_MS = 45_000;
+const FORCE_ADVISOR_MODEL_CALLS = 3;
+
+/** The client budget for a forced regenerate (exported for the test). */
+export function forceAdvisorTimeoutMs(
+  responseTimeoutMs: number | null | undefined,
+): number {
+  return clientAbortMs(
+    responseTimeoutMs,
+    FORCE_ADVISOR_MODEL_CALLS,
+    AI_BUDGETS.comprehensive.timeoutMs,
+  );
+}
 
 /**
  * v1.16.7 — poll cadence + ceiling while the server reports
  * `revalidating: true` (stale briefing served, out-of-band warm in
  * flight). The query's 1 h `staleTime` plus the app-default
  * `refetchOnWindowFocus: false` means a stale-served briefing would
- * otherwise never refresh in-session. 25 s comfortably covers the warm
- * job's 45 s budget within two polls; the attempt ceiling stops a
+ * otherwise never refresh in-session. The attempt ceiling stops a
  * persistently failing generation from polling an open page forever.
  * Same bounded-poll shape as `nextStatusPollInterval`
  * (`src/hooks/use-insight-status.ts`).
+ *
+ * `ADVISOR_REVALIDATE_POLL_MAX_ATTEMPTS` is the ceiling for a settling
+ * regenerate and for callers whose poll waits on no model; the briefing read
+ * itself waits as long as the warm may run (`advisorRevalidatePollMaxAttempts`).
  */
 export const ADVISOR_REVALIDATE_POLL_MS = 25_000;
 export const ADVISOR_REVALIDATE_POLL_MAX_ATTEMPTS = 10;
+
+/**
+ * The attempt ceiling for the briefing read while the warm is in flight.
+ *
+ * #1274 — a fixed ten attempts stopped watching after 225 s, while the warm
+ * the read enqueued may run for the person's response timeout on each of the
+ * generation's sequential calls (`COMPREHENSIVE_MODEL_CALLS`). A local model
+ * needing 300 s per answer delivered its briefing to a page that had stopped
+ * looking, which kept the empty or the previous failure state on screen. The
+ * window is the warm's own bound read off the published setting, never less
+ * per call than the briefing's 180 s default (`clientAbortMs`), plus the first
+ * read and one interval for the queue to pick the warm up.
+ */
+export function advisorRevalidatePollMaxAttempts(
+  responseTimeoutMs: number | null | undefined,
+): number {
+  const warmMs = clientAbortMs(
+    responseTimeoutMs,
+    COMPREHENSIVE_MODEL_CALLS,
+    AI_BUDGETS.comprehensive.timeoutMs,
+  );
+  return Math.ceil(warmMs / ADVISOR_REVALIDATE_POLL_MS) + 2;
+}
 
 /**
  * Refs #786 — the settling state a timed-out force regenerate enters.
  *
  * Async-truth contract, client end (the server end is documented at the head
  * of `src/app/api/insights/generate/route.ts`): the force POST generates
- * INLINE and keeps running after the client aborts at 45 s — the server
+ * INLINE and keeps running after the client aborts — the server
  * usually writes the fresh cache moments later. A page that knows work is
  * running must keep saying so until it can prove an outcome, so the timeout
  * is NOT surfaced as an error. Instead the hook remembers the baseline it was
@@ -221,6 +269,7 @@ export function nextAdvisorPollInterval(
   revalidating: boolean | undefined,
   dataUpdateCount: number,
   settling?: Pick<AdvisorSettleState, "startedAtUpdateCount"> | null,
+  maxAttempts: number = ADVISOR_REVALIDATE_POLL_MAX_ATTEMPTS,
 ): number | false {
   if (settling) {
     if (
@@ -232,7 +281,7 @@ export function nextAdvisorPollInterval(
     return ADVISOR_REVALIDATE_POLL_MS;
   }
   if (!revalidating) return false;
-  if (dataUpdateCount >= ADVISOR_REVALIDATE_POLL_MAX_ATTEMPTS) return false;
+  if (dataUpdateCount >= maxAttempts) return false;
   return ADVISOR_REVALIDATE_POLL_MS;
 }
 
@@ -275,12 +324,18 @@ interface AdvisorFetchResult {
  * no-briefing-today chain). The wire-contract test pins it.
  */
 export async function fetchAdvisor(
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    /** `ai.provider.responseTimeoutMs` from the account payload. */
+    responseTimeoutMs?: number | null;
+  } = {},
 ): Promise<AdvisorFetchResult> {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(
     () => controller.abort(),
-    options.force ? FORCE_ADVISOR_TIMEOUT_MS : ADVISOR_TIMEOUT_MS,
+    options.force
+      ? forceAdvisorTimeoutMs(options.responseTimeoutMs)
+      : ADVISOR_TIMEOUT_MS,
   );
   let res: Response;
   try {
@@ -359,7 +414,7 @@ export async function fetchAdvisor(
     payload.dailyBriefing = null;
   }
 
-  // v1.4.20 phase B3 — same lift for `trendAnnotations`. Cached payloads
+  // v1.4.20 — same lift for `trendAnnotations`. Cached payloads
   // from the 4.20.0 line predate the field, so null is the expected
   // default. A malformed candidate also resolves to null so the UI
   // surfaces the per-metric empty hint instead of a half-rendered card.
@@ -436,6 +491,7 @@ export function useInsightsAdvisorQuery(
   enabled: boolean,
 ): UseInsightsAdvisorResult {
   const briefing = useAiCapability("briefing");
+  const { responseTimeoutMs } = useAiProviderState();
   const queryClient = useQueryClient();
   // Refs #786 — settling state for a timed-out force regenerate (see the
   // contract comment above `AdvisorSettleState`). `settleOutcome` carries the
@@ -462,22 +518,21 @@ export function useInsightsAdvisorQuery(
     refetchInterval: (query) =>
       nextAdvisorPollInterval(
         query.state.data?.payload?.revalidating,
-        query.state.dataUpdateCount,
+        pollAttemptCount(query.state),
         settling,
+        advisorRevalidatePollMaxAttempts(responseTimeoutMs),
       ),
   });
 
   // `dataUpdateCount` lives on the query STATE (the refetchInterval callback
   // reads it there); the observer result only exposes `dataUpdatedAt`. Read
   // it imperatively from the cache where the settle machinery needs it.
-  const readDataUpdateCount = useCallback(
-    () =>
-      queryClient
-        .getQueryCache()
-        .find({ queryKey: queryKeys.insightsAdvisor() })?.state
-        .dataUpdateCount ?? 0,
-    [queryClient],
-  );
+  const readDataUpdateCount = useCallback(() => {
+    const state = queryClient
+      .getQueryCache()
+      .find({ queryKey: queryKeys.insightsAdvisor() })?.state;
+    return state ? pollAttemptCount(state) : 0;
+  }, [queryClient]);
 
   // Apply the settle resolution the pure seam proves. Each poll result lands
   // in `query.data` (the poll's own cache write IS the fresh payload — no
@@ -501,7 +556,7 @@ export function useInsightsAdvisorQuery(
   }
 
   const mutation = useMutation({
-    mutationFn: () => fetchAdvisor({ force: true }),
+    mutationFn: () => fetchAdvisor({ force: true, responseTimeoutMs }),
     onSuccess: (result) => {
       if (result.payload) {
         // A genuinely fresh generation landed — write it into the shared
@@ -510,7 +565,7 @@ export function useInsightsAdvisorQuery(
       } else {
         // No fresh payload (timeout / no-provider / transient). The server's
         // inline POST may STILL have written a fresh briefing after the
-        // client gave up at 45 s, so re-read the GET to converge — but the
+        // client gave up, so re-read the GET to converge — but the
         // honest toast is gated on `regenerateOutcome` below, not on this
         // invalidate.
         //
@@ -541,7 +596,7 @@ export function useInsightsAdvisorQuery(
       // re-fetches.
       queryClient.invalidateQueries({ queryKey: queryKeys.insightsRoot() });
       // v1.18.10 / v1.32.19 — the dashboard hero surfaces the briefing
-      // headline from the SNAPSHOT (server-lifted `User.insightsCachedText`),
+      // headline from the SNAPSHOT (server-lifted `User.insightsCachedTextEncrypted`),
       // and the Today hero's lead line is the SAME briefing lifted into the
       // digest — neither is this advisor cache. A regenerate rewrites that
       // server cache, so both the snapshot and the digest must refetch.

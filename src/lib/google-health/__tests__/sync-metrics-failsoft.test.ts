@@ -1,5 +1,5 @@
 /**
- * F-SYNC-3 — the metric MAPPER runs inside a per-type catch, not just the
+ * The metric MAPPER runs inside a per-type catch, not just the
  * fetch. A single malformed point whose `resource.map(point)` throws used to
  * escape the METRIC_RESOURCES loop and skip every metric type ordered after it
  * (body-fat, spo2, hrv, rhr, respiratory, glucose, temps), also blocking the
@@ -22,8 +22,8 @@ const { fetchDataPointsMock, handleErrorMock, mapWeightMock } = vi.hoisted(
   }),
 );
 
-vi.mock("../client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../client")>();
+vi.mock("../data-points", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../data-points")>();
   return {
     ...actual,
     fetchDataPoints: fetchDataPointsMock,
@@ -44,8 +44,11 @@ vi.mock("../client", async (importOriginal) => {
         if (points.length > 0) await onPage(points);
       },
     ),
-    mapWeight: mapWeightMock,
   };
+});
+vi.mock("../mappers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../mappers")>();
+  return { ...actual, mapWeight: mapWeightMock };
 });
 
 vi.mock("../sync-core", () => ({

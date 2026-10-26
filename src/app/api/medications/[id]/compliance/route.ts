@@ -12,6 +12,7 @@ import {
 import { cachedSwr, caches, type ServerCache } from "@/lib/cache/server-cache";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -71,10 +72,10 @@ export const GET = apiHandler(
           const medication = await prisma.medication.findUnique({
             where: { id },
             include: {
-              schedules: true,
+              schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
               // v1.16.3 — archived schedule eras for era-aware compliance.
               scheduleRevisions: { orderBy: { validFrom: "asc" } },
-              // v1.25 H-MED1 — pause eras so paused days drop out of the denominator.
+              // v1.25 — pause eras so paused days drop out of the denominator.
               pauseEras: { select: { pausedAt: true, resumedAt: true } },
               // v1.40 (#1024) — the courses, so a gap between two expects nothing.
               courses: COURSES_COMPLIANCE_SELECT,

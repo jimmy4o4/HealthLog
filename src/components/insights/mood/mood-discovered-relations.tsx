@@ -9,7 +9,7 @@ import {
 } from "@/components/insights/pattern-dismiss-action";
 
 /**
- * v1.11.5 (F3) — FDR-controlled discovered mood relations.
+ * v1.11.5 — FDR-controlled discovered mood relations.
  *
  * Surfaces the slice of the all-pairs correlation-discovery engine
  * (`/api/insights/correlations`) that involves mood — both
@@ -64,7 +64,7 @@ const CHANNEL_LABEL_KEY: Record<string, string> = {
   HEART_RATE_VARIABILITY: "measurements.typeHeartRateVariability",
   RESTING_HEART_RATE: "measurements.typeRestingHeartRate",
   WEIGHT: "measurements.typeWeight",
-  // v1.25 (W-ENV) — environmental-exposure channels, so a "daylight → mood"
+  // v1.25 — environmental-exposure channels, so a "daylight → mood"
   // relation reads with its descriptive label instead of the raw ENV_ key.
   ENV_TEMP_MEAN: "environment.fields.tempMean",
   ENV_TEMP_MIN: "environment.fields.tempMin",
@@ -80,7 +80,27 @@ const CHANNEL_LABEL_KEY: Record<string, string> = {
   // v1.43 — the Dawarich movement channels.
   MOVEMENT_AWAY: "environment.movement.awayFromHome",
   MOVEMENT_DISTANCE: "environment.movement.distance",
+  // v1.44 — the extended channel families.
+  HRV_RMSSD: "measurements.typeHrvRmssd",
+  EXERCISE_MINUTES: "measurements.typeExerciseMinutes",
+  STAND_MINUTES: "measurements.typeStandMinutes",
+  MINDFUL_MINUTES: "measurements.typeMindfulMinutes",
+  HYDRATION: "nutrients.names.water",
+  CAFFEINE: "nutrients.names.caffeine",
+  ALCOHOL: "insights.mood.discovery.channel.ALCOHOL",
+  WORKOUT_MINUTES: "insights.mood.discovery.channel.WORKOUT_MINUTES",
+  TRAINING_LOAD: "insights.mood.discovery.channel.TRAINING_LOAD",
 };
+
+/** A micronutrient channel (`NUTRIENT:<code>`) reads under its catalog name. */
+const NUTRIENT_PREFIX = "NUTRIENT:";
+
+function channelLabelKey(channelKey: string): string {
+  if (channelKey.startsWith(NUTRIENT_PREFIX)) {
+    return `nutrients.names.${channelKey.slice(NUTRIENT_PREFIX.length)}`;
+  }
+  return CHANNEL_LABEL_KEY[channelKey] ?? channelKey;
+}
 
 /** Keep only the discovered pairs that involve the mood channel. */
 export function moodPairsOf(
@@ -131,8 +151,7 @@ export function MoodDiscoveredRelations({
           const dynamicLabel = moodIsOutcome
             ? pair.behaviourLabel
             : pair.outcomeLabel;
-          const factorLabel =
-            dynamicLabel ?? t(CHANNEL_LABEL_KEY[channelKey] ?? channelKey);
+          const factorLabel = dynamicLabel ?? t(channelLabelKey(channelKey));
           if (
             patternId &&
             dismissal.isDismissed(patternId, pair.dismissed === true)

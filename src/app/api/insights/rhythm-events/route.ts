@@ -24,12 +24,13 @@
  * (never a query field). No AI gate and no module gate: this is a pure DB
  * read of device data.
  */
-import { apiSuccess } from "@/lib/api-response";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { prisma } from "@/lib/db";
 import { EVENT_MEASUREMENT_TYPES } from "@/lib/validations/measurement";
 import type { MeasurementType } from "@/generated/prisma/client";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const dynamic = "force-dynamic";
 
@@ -49,23 +50,25 @@ export const GET = apiHandler(async () => {
   // The `insights` module is the AI analysis opt-out, and nothing here was
   // written by a model.
 
-  const rows = await prisma.measurement.findMany({
-    where: {
-      userId: user.id,
-      type: { in: EVENT_TYPE_LIST },
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      type: true,
-      rhythmClassification: true,
-      measuredAt: true,
-      source: true,
-      deviceType: true,
-    },
-    orderBy: { measuredAt: "desc" },
-    take: MAX_EVENTS,
-  });
+  const { rows, cap } = await listPage(MAX_EVENTS, (take) =>
+    prisma.measurement.findMany({
+      where: {
+        userId: user.id,
+        type: { in: EVENT_TYPE_LIST },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        type: true,
+        rhythmClassification: true,
+        measuredAt: true,
+        source: true,
+        deviceType: true,
+      },
+      orderBy: [{ measuredAt: "desc" }, { id: "desc" }],
+      take,
+    }),
+  );
 
   const events = rows.map((r) => ({
     id: r.id,
@@ -78,11 +81,14 @@ export const GET = apiHandler(async () => {
 
   annotate({
     action: { name: "insights.rhythm-events" },
-    meta: { count: events.length },
+    meta: { count: events.length, truncated: cap.truncated },
   });
 
-  return apiSuccess({
-    events,
-    hasEvents: events.length > 0,
-  });
+  return apiListSuccess(
+    {
+      events,
+      hasEvents: events.length > 0,
+    },
+    cap,
+  );
 });

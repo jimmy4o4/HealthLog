@@ -31,7 +31,14 @@ vi.mock("@/lib/rollups/mood-rollups", async () => {
 
 import { buildMoodDailySeries } from "../mood-series";
 import { prisma } from "@/lib/db";
-import { readMoodDayRollups } from "@/lib/rollups/mood-rollups";
+import {
+  ensureUserMoodRollupsFresh,
+  readMoodDayRollups,
+} from "@/lib/rollups/mood-rollups";
+import {
+  pendingBackgroundTaskCount,
+  settleBackgroundTasks,
+} from "@/lib/logging/background-tasks";
 
 beforeEach(() => {
   vi.mocked(prisma.moodEntry.findMany).mockResolvedValue([] as never);
@@ -83,6 +90,19 @@ describe("buildMoodDailySeries", () => {
     expect(series.summary.count).toBe(2);
   });
 
+  it("bounds the live walk to the window the rollup read covers", async () => {
+    await buildMoodDailySeries("user-1");
+    const [rollupUser, since] = vi.mocked(readMoodDayRollups).mock.calls[0] as [
+      string,
+      Date,
+    ];
+    expect(rollupUser).toBe("user-1");
+    const args = vi.mocked(prisma.moodEntry.findMany).mock.calls[0]?.[0] as {
+      where: { moodLoggedAt?: { gte: Date } };
+    };
+    expect(args.where.moodLoggedAt?.gte).toEqual(since);
+  });
+
   it("returns an empty series for a user with no rollups and no raw entries", async () => {
     const series = await buildMoodDailySeries("user-1");
     expect(series.entries).toEqual([]);
@@ -90,5 +110,27 @@ describe("buildMoodDailySeries", () => {
     // An empty table reads as the rollup tier for annotation parity.
     expect(series.source).toBe("rollup");
     expect(series.summary.count).toBe(0);
+  });
+
+  it("files the rollup warm-up with the background registry", async () => {
+    // The warm-up is not awaited by the read, so a caller that has to know
+    // when the request's work is over (the statement counter, the suite's
+    // settle hook) can only see it through the registry. Left unregistered,
+    // a stale account's full recompute bled into whatever ran next.
+    let release: () => void = () => {};
+    vi.mocked(ensureUserMoodRollupsFresh).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ recomputed: true });
+        }),
+    );
+
+    await buildMoodDailySeries("user-1");
+
+    expect(ensureUserMoodRollupsFresh).toHaveBeenCalledWith("user-1");
+    expect(pendingBackgroundTaskCount()).toBe(1);
+    release();
+    await settleBackgroundTasks();
+    expect(pendingBackgroundTaskCount()).toBe(0);
   });
 });

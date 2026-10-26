@@ -10,6 +10,13 @@ import {
 } from "@/lib/jobs/job-failures";
 import { readFileSync } from "node:fs";
 import {
+  containerMemoryLimitMb,
+  heapLimitMb,
+  isBelowMemoryFloor,
+  isHeapLimitLow,
+  MEMORY_FLOOR_MB,
+} from "@/lib/support/heap-limit";
+import {
   geoLookupMode,
   geoProviderChosen,
   resolveGeoProviderHost,
@@ -47,7 +54,7 @@ export const GET = apiHandler(async () => {
     appSettings,
   ] = await Promise.all([
     prisma.user.count(),
-    // v1.4.41 W-DELETED-2 — exclude soft-deleted measurements from the
+    // v1.4.41 — exclude soft-deleted measurements from the
     // admin status count so the dashboard tile reflects live data only.
     prisma.measurement.count({ where: { deletedAt: null } }),
     prisma.medication.count(),
@@ -73,6 +80,11 @@ export const GET = apiHandler(async () => {
   // reports. `null` = no queue schema to ask (web-only deployment); an empty
   // array = asked, nothing is failing.
   const failingJobs = await readFailingQueues();
+  // The process's heap ceiling, and whether it is the 1 GB-container size
+  // that a long-used account can fill (`heap-limit.ts`).
+  const heapLimit = heapLimitMb();
+  // And the container's own limit against the supported floor.
+  const containerLimit = containerMemoryLimitMb();
 
   return apiSuccess({
     version: process.env.npm_package_version || "0.1.0",
@@ -81,6 +93,13 @@ export const GET = apiHandler(async () => {
     buildTime: BUILD_TIME,
     startTime: START_TIME,
     database: "connected",
+    memory: {
+      heapLimitMb: heapLimit,
+      low: isHeapLimitLow(heapLimit),
+      containerLimitMb: containerLimit,
+      floorMb: MEMORY_FLOOR_MB,
+      belowFloor: isBelowMemoryFloor(containerLimit),
+    },
     worker: {
       running: workerStatus.running,
       startedAt: workerStatus.startedAt,

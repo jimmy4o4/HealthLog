@@ -84,6 +84,12 @@ vi.mock("@/lib/rate-limit", () => ({
     remaining: 9,
     resetAt: Date.now() + 3600_000,
   })),
+  // The shared write ceiling every authenticated POST is charged against.
+  checkRecordWriteRateLimit: vi.fn(async () => ({
+    allowed: true,
+    remaining: 299,
+    resetAt: Date.now() + 60_000,
+  })),
 }));
 
 beforeEach(async () => {
@@ -282,7 +288,7 @@ describe("POST /api/insights/generate — chain fallback", () => {
     const prisma = getPrismaClient();
     await prisma.user.update({
       where: { username: "chain-user" },
-      data: { insightsCachedAt: null, insightsCachedText: null },
+      data: { insightsCachedAt: null, insightsCachedTextEncrypted: null },
     });
 
     // Second call: cache should reorder so Anthropic is the first

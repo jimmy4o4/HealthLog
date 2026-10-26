@@ -72,6 +72,16 @@ import {
   upsertScoreRow,
 } from "@/lib/insights/score-row";
 import { shiftDateKey } from "@/lib/tz/format";
+import {
+  canonicalWorkoutTrimps,
+  readWorkoutsAroundRange,
+  rowsInRange,
+  startsInRange,
+} from "@/lib/workouts/canonical-read";
+import {
+  pickCanonicalSourceRows,
+  type SourcePickerRow,
+} from "@/lib/analytics/source-priority";
 
 /** The per-day idempotency-key prefix for a stored Strain score row. */
 export const STRAIN_SCORE_EXTERNAL_ID_PREFIX = "strain:";
@@ -408,17 +418,50 @@ export async function computeStrainScore(
       deletedAt: null,
       measuredAt: { gte: dayStart, lt: dayEnd },
     },
-    select: { value: true },
+    orderBy: [{ measuredAt: "asc" }, { id: "asc" }],
+    select: {
+      value: true,
+      source: true,
+      deviceType: true,
+      measuredAt: true,
+      type: true,
+    },
     take: 5000,
   });
-  const dayActiveEnergy = energyRows.reduce((s, r) => s + r.value, 0);
 
-  // The day's workouts + their HR series.
-  const workouts = await prisma.workout.findMany({
-    where: { userId, startedAt: { gte: dayStart, lt: dayEnd } },
-    select: { id: true, samples: { select: { samples: true } } },
-    take: 100,
-  });
+  // The day's workouts + their HR series, with the session identity the
+  // cross-source picker needs: one run recorded by the watch and synced again
+  // through a second service is one training impulse, not two.
+  const [account, workouts] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { sourcePriorityJson: true },
+    }),
+    // Read through the windowed reader: a session whose twin lies across
+    // midnight is counted once, on the day the list shows it.
+    readWorkoutsAroundRange({ from: dayStart, to: dayEnd }, (bounds) =>
+      prisma.workout.findMany({
+        where: { userId, startedAt: bounds },
+        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          source: true,
+          sportType: true,
+          startedAt: true,
+          durationSec: true,
+          samples: { select: { samples: true } },
+        },
+        take: 100,
+      }),
+    ),
+  ]);
+
+  // The watch and the phone relay (or a ring) both write the day's active
+  // energy: one source per day, the same pick the energy chart applies.
+  const dayActiveEnergy = canonicalDayActiveEnergy(
+    energyRows,
+    account?.sourcePriorityJson ?? null,
+  );
 
   const hrMax = profile.ageYears != null ? tanakaHrMax(profile.ageYears) : null;
   const canTrimp = hrMax != null && hrRest != null && hrMax > hrRest;
@@ -426,15 +469,25 @@ export async function computeStrainScore(
   let dayTrimp = 0;
   let workoutsWithSeries = 0;
   if (canTrimp) {
-    for (const w of workouts) {
+    const trimpOf = (w: (typeof workouts.rows)[number]): number => {
       const raw = w.samples?.samples;
-      if (!Array.isArray(raw)) continue;
-      const series = raw as unknown as HrSample[];
-      const trimp = banisterTrimp(series, hrRest!, hrMax!, profile.sex);
-      if (trimp > 0) {
-        dayTrimp += trimp;
-        workoutsWithSeries += 1;
-      }
+      if (!Array.isArray(raw)) return 0;
+      return banisterTrimp(
+        raw as unknown as HrSample[],
+        hrRest!,
+        hrMax!,
+        profile.sex,
+      );
+    };
+    const sessions = canonicalWorkoutTrimps(
+      workouts.rows,
+      account?.sourcePriorityJson ?? null,
+      trimpOf,
+      (at) => startsInRange(workouts.range, at),
+    );
+    for (const trimp of sessions) {
+      dayTrimp += trimp;
+      workoutsWithSeries += 1;
     }
   }
 
@@ -487,7 +540,7 @@ export async function computeStrainScore(
   return {
     score: null,
     reason:
-      workouts.length > 0 && !canTrimp
+      rowsInRange(workouts).length > 0 && !canTrimp
         ? "insufficient_profile"
         : "insufficient_inputs",
     dayTrimp: 0,
@@ -497,6 +550,31 @@ export async function computeStrainScore(
     trainingDays: ref.trainingDays,
     refPersonalToPersist: ref.refPersonalToPersist,
   };
+}
+
+/**
+ * The day's active energy from ONE source. The rows of a single scored day go
+ * through the cumulative-metric picker on the `activeEnergy` ladder (source,
+ * then device type); when no source on the ladder is present the picker keeps
+ * every row, so the sources left are then compared by their day total and the
+ * largest kept: never two sources' totals added. Pure; exported for tests.
+ */
+export function canonicalDayActiveEnergy<
+  T extends SourcePickerRow & { value: number },
+>(rows: readonly T[], priorityJson: unknown): number {
+  const { canonicalRows } = pickCanonicalSourceRows(
+    rows,
+    "activeEnergy",
+    priorityJson,
+    () => "day",
+  );
+  const bySource = new Map<string, number>();
+  for (const row of canonicalRows) {
+    bySource.set(row.source, (bySource.get(row.source) ?? 0) + row.value);
+  }
+  let best = 0;
+  for (const total of bySource.values()) best = Math.max(best, total);
+  return best;
 }
 
 /**

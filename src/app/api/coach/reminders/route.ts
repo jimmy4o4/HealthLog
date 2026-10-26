@@ -2,7 +2,7 @@
  * GET  /api/coach/reminders — list the caller's Coach episodic reminders.
  * POST /api/coach/reminders — create one manually (the ledger "+ add" path).
  *
- * v1.22 (B2/B6) — the management + in-app-surface read for the durable
+ * v1.22 — the management + in-app-surface read for the durable
  * "remind me about X" memory the Coach captures inline via the `---REMEMBER---`
  * sentinel. The note free-text is decrypted on the fly; an undecryptable row (a
  * key rotated out of the map) is skipped rather than 500ing the whole list.
@@ -22,12 +22,8 @@
  * / due / surfaced), soonest-due first.
  */
 import { apiHandler, requireAuth, requireRecordAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, returnAllZodIssues } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { prisma } from "@/lib/db";
 import { requireModuleEnabled } from "@/lib/modules/gate";
@@ -151,13 +147,10 @@ export const POST = apiHandler(async (req: Request) => {
   );
   if (!rate.allowed) return apiError("Too many requests", 429);
 
-  const { data: body, error: jsonError } = await safeJson(req, {
+  const parsed = await parseJsonBody(req, coachReminderCreateSchema, {
     maxBytes: 4 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = coachReminderCreateSchema.safeParse(body);
-  if (!parsed.success) return returnAllZodIssues(parsed.error, 422);
+  if (!parsed.ok) return parsed.error;
 
   // Resolve the optional `when` against the closed grammar; an invalid token
   // 422s rather than silently dropping the timing the user asked for.

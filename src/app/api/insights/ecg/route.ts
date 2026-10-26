@@ -35,18 +35,16 @@
 import { NextRequest } from "next/server";
 import { z } from "zod/v4";
 
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { apiHandler, requireAuth, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { prisma } from "@/lib/db";
 import { persistEcgRecording } from "@/lib/ecg/persist-recording";
 import { isoDateTime } from "@/lib/validations/datetime";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const dynamic = "force-dynamic";
 
@@ -133,24 +131,26 @@ export const GET = apiHandler(async () => {
   // sync.
   const { user } = await requireRecordAuth("manage", "record");
 
-  const rows = await prisma.ecgRecording.findMany({
-    where: { userId: user.id },
-    // Everything EXCEPT `waveformEncrypted` — the list never touches the
-    // encrypted blob, so no decrypt happens on this path.
-    select: {
-      id: true,
-      recordedAt: true,
-      durationSeconds: true,
-      samplingFrequency: true,
-      sampleCount: true,
-      averageHeartRate: true,
-      lead: true,
-      rhythmClassification: true,
-      source: true,
-    },
-    orderBy: { recordedAt: "desc" },
-    take: MAX_RECORDINGS,
-  });
+  const { rows, cap } = await listPage(MAX_RECORDINGS, (take) =>
+    prisma.ecgRecording.findMany({
+      where: { userId: user.id },
+      // Everything EXCEPT `waveformEncrypted` — the list never touches the
+      // encrypted blob, so no decrypt happens on this path.
+      select: {
+        id: true,
+        recordedAt: true,
+        durationSeconds: true,
+        samplingFrequency: true,
+        sampleCount: true,
+        averageHeartRate: true,
+        lead: true,
+        rhythmClassification: true,
+        source: true,
+      },
+      orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
+      take,
+    }),
+  );
 
   const recordings = rows.map((r) => ({
     id: r.id,
@@ -168,13 +168,16 @@ export const GET = apiHandler(async () => {
 
   annotate({
     action: { name: "insights.ecg.list" },
-    meta: { count: recordings.length },
+    meta: { count: recordings.length, truncated: cap.truncated },
   });
 
-  return apiSuccess({
-    recordings,
-    hasRecordings: recordings.length > 0,
-  });
+  return apiListSuccess(
+    {
+      recordings,
+      hasRecordings: recordings.length > 0,
+    },
+    cap,
+  );
 });
 
 /**
@@ -196,7 +199,10 @@ export const GET = apiHandler(async () => {
  * to the same row by construction rather than by a cached response.
  */
 export const POST = apiHandler(async (request: NextRequest) => {
-  const { user } = await requireAuth();
+  // Metered by this route's own bulk bucket below, not the shared per-account
+  // write bucket: the native client syncs through here in bursts (see
+  // `meterAccountWrite`).
+  const { user } = await requireAuth(undefined, { writeBucket: "own" });
   // A device ingest carries no model text: switching AI off, or the AI
   // analysis opt-out, must never refuse a recording.
 
@@ -213,27 +219,24 @@ export const POST = apiHandler(async (request: NextRequest) => {
     return apiError("Too many ECG submissions, try again later", 429);
   }
 
-  const { data: rawBody, error: jsonError } = await safeJson<unknown>(request, {
+  const parsed = await parseJsonBody(request, ecgIngestSchema, {
     maxBytes: MAX_BODY_BYTES,
+    onInvalid: (error) => {
+      // Which field was refused and why, never the value: without it a refused
+      // recording is a bare "invalid" in the log and the cause has to be guessed.
+      annotate({
+        action: { name: "insights.ecg.ingest" },
+        meta: {
+          outcome: "invalid",
+          invalidFields: error.issues
+            .map((issue) => `${issue.path.join(".") || "(body)"}:${issue.code}`)
+            .slice(0, 8)
+            .join(","),
+        },
+      });
+    },
   });
-  if (jsonError) return jsonError;
-
-  const parsed = ecgIngestSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    // Which field was refused and why, never the value: without it a refused
-    // recording is a bare "invalid" in the log and the cause has to be guessed.
-    annotate({
-      action: { name: "insights.ecg.ingest" },
-      meta: {
-        outcome: "invalid",
-        invalidFields: parsed.error.issues
-          .map((issue) => `${issue.path.join(".") || "(body)"}:${issue.code}`)
-          .slice(0, 8)
-          .join(","),
-      },
-    });
-    return returnAllZodIssues(parsed.error);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const body = parsed.data;
   const result = await persistEcgRecording(

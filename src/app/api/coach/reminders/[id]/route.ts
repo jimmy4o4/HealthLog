@@ -2,7 +2,7 @@
  * PATCH  /api/coach/reminders/[id] — confirm / update a reminder's lifecycle.
  * DELETE /api/coach/reminders/[id] — soft-delete one reminder.
  *
- * v1.22 (B2/B6) — the user-confirm + management surface for the Coach episodic
+ * v1.22 — the user-confirm + management surface for the Coach episodic
  * reminders. `status` confirms a `proposed` reminder (→ active), marks it
  * `done` / `dismissed`, or re-activates it; `when` re-schedules (snooze) via the
  * closed grammar. The body never carries the note text, so a client can never
@@ -23,12 +23,8 @@
 import type { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { prisma } from "@/lib/db";
 import { requireModuleEnabled } from "@/lib/modules/gate";
@@ -71,13 +67,10 @@ export const PATCH = apiHandler(async (req: NextRequest, ctx: RouteCtx) => {
 
   const { id } = await ctx.params;
 
-  const { data: body, error: jsonError } = await safeJson(req, {
+  const parsed = await parseJsonBody(req, coachReminderPatchSchema, {
     maxBytes: 4 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = coachReminderPatchSchema.safeParse(body);
-  if (!parsed.success) return returnAllZodIssues(parsed.error, 422);
+  if (!parsed.ok) return parsed.error;
 
   // Field-by-field (no mass assignment): only the lifecycle / timing fields the
   // body carried are written; the note + encrypted text are never touched here.

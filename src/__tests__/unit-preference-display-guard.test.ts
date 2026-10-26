@@ -85,6 +85,9 @@ const HEIGHT_CONTROL = join(
 function sweptFiles(): string[] {
   return [
     join(SRC, "app", "page-client.tsx"),
+    ...walkSourceFiles(join(SRC, "components", "dashboard", "tiles"), {
+      floor: 5,
+    }).map((rel) => join(SRC, "components", "dashboard", "tiles", rel)),
     ...walkSourceFiles(SRC, { floor: 700, extensions: [".tsx"] })
       .filter(
         (rel) => rel.startsWith("app/insights/") && rel.endsWith("/page.tsx"),
@@ -250,6 +253,8 @@ const WIDE_SWEEP_ROOTS = [
   "lib/jobs/",
   "lib/targets/",
   "lib/daily/",
+  // The series route's readers, moved out of `app/` with their unit tokens.
+  "lib/measurements/series/",
 ];
 
 const UNIT_LITERAL_PATTERNS: readonly RegExp[] = [
@@ -293,9 +298,14 @@ const UNIT_LITERAL_ALLOWLIST: Record<
     reason:
       "input parsing: canonical units of the entry table, replaced by the transform's unit at render and inverted on save",
   },
-  "components/measurements/measurement-list.tsx": {
-    lines: 2,
+  "components/measurements/list/use-measurement-edit.ts": {
+    lines: 1,
     reason: "input parsing: the inline edit inverts an mmol/L entry to mg/dL",
+  },
+  "components/measurements/list/use-measurement-row-display.ts": {
+    lines: 1,
+    reason:
+      "input parsing: decides whether the inline edit's input is in mmol/L and so needs inverting",
   },
   "components/settings/import-panel/import-examples.ts": {
     lines: 3,
@@ -328,8 +338,14 @@ const UNIT_LITERAL_ALLOWLIST: Record<
     reason: "a display-kind tag; the weight row converts through the hook",
   },
   "components/insights/mood/mood-factor-metric-crosstab.tsx": {
-    lines: 2,
-    reason: "a display-kind tag; the weight row converts through the hook",
+    lines: 1,
+    reason:
+      "a display-kind tag; the weight row converts through crosstabReading",
+  },
+  "components/insights/metric-crosstab.tsx": {
+    lines: 3,
+    reason:
+      "the boards' display kinds and the storage token each is in; rows convert through getReadingTransform and label through measurementUnitLabel",
   },
   // ── Canonical by contract ──
   "lib/insights/metric-status-registry.ts": {
@@ -345,7 +361,7 @@ const UNIT_LITERAL_ALLOWLIST: Record<
     lines: 1,
     reason: "the legacy export endpoint's canonical storage-unit contract",
   },
-  "app/api/measurements/series/route.ts": {
+  "lib/measurements/series/kinds.ts": {
     lines: 4,
     reason:
       "canonical wire units; glucose is overridden to the reader's unit per request",
@@ -354,6 +370,16 @@ const UNIT_LITERAL_ALLOWLIST: Record<
     lines: 3,
     reason:
       "SI by policy: the clinician artefacts keep mass in kg (glucose follows the owner)",
+  },
+  "lib/doctor-report-pdf/activity-effect-sections.ts": {
+    lines: 2,
+    reason:
+      "SI by policy: the report's workout distance is in km, like every clinician artefact",
+  },
+  "components/clinician/activity-effect-sections.tsx": {
+    lines: 1,
+    reason:
+      "SI by policy: the clinician page's workout distance is in km, like the PDF",
   },
   "components/insights/workout-detail/splits.tsx": {
     lines: 1,
@@ -488,7 +514,7 @@ const READER_UNIT_PRODUCERS = [
   "lib/ai/prompts/weight.ts",
   "lib/insights/features-units.ts",
   "lib/insights/comprehensive-generate.ts",
-  "app/api/insights/generate/route.ts",
+  "lib/insights/briefing-request/features.ts",
   "lib/insights/weight-status.ts",
   "lib/insights/metric-status.ts",
   "lib/insights/narrative/period-narrative.ts",

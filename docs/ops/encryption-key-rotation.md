@@ -43,12 +43,12 @@ under `v1` (the synthetic id assigned to the existing `ENCRYPTION_KEY`).
    retained.
 3. **Re-encrypt the stored data under the new key.** Open **Admin →
    Encryption** and press **Rotate now**. The button needs an admin account
-   with a second factor, confirmed recently; it queues one background run
+   with a second factor or a passkey, confirmed recently; it queues one background run
    (`POST /api/admin/encryption/rotate`) on the app's own worker, so it
    works on the published image with nothing else installed. The same page
    shows the per-column counts and the result of the last run.
 
-   Without a second factor on any admin account, run the rotation script
+   Without a second factor or a passkey on any admin account, run the rotation script
    instead. It imports the application code and the generated database
    client, so it runs from a source checkout of the same release, not
    inside the production container (the image has no package manager and
@@ -137,10 +137,15 @@ under `v1` (the synthetic id assigned to the existing `ENCRYPTION_KEY`).
 > So before step 4, also check **Admin → Encryption → Keys the backups still
 > need**. It lists, per key id, the stored copies that need it with the oldest
 > date, and when the last off-host copy needing it expires under the bucket's
-> lifecycle rule. Keep the old key in `ENCRYPTION_KEYS` until it is no longer
-> listed there (the weekly copy replaces itself within a week; delete old
-> uploaded copies you no longer want, and wait out the off-host retention), or
-> accept that those copies cannot be restored. Copies written before v1.39.3
+> lifecycle rule. The database dumps are listed too: a dump is restored only
+> with the key that was active when it was taken (`db-restore` refuses
+> without it), so the old key stays listed while a nightly or pre-migration
+> dump taken under it is on this server, and until the bucket's rule for
+> `database/` has expired the off-host copies. Keep the old key in
+> `ENCRYPTION_KEYS` until it is no longer listed there (the weekly copy
+> replaces itself within a week; delete old uploaded copies you no longer
+> want, and wait out the dump and off-host retention), or accept that those
+> copies cannot be restored. Copies written before v1.39.3
 > did not record their keys and are listed as such: treat them as needing
 > every key that existed when they were written.
 >

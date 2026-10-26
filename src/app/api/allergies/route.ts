@@ -15,13 +15,11 @@ import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
 import {
-  apiError,
   apiSuccess,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
 } from "@/lib/api-response";
-import { checkRecordWriteRateLimit } from "@/lib/rate-limit";
+import { parseJsonBody } from "@/lib/api/body";
 import { withIdempotency } from "@/lib/idempotency";
 import { encryptToBytes } from "@/lib/ai/coach/bytes-codec";
 import {
@@ -29,6 +27,8 @@ import {
   allergyListQuerySchema,
 } from "@/lib/validations/allergy";
 import { toAllergyDTO } from "@/lib/records/dto";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const GET = apiHandler(async (request: NextRequest) => {
   const { user } = await requireRecordAuth("read", "profile");
@@ -45,22 +45,26 @@ export const GET = apiHandler(async (request: NextRequest) => {
   }
 
   const limit = parsed.data.limit ?? 100;
-  const rows = await prisma.allergy.findMany({
-    where: {
-      userId: user.id,
-      deletedAt: null,
-      ...(parsed.data.includeInactive === "false" ? { status: "ACTIVE" } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-  });
+  const { rows, cap } = await listPage(limit, (take) =>
+    prisma.allergy.findMany({
+      where: {
+        userId: user.id,
+        deletedAt: null,
+        ...(parsed.data.includeInactive === "false"
+          ? { status: "ACTIVE" }
+          : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+    }),
+  );
 
   annotate({
     action: { name: "allergy.list", entity_type: "allergy" },
     meta: { count: rows.length },
   });
 
-  return apiSuccess(rows.map(toAllergyDTO));
+  return apiListSuccess(rows.map(toAllergyDTO), cap);
 });
 
 // `withIdempotency` lets an iOS retry / double-tap re-send the same
@@ -86,33 +90,15 @@ async function postAllergy(request: NextRequest): Promise<Response> {
   // A READ or WRITE delegate reaches neither: the destination is not on their
   // Settings list, and this line refuses them with `sharing.access.denied`
   // regardless.
-  const { user, actor } = await requireRecordAuth("manage", "profile");
+  const { user } = await requireRecordAuth("manage", "profile");
 
-  // Shared per-account write ceiling — see `checkRecordWriteRateLimit`. The
-  // batch siblings have always been capped; the per-record creates a looping
-  // client hits were not.
-  const writeRl = await checkRecordWriteRateLimit(actor.id);
-  if (!writeRl.allowed) {
-    return apiError("Too many writes, try again later", 429, {
-      errorCode: "record_write.rate_limited",
-    });
-  }
-
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, allergyCreateSchema, {
     maxBytes: 16 * 1024,
+    action: "allergy.validation-failed",
+    countIssues: true,
+    errorCode: "allergy.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = allergyCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "allergy.validation-failed" },
-      meta: { issue_count: parsed.error.issues.length },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "allergy.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const entry = parsed.data;
 

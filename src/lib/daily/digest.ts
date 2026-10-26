@@ -1,9 +1,9 @@
 /**
- * P3 — `buildDailyDigest`, the ONE data spine of the daily-value system.
+ * `buildDailyDigest`, the ONE data spine of the daily-value system.
  *
  * A pure, deterministic composer that assembles the day's read from data that
  * ALREADY EXISTS — the nightly `insight-pregenerate` output lifted read-only
- * from `User.insightsCachedText`, the dashboard-snapshot ingredients (health
+ * from `User.insightsCachedTextEncrypted`, the dashboard-snapshot ingredients (health
  * score, meds-today, sleep last-seen), plus two light deterministic reads
  * (integration status, due Vorsorge reminders). It computes no analytics and
  * NEVER triggers an AI/provider call — the warm-on-mount ban extends here. The
@@ -24,6 +24,7 @@ import type { DailyBriefing, DailyBriefingSignal } from "@/lib/ai/schema";
 import type { AiCapabilityState } from "@/lib/ai/capabilities/types";
 import type { ArrivalKind } from "@/lib/arrivals/types";
 import { encounterKindLabelKey } from "@/lib/encounters/kind-label";
+import { visitsPath } from "@/lib/encounters/visit-links";
 import type { MedsTodayBlock } from "@/lib/dashboard/meds-today";
 import type { ModuleKey } from "@/lib/modules/registry";
 import type { ServerTranslator } from "@/lib/i18n/server-translator";
@@ -201,7 +202,7 @@ export interface DailyDigestUpcomingVisit {
 }
 
 /**
- * S11 — a confident elevated-at-rest ("tension") window for the day, already
+ * A confident elevated-at-rest ("tension") window for the day, already
  * detected server-side (`loadIntradayPulse`) under its full confidence gate.
  * The builder only formats it; the signal correctness lives in the analytics
  * layer, and a null here means the honest "no window" — nothing is emitted.
@@ -212,7 +213,7 @@ export interface DailyDigestTensionWindow {
 }
 
 /**
- * S10 — the latest ECG recording, for the `ecg_new_recording` rail item. Only
+ * The latest ECG recording, for the `ecg_new_recording` rail item. Only
  * ever the DEVICE's verdict + when it was recorded — NEVER the waveform (the
  * DTO carries no samples). The builder decides "new" from `recordedAt`; the
  * card attributes any verdict to the recording device.
@@ -358,13 +359,13 @@ export interface DailyDigestInput {
   /** Standing coach plans (active + reviewed) — check-in candidates (§2.3). */
   coachPlans: DailyDigestCoachPlan[];
   /**
-   * S12 — the single freshly-reached durable milestone for today, or null. The
+   * The single freshly-reached durable milestone for today, or null. The
    * IO seam gathers candidates from the existing streak / personal-record
    * engines and applies the reached-once gate (`selectFreshMilestone`), so the
    * builder only ever sees a milestone worth celebrating today.
    */
   milestone?: Milestone | null;
-  /** S11 — the day's detected elevated-at-rest window, or null (honest-absent). */
+  /** The day's detected elevated-at-rest window, or null (honest-absent). */
   tensionWindow: DailyDigestTensionWindow | null;
   /**
    * v1.34.0 — today's cumulative-activity read against this person's own
@@ -374,7 +375,7 @@ export interface DailyDigestInput {
    */
   sameTime?: DailyDigestSameTime | null;
   /**
-   * S10 — the freshest ECG recording (device verdict + recordedAt only), or
+   * The freshest ECG recording (device verdict + recordedAt only), or
    * null. Optional so consumers that predate the ECG weave stay valid; the
    * builder treats a missing value as "no recent recording".
    */
@@ -675,9 +676,14 @@ function buildPreventiveCareItem(
  * appointments alone.
  *
  * No module gate: a visit is core, like the checkups page it lives on. No
- * action beyond opening the page either — there is nothing to do about an
+ * action beyond opening the visit either — there is nothing to do about an
  * appointment except keep it, and a "mark done" here would duplicate the
  * visit's own status field with a second place to set it.
+ *
+ * The action opens where the appointment lives: the visit itself, or the
+ * visits list for a day with several. The bare `/checkups` it used to carry
+ * sent every tap on an appointment to the preventive-care list the
+ * appointment is not on.
  */
 function buildUpcomingVisitItems(
   visits: readonly DailyDigestUpcomingVisit[],
@@ -706,9 +712,15 @@ function buildUpcomingVisitItems(
       status: "info",
       actions: [
         {
+          // The wire keeps the check-up item's label and intent: the shipped
+          // iOS app routes `checkup.view` and knows no other token for this
+          // item, so a new intent would leave its tap inert. The web card
+          // relabels it from the kind (`actionLabelKey` in
+          // `priority-card.tsx`); the switch to `visit.view` waits for an
+          // app that understands it.
           labelKey: "daily.action.viewCheckups",
           intent: "checkup.view",
-          href: "/checkups",
+          href: visitsPath(group.map((visit) => visit.id)),
         },
       ],
     };
@@ -753,7 +765,7 @@ function capWithPinned(
 }
 
 /**
- * S12 — the calm reward card. Emits ONE `milestone` PriorityItem when a durable
+ * The calm reward card. Emits ONE `milestone` PriorityItem when a durable
  * state was reached TODAY (the IO seam already applied the reached-once gate).
  * Data, not AI: no module gate beyond the metric's own (applied by the IO
  * seam). Celebratory-but-quiet: `success` status, a single "view" action into the
@@ -784,7 +796,7 @@ function buildMilestoneItem(
 }
 
 /**
- * S11 — the elevated-at-rest ("tension") card. Emitted at most once per day
+ * The elevated-at-rest ("tension") card. Emitted at most once per day
  * (the window is already the day's single most confident stretch), gated on
  * a non-null window (the analytics layer stays silent unless every confidence
  * gate holds). Pulse is a core vital, so no module gates it. Cautious, non-diagnostic copy:
@@ -955,7 +967,7 @@ function buildCoachCheckinItem(
 }
 
 /**
- * S10 — how recently an ECG recording must have landed to count as "new" for
+ * How recently an ECG recording must have landed to count as "new" for
  * the rail (§3.5.3). A calendar-day window: a recording synced within the last
  * day surfaces once, then retires on its own (no persisted "seen" marker, no
  * migration). The 24h window is itself the one/day cap — at most one recording
@@ -1199,7 +1211,7 @@ export function buildDailyDigest(
       visits.today,
     ].filter((item): item is PriorityItem => item !== null),
   );
-  // S11 — the calm, informational tension marker sits last: it is context, not
+  // The calm, informational tension marker sits last: it is context, not
   // an action that expires, so a time-sensitive dose / sync / check-in wins the
   // bounded rail ahead of it.
   const tension = buildTensionWindowItem(

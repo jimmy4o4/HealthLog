@@ -22,6 +22,7 @@ import { CalendarClock, CheckCircle2, Plus } from "lucide-react";
 import { useRecordCapabilities } from "@/hooks/use-record-capabilities";
 import { encounterKindText } from "@/components/encounters/encounter-labels";
 import { useEncounters } from "@/hooks/use-encounters";
+import { visitPath } from "@/lib/encounters/visit-links";
 import {
   useFormatters,
   useTranslations,
@@ -44,6 +45,8 @@ import {
   useMeasurementReminderMutations,
   type MeasurementReminder,
 } from "@/hooks/use-measurement-reminders";
+import { translateOrNull } from "@/lib/i18n/translate-code";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const SUMMARY_LIMIT = 3;
 
@@ -61,8 +64,7 @@ function resolveLabel(
   t: (key: string) => string,
 ): string {
   if (reminder.origin === "COACH") {
-    const translated = t(reminder.label);
-    return translated === reminder.label ? reminder.label : translated;
+    return translateOrNull(t, reminder.label) ?? reminder.label;
   }
   return reminder.label;
 }
@@ -81,7 +83,12 @@ export function VorsorgeDashboardCard() {
   // tell that this row had never been asked.
   const { canManageDomain } = useRecordCapabilities();
   const canManageMeasurements = canManageDomain("measurements");
-  const { data: reminders, isError, refetch } = useMeasurementReminders();
+  const {
+    data: reminders,
+    isError,
+    error,
+    refetch,
+  } = useMeasurementReminders();
 
   // A query's `isLoading` is not a hydration-safe branch: TanStack reports the
   // optimistic mount fetch on the client's very first render and cannot on the
@@ -161,18 +168,20 @@ export function VorsorgeDashboardCard() {
         ) : isError ? (
           // A read failure must not read as "no upcoming reminders" — a missed
           // checkup is the harm behind that fall-through (§6).
-          <QueryErrorRow onRetry={() => refetch()} />
+          <QueryErrorRow inset error={error} onRetry={() => refetch()} />
         ) : upcoming.length === 0 ? (
-          <div className="space-y-2">
-            <p className="text-muted-foreground text-sm">
-              {t("measurementReminders.dashboard.empty")}
-            </p>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/checkups">
-                {t("measurementReminders.dashboard.openLink")}
-              </Link>
-            </Button>
-          </div>
+          <EmptyState
+            variant="plain"
+            size="compact"
+            title={t("measurementReminders.dashboard.empty")}
+            action={
+              <Button asChild variant="outline" size="sm">
+                <Link href="/checkups">
+                  {t("measurementReminders.dashboard.openLink")}
+                </Link>
+              </Button>
+            }
+          />
         ) : (
           <ul className="space-y-2">
             {upcoming.map((reminder) => {
@@ -232,10 +241,12 @@ export function VorsorgeDashboardCard() {
 
         {/* Visually distinct from a due checkup: a quiet line under the block
             rather than a fourth row with an action, because there is nothing
-            to do about an appointment except keep it. */}
+            to do about an appointment except keep it. It opens the visit
+            itself: a bare `/checkups` lands on the checkups tab, which is
+            exactly where the appointment is not. */}
         {nextAppointment ? (
           <Link
-            href="/checkups"
+            href={visitPath(nextAppointment.id)}
             data-slot="vorsorge-dashboard-next-visit"
             className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex items-center gap-2 rounded-md border-t pt-2 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none"
           >

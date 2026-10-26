@@ -4,11 +4,13 @@ import { useState } from "react";
 import Link from "next/link";
 import { Droplets } from "lucide-react";
 
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "@/lib/i18n/context";
 import { CycleRing } from "./cycle-ring";
 import { PHASE_HUE } from "./phase-tokens";
 import { useCycleRingCalendar } from "./use-cycle";
+import { TileHeader } from "@/components/insights/tile-header";
 
 /**
  * v1.15.3 — the compact cycle ring as a WELLNESS-STRIP element.
@@ -31,9 +33,12 @@ import { useCycleRingCalendar } from "./use-cycle";
  * `user.cycleTrackingEnabled` is true (the same `/api/auth/me` signal the
  * sidebar-nav entry + the summary card gate on), so the cycle read never fires
  * for an account without the feature. The tile additionally renders nothing
- * while the calendar read resolves, on a hard error, and when there is no
- * active cycle phase today — never an empty-framed or half-painted dial in the
- * strip (no gap, no placeholder).
+ * while the calendar read resolves and when there is no active cycle phase
+ * today — never an empty-framed or half-painted dial in the strip (no gap, no
+ * placeholder). A failed read takes the tile's place with a notice and a
+ * retry: silence there read as "no cycle phase today", and the summary card
+ * further down stays out on the same failure, so the tile is the one place
+ * the page says it.
  */
 
 export function CycleRingTile({ className }: { className?: string }) {
@@ -61,11 +66,21 @@ export function CycleRingTile({ className }: { className?: string }) {
     }
   });
 
-  // Stay silent until the read resolves, on a hard error, and when today has
-  // no phase (no active cycle) — the strip must never show a half-painted or
-  // empty-framed cycle dial. The full cycle page owns the empty-state CTA.
+  // Stay silent until the read resolves and when today has no phase (no
+  // active cycle) — the strip must never show a half-painted or empty-framed
+  // cycle dial. The full cycle page owns the empty-state CTA.
   if (calendar.isLoading && !calendar.data) return null;
-  if (calendar.isError && !calendar.data) return null;
+  if (calendar.isError && !calendar.data) {
+    return (
+      <QueryErrorRow
+        error={calendar.error}
+        slot="wellness-cycle-tile-error"
+        message={t("cycle.wellnessRing.loadError")}
+        onRetry={() => void calendar.refetch()}
+        className={className}
+      />
+    );
+  }
   if (verdict?.phase == null || verdict.dayOfCycle == null) return null;
 
   const hue = PHASE_HUE[verdict.phase];
@@ -93,12 +108,7 @@ export function CycleRingTile({ className }: { className?: string }) {
           className,
         )}
       >
-        <div className="text-foreground flex items-center gap-2">
-          <Droplets className="h-5 w-5 shrink-0" aria-hidden="true" />
-          <span className="truncate text-base leading-none font-semibold">
-            {t("cycle.wellnessRing.label")}
-          </span>
-        </div>
+        <TileHeader icon={Droplets} title={t("cycle.wellnessRing.label")} />
         <div className="flex flex-col items-center gap-1.5">
           <CycleRing
             dayOfCycle={verdict.dayOfCycle}

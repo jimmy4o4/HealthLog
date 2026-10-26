@@ -161,7 +161,7 @@ describe("<MetricTargetSummary>", () => {
     // redundant "Target: 60.1–80.9 kg" string above it.
     expect(html).toContain('data-slot="tile-header"');
     expect(html).toContain("Target");
-    // 2026-07-17 a11y audit (M1) — the range-bar marker now carries an
+    // The range-bar marker now carries an
     // `aria-label` that reuses this same string as a text alternative
     // (screen-reader only, not a rendered heading) — strip attribute
     // values before asserting no redundant VISIBLE "Target: …" text node
@@ -214,8 +214,19 @@ describe("<MetricTargetSummary>", () => {
     // The diastolic range bar renders alongside the systolic one.
     const barCount = (html.match(/data-slot="target-range-bar"/g) ?? []).length;
     expect(barCount).toBe(2);
+    // Each stacked bar names its reading, the systolic one first. The
+    // systolic label was missing while the diastolic one rendered.
+    const sys = html.indexOf(">Systolic</p>");
+    const dia = html.indexOf(">Diastolic</p>");
+    expect(sys).toBeGreaterThan(-1);
+    expect(dia).toBeGreaterThan(sys);
     // 30-day average stitches the diastolic pair — kept on the BP panel.
     expect(html).toContain("30-day average: 122/76 mmHg");
+  });
+
+  it("labels a single-band bar with nothing extra", () => {
+    const html = renderWith("weight", WEIGHT_DATA);
+    expect(html).not.toContain(">Systolic</p>");
   });
 
   it("keeps the adjust-target affordance out of the card body", () => {

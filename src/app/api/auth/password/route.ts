@@ -7,13 +7,8 @@ import {
 } from "@/lib/auth/password";
 import { changePasswordSchema } from "@/lib/validations/auth";
 import { auditLog } from "@/lib/auth/audit";
-import {
-  apiSuccess,
-  apiError,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiSuccess, apiError, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import {
   recordReproofFailure,
   refundReproof,
@@ -46,23 +41,24 @@ export const POST = apiHandler(async (request: NextRequest) => {
   const limited = await throttleReproof(user.id, ip, "password_change");
   if (limited) return limited;
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, changePasswordSchema, {
     maxBytes: 64 * 1024,
   });
-
-  if (jsonError) return jsonError;
-  const parsed = changePasswordSchema.safeParse(body);
-  if (!parsed.success) {
-    // v1.4.43 W6 — multi-issue 422.
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const { currentPassword, newPassword } = parsed.data;
-  if (!user.passwordHash) {
+  const credential = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { passwordHash: true },
+  });
+  if (!credential?.passwordHash) {
     return apiError("No password set for this account", 400);
   }
 
-  const currentValid = await verifyPassword(user.passwordHash, currentPassword);
+  const currentValid = await verifyPassword(
+    credential.passwordHash,
+    currentPassword,
+  );
   if (!currentValid) {
     await recordReproofFailure(
       user.id,
@@ -122,7 +118,7 @@ export const POST = apiHandler(async (request: NextRequest) => {
   await revokeStepUpElevations(user.id);
 
   // Invalidate all existing sessions and create a fresh one.
-  // v1.4.22 W5 reconcile (Sr-H1) — `createSession` re-anchors the
+  // v1.4.22 — `createSession` re-anchors the
   // `hl_onboarding` cookie itself.
   await destroyAllSessions(user.id);
   await createSession(

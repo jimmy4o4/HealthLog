@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
- * v1.20.0 (F1) — Coach tool-retrieval routing contract.
+ * v1.20.0 — Coach tool-retrieval routing contract.
  *
  *  - When every provider in the chain supports tools, the route runs the tool
  *    loop with a base context (DATA INVENTORY, NOT the snapshot figures), and
@@ -99,7 +99,8 @@ const { assertConsentForChain } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/ai/consent-guard", () => ({ assertConsentForChain }));
 vi.mock("@/lib/ai/prompts/insight-generator", () => ({ PROMPT_VERSION: "x" }));
-vi.mock("@/lib/ai/ai-budgets", () => ({
+vi.mock("@/lib/ai/ai-budgets", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/ai-budgets")>()),
   AI_BUDGETS: { coach: { maxTokens: 1500, temperature: 0.4 } },
 }));
 
@@ -568,6 +569,7 @@ describe("coach chat — tool-mode routing (F1)", () => {
     runStreamingRawCompletionWithFallback.mockResolvedValue({
       result: { content: "Your BP is steady.", tokensUsed: 42, model: "m" },
       workingProvider: { providerType: "anthropic" },
+      tokensSpent: 0,
     });
     await postAndDrain({ message: "How is my BP?" });
 

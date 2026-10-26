@@ -34,6 +34,9 @@ vi.mock("@/hooks/use-mounted", () => ({
 
 import { I18nProvider } from "@/lib/i18n/context";
 import { LayoutSection } from "../layout-section";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 function render(modules?: Record<string, boolean>, locale: "en" | "de" = "en") {
   authRef.modules = modules;
@@ -51,7 +54,6 @@ describe("<LayoutSection> hub", () => {
       "dashboard",
       "insights",
       "medications",
-      "mood",
       "labs",
       "illness",
       "vorsorge",
@@ -65,7 +67,7 @@ describe("<LayoutSection> hub", () => {
     expect(html).not.toContain('href="/settings/layout/medications"');
     expect(html).not.toContain('href="/settings/layout/labs"');
     // Other modules unaffected; Vorsorge is never gated.
-    expect(html).toContain('href="/settings/layout/mood"');
+    expect(html).toContain('href="/settings/layout/illness"');
     expect(html).toContain('href="/settings/layout/vorsorge"');
   });
 
@@ -79,6 +81,7 @@ describe("<LayoutSection> hub", () => {
     expect(html).toContain('href="/settings/layout/dashboard"');
     expect(html).toContain('href="/settings/layout/insights"');
     expect(html).toContain('href="/settings/layout/vorsorge"');
+    // v1.44 — mood is tag management and left Arrangement for Modules.
     expect(html).not.toContain('href="/settings/layout/mood"');
   });
 

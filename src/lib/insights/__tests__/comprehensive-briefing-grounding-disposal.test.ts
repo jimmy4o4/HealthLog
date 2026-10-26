@@ -29,7 +29,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: (...a: unknown[]) => findUnique(...a),
       update: (...a: unknown[]) => userUpdate(...a),
-      // v1.32.22 (M6) — the cache commit is now a privacy-mode-guarded
+      // v1.32.22 — the cache commit is now a privacy-mode-guarded
       // updateMany; record it on the same spy but return a matched count so the
       // guard proceeds (mode unchanged in these tests).
       updateMany: (...a: unknown[]) => {
@@ -92,6 +92,13 @@ vi.mock("@/lib/cache/invalidate", () => ({
 }));
 
 import { generateComprehensiveInsight } from "../comprehensive-generate";
+import {
+  openInsightsCachedText,
+  sealInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
+
+// The cached payload is sealed at rest, so its writes need a key.
+vi.stubEnv("ENCRYPTION_KEY", "c".repeat(64));
 
 /**
  * A signals block (so the gate engages at all) plus a medications block. The
@@ -144,7 +151,7 @@ function cachedUser(over: Record<string, unknown> = {}) {
   return {
     insightsPrivacyMode: "aggregated",
     insightsCachedAt: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
     insightsExcludeMetrics: [],
     // Never equal to the freshly computed hash, so a full generation runs.
     insightsSnapshotHash: null,
@@ -158,13 +165,14 @@ function completion(content: string) {
     result: { content, tokensUsed: 10, model: "m" },
     workingProvider: { providerType: "openai" },
     fallbackHops: [],
+    tokensSpent: 0,
   };
 }
 
 /** The `dailyBriefing` the generation persisted. */
 function persistedBriefing(): unknown {
   const call = userUpdate.mock.calls.at(-1);
-  const text = call?.[0]?.data?.insightsCachedText as string | undefined;
+  const text = openInsightsCachedText(call?.[0]?.data) ?? undefined;
   if (!text) return undefined;
   return (JSON.parse(text) as Record<string, unknown>).dailyBriefing;
 }
@@ -185,7 +193,7 @@ describe("briefing grounding — disposal", () => {
     findUnique.mockResolvedValue(
       cachedUser({
         insightsCachedAt: new Date("2026-07-15T03:00:00.000Z"),
-        insightsCachedText: PREVIOUS_PAYLOAD,
+        insightsCachedTextEncrypted: sealInsightsCachedText(PREVIOUS_PAYLOAD),
       }),
     );
     // Both passes carry the same fabricated figure: a content failure.

@@ -11,7 +11,6 @@ import {
   documentCardKeyAction,
   documentDateKey,
   expandRangeSelection,
-  formatBytes,
   formatMonthLabel,
   hasProcessingDocument,
   isDocumentProcessing,
@@ -22,6 +21,8 @@ import {
   resolveBulkShareDocuments,
   SHARE_LINK_MAX_DOCUMENTS,
   vaultFiltersToSearch,
+  STAGED_ATTACHMENT_POLL_MS,
+  stagedAttachmentPollInterval,
 } from "../vault-utils";
 
 function doc(overrides: Partial<InboundDocumentDto> = {}): InboundDocumentDto {
@@ -211,15 +212,6 @@ describe("timeline items", () => {
   it("formats a month key in the viewer's locale", () => {
     expect(formatMonthLabel("2026-03", "de")).toBe("März 2026");
     expect(formatMonthLabel("not-a-month", "de")).toBe("not-a-month");
-  });
-});
-
-describe("byte formatting", () => {
-  it("scales units and keeps one decimal below 10", () => {
-    expect(formatBytes(0, "en")).toBe("0 B");
-    expect(formatBytes(512, "en")).toBe("512 B");
-    expect(formatBytes(26_214_400, "en")).toBe("25 MB");
-    expect(formatBytes(1_288_490_189, "en")).toBe("1.2 GB");
   });
 });
 
@@ -539,5 +531,38 @@ describe("buildProcedureChoices", () => {
 
   it("offers nothing when no procedure carries a document", () => {
     expect(buildProcedureChoices([], null, labels)).toEqual([]);
+  });
+});
+
+describe("stagedAttachmentPollInterval", () => {
+  const now = Date.parse("2026-10-20T10:00:00Z");
+  const at = (msAgo: number) => new Date(now - msAgo).toISOString();
+
+  it("polls a fresh upload until its index lands", () => {
+    expect(
+      stagedAttachmentPollInterval(
+        { createdAt: at(30_000), hasContentIndex: false },
+        now,
+      ),
+    ).toBe(STAGED_ATTACHMENT_POLL_MS);
+    expect(
+      stagedAttachmentPollInterval(
+        { createdAt: at(30_000), hasContentIndex: true },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("stops polling a document that is never indexed once the window passes", () => {
+    expect(
+      stagedAttachmentPollInterval(
+        { createdAt: at(RECENT_UPLOAD_WINDOW_MS + 1), hasContentIndex: false },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not poll before the detail has loaded", () => {
+    expect(stagedAttachmentPollInterval(undefined, now)).toBe(false);
   });
 });

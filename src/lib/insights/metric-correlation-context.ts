@@ -1,5 +1,5 @@
 /**
- * v1.12.1 (D3) — feed FDR-surviving cross-metric correlations into the
+ * v1.12.1 — feed FDR-surviving cross-metric correlations into the
  * per-metric assessment card.
  *
  * The discovery engine (`correlation-discovery.ts`) already computes, with
@@ -32,6 +32,7 @@ import {
   discoverCorrelations,
   DISCOVERY_BEHAVIOURS,
   DISCOVERY_OUTCOMES,
+  withoutModelFencedPairs,
 } from "@/lib/insights/correlation-discovery";
 import { resolveModuleMap } from "@/lib/modules/gate";
 import { assembleDiscoveryMatrix } from "@/lib/insights/discovery-matrix";
@@ -133,6 +134,9 @@ export async function getRelevantCorrelationsForMetric(
         // written in its place rather than after it; the docstring, the name
         // and the `channelKeyForType` guard above all kept saying otherwise.
         .filter((d) => d.behaviour === channel || d.outcome === channel)
+        // The card's prompt is model input: a pair on a fenced channel stays
+        // on the correlations page.
+        .filter((d) => withoutModelFencedPairs([d]).length === 1)
         .filter((d) => {
           const decision = decisionForEvidence(decisions, {
             factorKey: d.behaviour,

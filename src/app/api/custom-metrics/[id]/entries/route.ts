@@ -6,10 +6,9 @@ import {
   apiSuccess,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
   sanitiseZodIssues,
 } from "@/lib/api-response";
-import { checkRecordWriteRateLimit } from "@/lib/rate-limit";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { invalidateUserCorrelationPatterns } from "@/lib/cache/invalidate";
 import { serialiseCustomMetricEntry } from "@/lib/custom-metrics/custom-metric-store";
@@ -108,15 +107,6 @@ async function postCustomMetricEntry(
   // was never wrong, and the GET arm above stays delegable meanwhile.
   const { user } = await requireAuth();
 
-  // Shared per-account write ceiling — see `checkRecordWriteRateLimit`. The
-  // batch siblings have always been capped; the per-record creates a looping
-  // client hits were not.
-  const writeRl = await checkRecordWriteRateLimit(user.id);
-  if (!writeRl.allowed) {
-    return apiError("Too many writes, try again later", 429, {
-      errorCode: "record_write.rate_limited",
-    });
-  }
   const { id } = await params;
 
   const metric = await prisma.customMetric.findFirst({
@@ -127,29 +117,25 @@ async function postCustomMetricEntry(
     return apiError("Custom metric not found", 404);
   }
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, createCustomMetricEntrySchema, {
     maxBytes: 16 * 1024,
+    action: "custom-metric.entry.create.validation-failed",
+    countIssues: true,
+    meta: { customMetricId: id },
+    onInvalid: (error) => {
+      const auditIssues = sanitiseZodIssues(error.issues, {
+        stripValuesFromMessage: true,
+      });
+      // v1.36.x — through `auditLog()`, the only writer that stamps the actor.
+      void auditLog("custom-metric.entry.create.validation-failed", {
+        userId: user.id,
+        details: { issues: auditIssues, customMetricId: id },
+      }).catch(() => {
+        /* swallow — the 422 response is the contract */
+      });
+    },
   });
-  if (jsonError) return jsonError;
-
-  const parsed = createCustomMetricEntrySchema.safeParse(body);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "custom-metric.entry.create.validation-failed" },
-      meta: { issue_count: parsed.error.issues.length, customMetricId: id },
-    });
-    const auditIssues = sanitiseZodIssues(parsed.error.issues, {
-      stripValuesFromMessage: true,
-    });
-    // v1.36.x — through `auditLog()`, the only writer that stamps the actor.
-    void auditLog("custom-metric.entry.create.validation-failed", {
-      userId: user.id,
-      details: { issues: auditIssues, customMetricId: id },
-    }).catch(() => {
-      /* swallow — the 422 response is the contract */
-    });
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const { value, measuredAt, note } = parsed.data;
 

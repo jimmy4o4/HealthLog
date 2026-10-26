@@ -17,13 +17,8 @@ import { NextRequest } from "next/server";
 
 import { prisma } from "@/lib/db";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { invalidateUserMedications } from "@/lib/cache/invalidate";
 import { withIdempotency } from "@/lib/idempotency";
@@ -79,7 +74,7 @@ async function putIngredients(
     });
   }
 
-  // C1 — keyed on the ACTOR, so a manager burns their own allowance.
+  // Keyed on the ACTOR, so a manager burns their own allowance.
   const rl = await checkRateLimit(
     `medication-ingredients:put:${actor.id}`,
     PUT_RATE_LIMIT,
@@ -91,16 +86,11 @@ async function putIngredients(
     });
   }
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, medicationIngredientsPutSchema, {
     maxBytes: 16 * 1024,
+    errorCode: "medications.ingredients.invalid",
   });
-  if (jsonError) return jsonError;
-  const parsed = medicationIngredientsPutSchema.safeParse(body);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "medications.ingredients.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const check = canonicalComposition(parsed.data.ingredients);
   if (!check.ok) {
@@ -145,7 +135,7 @@ async function putIngredients(
   await auditLog("medication.ingredients.update", {
     userId: user.id,
     ipAddress: getClientIp(request),
-    // C4 — the composition this replaced, as one comparable line per side.
+    // The composition this replaced, as one comparable line per side.
     details: {
       medicationId: id,
       source,

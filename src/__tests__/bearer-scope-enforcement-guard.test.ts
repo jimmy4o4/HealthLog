@@ -13,10 +13,15 @@
  * for that review.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { guardSourceOf } from "./helpers/auth-guards";
+import {
+  readSource,
+  readSourceText,
+  stripComments,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -33,12 +38,179 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 function filesMatching(re: RegExp): string[] {
   return sourceFiles().filter((rel) => re.test(read(rel)));
 }
+
+/**
+ * The argument text of every call to `callee` in `src`, parens balanced.
+ *
+ * The matchers this file used to rely on stopped at the first `)` —
+ * `requireRecordAuth\([^)]*scope:` read `requireRecordAuth(need(), "x", {
+ * scope: X })` as having no scope at all — and demanded one spelling of a
+ * Bearer lookup. A guard whose matcher misses a real call site is green
+ * because it matched nothing. So calls are read whole: from the `(` after the
+ * name to its matching `)`, skipping string and template contents, and a
+ * function DECLARATION of the same name is not a call.
+ */
+function callArgs(src: string, callee: string): string[] {
+  const code = stripComments(src);
+  const out: string[] = [];
+  const re = new RegExp(`(?<![\\w$.])${callee}\\s*\\(`, "g");
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    if (/function\s*$/.test(code.slice(Math.max(0, m.index - 12), m.index))) {
+      continue;
+    }
+    out.push(argsFrom(code, m.index + m[0].length - 1));
+  }
+  return out;
+}
+
+/** The text between the `(` at `open` and its matching `)`. */
+function argsFrom(code: string, open: number): string {
+  let depth = 0;
+  let quote: string | null = null;
+  let i = open;
+  for (; i < code.length; i++) {
+    const ch = code[i];
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  return code.slice(open + 1, i);
+}
+
+/** Split an argument list at its top-level commas. */
+function topLevelArgs(args: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i];
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) {
+      parts.push(args.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const last = args.slice(start).trim();
+  if (last) parts.push(last);
+  return parts;
+}
+
+/** The scope a `requireAuth` call names: its first argument, or null. */
+function requireAuthScopes(src: string): Array<string | null> {
+  return callArgs(src, "requireAuth").map((args) => {
+    const first = topLevelArgs(args)[0];
+    return first === undefined || first === "undefined" ? null : first;
+  });
+}
+
+/** The scopes the `requireRecordAuth` calls in `src` name in their options. */
+function recordAuthScopes(src: string): string[] {
+  const out: string[] = [];
+  for (const args of callArgs(src, "requireRecordAuth")) {
+    for (const m of args.matchAll(/\bscope\s*:\s*([A-Za-z_$][\w$]*)/g)) {
+      out.push(m[1]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether `src` turns a Bearer value into an identity: the shared resolver, or
+ * any `apiToken` lookup (`findUnique`, `findFirst`, `findMany`, their
+ * `OrThrow` forms, on `prisma` or a transaction) whose arguments name
+ * `tokenHash`, or raw SQL reading `api_tokens` by `token_hash`.
+ */
+function resolvesBearer(src: string): boolean {
+  const code = stripComments(src);
+  // The shared resolver, and the MCP edge's wrapper around it. The `/mcp`
+  // route was on the allowlist only because a COMMENT named the resolver;
+  // with comments stripped it is found by the call it actually makes.
+  if (/\bresolveBearerToken\b|\bresolveMcpAuthContext\s*\(/.test(code)) {
+    return true;
+  }
+  const lookups =
+    /\bapiToken\s*\.\s*find(?:Unique|First|Many)(?:OrThrow)?\s*\(/g;
+  for (const m of code.matchAll(lookups)) {
+    const args = argsFrom(code, m.index + m[0].length - 1);
+    if (/\btokenHash\b/.test(args)) return true;
+  }
+  // A raw read of the table by hash. An UPDATE that revokes by hash turns
+  // nothing into an identity and is not one.
+  return /\bSELECT\b[\s\S]{0,300}?\bFROM\s+"?api_tokens"?[\s\S]{0,300}?\btoken_hash\b/i.test(
+    code,
+  );
+}
+
+describe("the call matchers read whole calls", () => {
+  it("finds a scope behind nested parentheses and across lines", () => {
+    const planted = `const ctx = await requireRecordAuth(
+      needFor(method()),
+      "measurements",
+      { scope: MEASUREMENTS_WRITE_SCOPE },
+    );`;
+    expect(recordAuthScopes(planted)).toEqual(["MEASUREMENTS_WRITE_SCOPE"]);
+    // The old matcher stopped at the first ")" and saw nothing.
+    expect(/requireRecordAuth\([^)]*\bscope:/.test(planted)).toBe(false);
+  });
+
+  it("reads the first requireAuth argument and ignores the options", () => {
+    expect(
+      requireAuthScopes(
+        'await requireAuth(WORKOUTS_WRITE_SCOPE, { writeBucket: "own" });\n' +
+          'await requireAuth(undefined, { writeBucket: "own" });\n' +
+          "await requireAuth();\n" +
+          "export async function requireAuth(requiredPermission?: string) {}\n" +
+          'await requireAuth("health:write");',
+      ),
+    ).toEqual(["WORKOUTS_WRITE_SCOPE", null, null, '"health:write"']);
+  });
+
+  it("recognises every spelling of a Bearer lookup", () => {
+    for (const planted of [
+      "prisma.apiToken.findUnique({ where: { tokenHash: h } })",
+      "prisma.apiToken\n  .findUnique({\n    where: { userId, tokenHash: hash },\n  })",
+      "tx.apiToken.findFirst({ where: { revokedAt: null, tokenHash: digest(x) } })",
+      "await prisma.apiToken.findUniqueOrThrow({ where: { tokenHash } })",
+      "prisma.$queryRaw`SELECT user_id FROM api_tokens WHERE token_hash = ${h}`",
+    ]) {
+      expect(resolvesBearer(planted), planted).toBe(true);
+    }
+    // A lookup by something else is not a Bearer resolution, even with the
+    // word elsewhere in the file, and neither is a revocation by hash.
+    expect(
+      resolvesBearer(
+        "prisma.apiToken.findMany({ where: { userId } });\nconst tokenHash = 1;",
+      ),
+    ).toBe(false);
+    expect(
+      resolvesBearer(
+        "prisma.$executeRaw`UPDATE api_tokens SET revoked = true WHERE token_hash = ${h}`",
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("T1 — the Bearer resolution set is frozen", () => {
   /**
@@ -52,12 +224,20 @@ describe("T1 — the Bearer resolution set is frozen", () => {
   const RESOLUTION_ALLOWLIST = [
     // The resolver. Owns the one authorisation arm.
     "lib/auth/bearer.ts",
-    // The REST edge — maps `requireAuth`'s optional scope onto the union.
-    "lib/api-handler.ts",
+    // The REST edge — maps `requireAuth`'s optional scope onto the union. The
+    // guard module behind `requireAuth`, re-exported by `lib/api-handler.ts`.
+    "lib/auth/guards/caller.ts",
     // The MCP edge — the one deliberate `any-valid-token` posture.
     "lib/mcp/auth.ts",
     // The `/mcp` transport, via `resolveMcpAuthContext`.
     "app/mcp/route.ts",
+    // The local stdio MCP entrypoint, via the same `resolveMcpAuthContext`: a
+    // pasted token for a power-user's own MCP client, run in a plain Node
+    // process outside the web server. Same edge, same posture as `/mcp`. It
+    // was a Bearer resolution this guard never saw, because the matcher only
+    // knew the resolver's own name and the `/mcp` entry above was matched
+    // through a comment.
+    "cli/mcp-stdio.ts",
     // Hand-rolled Bearer authentication: the external medication-ingest
     // surface, which gates on BOTH `medication:ingest` and the per-medication
     // `medication:<id>:ingest` grant and never touches `requireAuth`.
@@ -90,9 +270,7 @@ describe("T1 — the Bearer resolution set is frozen", () => {
     // `tokenHash` may sit anywhere inside the `where` object — demanding it
     // first would let a formatting change (another key ahead of it) walk a
     // resolver out of the guard's sight.
-    const resolvers = filesMatching(
-      /resolveBearerToken|apiToken\s*\.\s*findUnique\(\s*\{[\s\S]*?where:\s*\{[^}]*?tokenHash/,
-    );
+    const resolvers = sourceFiles().filter((rel) => resolvesBearer(read(rel)));
 
     // Non-zero proof: an empty match set must fail rather than agree with an
     // emptied allowlist.
@@ -101,7 +279,10 @@ describe("T1 — the Bearer resolution set is frozen", () => {
   });
 
   it("the resolver exposes exactly one authorisation arm", () => {
-    const src = read("lib/auth/bearer.ts");
+    const src = readSource(
+      "src/lib/auth/bearer.ts",
+      'permissions.includes("*")',
+    );
     // One wildcard escape hatch, guarding one deny block. If a second
     // `permissions.includes("*")` short-circuit appears, the arm has forked.
     const wildcardChecks = src.match(/permissions\.includes\("\*"\)/g) ?? [];
@@ -200,25 +381,22 @@ describe("T3 — the mint sites are frozen", () => {
     // does not contradict this: what was retired is a mint at THIS path that
     // named no scope and answered for the whole API. A child path minting one
     // named scope, listed in `MINT_SITES` above, is the shape that replaced it.
-    const tokensRoute = read("app/api/tokens/route.ts");
+    const tokensRoute = readSource(
+      "src/app/api/tokens/route.ts",
+      "export const GET",
+    );
     expect(tokensRoute).not.toMatch(/export const POST/);
     expect(tokensRoute).toMatch(/export const GET/);
   });
 });
 
 describe("T4 — declared scopes are exported constants, never string literals", () => {
-  it("every requireAuth argument is an identifier", () => {
+  it("every requireAuth scope argument is an identifier", () => {
     const offenders: string[] = [];
     for (const rel of sourceFiles()) {
-      const src = read(rel);
-      // Call sites only — skip the declaration in `api-handler.ts`, whose
-      // parameter list is not an argument.
-      for (const m of src.matchAll(
-        /(?<!function\s)requireAuth\(\s*([^)\s][^)]*)\)/g,
-      )) {
-        const arg = m[1].trim();
-        if (!/^[A-Za-z_$][\w$]*$/.test(arg)) {
-          offenders.push(`${rel}: requireAuth(${arg})`);
+      for (const scope of requireAuthScopes(read(rel))) {
+        if (scope !== null && !/^[A-Za-z_$][\w$]*$/.test(scope)) {
+          offenders.push(`${rel}: requireAuth(${scope})`);
         }
       }
     }
@@ -243,16 +421,10 @@ describe("T4 — declared scopes are exported constants, never string literals",
     const used = new Set<string>();
     for (const rel of sourceFiles()) {
       const src = read(rel);
-      for (const m of src.matchAll(
-        /(?<!function\s)requireAuth\(\s*([A-Za-z_$][\w$]*)\s*\)/g,
-      )) {
-        used.add(m[1]);
+      for (const scope of requireAuthScopes(src)) {
+        if (scope !== null) used.add(scope);
       }
-      for (const m of src.matchAll(
-        /requireRecordAuth\([^)]*\bscope:\s*([A-Za-z_$][\w$]*)/g,
-      )) {
-        used.add(m[1]);
-      }
+      for (const scope of recordAuthScopes(src)) used.add(scope);
     }
     expect([...used].sort()).toEqual(DECLARED_SCOPES);
   });
@@ -266,21 +438,31 @@ describe("T4b — `documents:write` opens exactly two doors", () => {
     // an importer can skip a download. Nothing else: not the list or detail,
     // not the original or thumbnail, not bulk, not the AI legs. A third route
     // here is a widening and belongs in review.
-    const declaring = filesMatching(
-      /requireAuth\(\s*DOCUMENTS_WRITE_SCOPE\s*\)|requireRecordAuth\([^)]*\bscope:\s*DOCUMENTS_WRITE_SCOPE\b/,
-    );
+    const declaring = sourceFiles().filter((rel) => {
+      const src = read(rel);
+      return (
+        requireAuthScopes(src).includes("DOCUMENTS_WRITE_SCOPE") ||
+        recordAuthScopes(src).includes("DOCUMENTS_WRITE_SCOPE")
+      );
+    });
     expect(declaring).toEqual([
       "app/api/documents/inbound/route.ts",
       "app/api/documents/inbound/source/route.ts",
     ]);
     // Within the upload file, once: the GET list beside the POST must not
     // name it.
-    const upload = read("app/api/documents/inbound/route.ts");
+    const upload = readSource(
+      "src/app/api/documents/inbound/route.ts",
+      "DOCUMENTS_WRITE_SCOPE",
+    );
     expect(
-      upload.match(/requireAuth\(\s*DOCUMENTS_WRITE_SCOPE\s*\)/g),
+      requireAuthScopes(upload).filter((x) => x === "DOCUMENTS_WRITE_SCOPE"),
     ).toHaveLength(1);
     // And the lookup is a read of one key and nothing else: a single GET.
-    const lookup = read("app/api/documents/inbound/source/route.ts");
+    const lookup = readSource(
+      "src/app/api/documents/inbound/source/route.ts",
+      "export const GET",
+    );
     expect(
       [...lookup.matchAll(/export const (GET|POST|PUT|PATCH|DELETE)\b/g)].map(
         (m) => m[1],
@@ -294,13 +476,20 @@ describe("T4c — `workouts:write` opens exactly one door", () => {
     // The set of files naming the scope IS its reach. The batch ingest and
     // nothing else: not the workout list or detail, which would hand a
     // bridge the history it has no business reading back.
-    const declaring = filesMatching(
-      /requireAuth\(\s*WORKOUTS_WRITE_SCOPE\s*\)|requireRecordAuth\([^)]*\bscope:\s*WORKOUTS_WRITE_SCOPE\b/,
-    );
+    const declaring = sourceFiles().filter((rel) => {
+      const src = read(rel);
+      return (
+        requireAuthScopes(src).includes("WORKOUTS_WRITE_SCOPE") ||
+        recordAuthScopes(src).includes("WORKOUTS_WRITE_SCOPE")
+      );
+    });
     expect(declaring).toEqual(["app/api/workouts/batch/route.ts"]);
-    const batch = read("app/api/workouts/batch/route.ts");
+    const batch = readSource(
+      "src/app/api/workouts/batch/route.ts",
+      "WORKOUTS_WRITE_SCOPE",
+    );
     expect(
-      batch.match(/requireAuth\(\s*WORKOUTS_WRITE_SCOPE\s*\)/g),
+      requireAuthScopes(batch).filter((x) => x === "WORKOUTS_WRITE_SCOPE"),
     ).toHaveLength(1);
     expect(
       [...batch.matchAll(/export const (GET|POST|PUT|PATCH|DELETE)\b/g)].map(
@@ -330,8 +519,8 @@ describe("T5 — a delegable route naming a Bearer scope is frozen", () => {
   };
 
   it("only the known routes pass a scope to the record resolver", () => {
-    const naming = filesMatching(
-      /requireRecordAuth\([^)]*\bscope:\s*[A-Za-z_$][\w$]*/,
+    const naming = sourceFiles().filter(
+      (rel) => recordAuthScopes(read(rel)).length > 0,
     );
     // Non-zero proof: an empty match set must fail rather than agree with an
     // emptied table. This is the leg most likely to rot — the matcher spans a
@@ -343,11 +532,7 @@ describe("T5 — a delegable route naming a Bearer scope is frozen", () => {
 
   it("each names the scope this table says it does", () => {
     for (const [rel, scope] of Object.entries(SCOPED_RECORD_ROUTES)) {
-      const named = [
-        ...read(rel).matchAll(
-          /requireRecordAuth\([^)]*\bscope:\s*([A-Za-z_$][\w$]*)/g,
-        ),
-      ].map((m) => m[1]);
+      const named = recordAuthScopes(read(rel));
       expect(named).toEqual([scope]);
     }
   });
@@ -357,7 +542,7 @@ describe("T5 — a delegable route naming a Bearer scope is frozen", () => {
     // it and every other leg in this file stays green while a single-purpose
     // token gains delegated write — so the refusal is asserted where it lives,
     // not only through the behaviour that depends on it.
-    const src = read("lib/api-handler.ts");
+    const src = guardSourceOf("requireRecordAuth", ["narrow_scope_selector"]);
     expect(src).toMatch(/narrow_scope_selector/);
     expect(src).toMatch(/isScopedCredential\(auth\)/);
   });

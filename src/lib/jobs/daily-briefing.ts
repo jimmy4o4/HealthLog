@@ -1,5 +1,5 @@
 /**
- * S5 — the daily-briefing fallback cron.
+ * The daily-briefing fallback cron.
  *
  * The PRIMARY trigger for the morning push is event-driven: the S4
  * morning-refresh worker dispatches it the instant last night's sleep lands and
@@ -18,6 +18,7 @@
  * loads a digest for the handful of users at their fallback minute-window this
  * tick.
  */
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import type { PrismaClient } from "@/generated/prisma/client";
 
 import { getEvent } from "@/lib/logging/context";
@@ -29,10 +30,6 @@ import {
   type DailyBriefingDispatchDeps,
 } from "@/lib/daily/daily-briefing-push";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
-
-export const DAILY_BRIEFING_QUEUE = "daily-briefing";
-/** Every 15 minutes; the per-user local-hour gate selects the fallback slot. */
-export const DAILY_BRIEFING_CRON = "*/15 * * * *";
 
 export interface DailyBriefingTickSummary {
   candidatesScanned: number;
@@ -83,7 +80,11 @@ export async function runDailyBriefingTick(
   // preference row. Deduped by userId (a user may have opted several channels
   // in) and carrying the timezone so the slot gate needs no extra read.
   const prefs = await prisma.notificationPreference.findMany({
-    where: { eventType: "DAILY_BRIEFING", enabled: true },
+    where: {
+      eventType: "DAILY_BRIEFING",
+      enabled: true,
+      channel: OWNED_BY_ACTIVE_ACCOUNT,
+    },
     select: {
       channel: {
         select: { userId: true, user: { select: { timezone: true } } },

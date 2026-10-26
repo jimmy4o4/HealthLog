@@ -75,10 +75,12 @@ const healthKitEntry = z
       "One resolved HealthKit metric mapping (defaults merged with the user's stored overrides).",
   });
 
-// The health-shaped fields that predate `health` (v1.42.4). They stay on the
-// wire through v1.43 so App 1.2.0 keeps decoding, are marked deprecated in the
-// document, and go in v1.44.
-const LEGACY_HEALTH_FIELD = "Deprecated: removed in v1.44, read `health`.";
+// The health-shaped fields that predate `health`. They are marked deprecated
+// in the document and stay on the wire: native builds from before `health`
+// still decode them, the current one falls back to them only against a server
+// that sends no `health`, and the web card's copied diagnostics read the
+// failure streak. No removal release is set.
+const LEGACY_HEALTH_FIELD = "Deprecated, still served: read `health`.";
 
 function legacy(text?: string): { deprecated: true; description: string } {
   return {
@@ -207,6 +209,31 @@ export const connectionHealth = z
       "The one server-resolved health state of a connection (v1.42.4). It folds the ledger state, the liveness verdict, plan and permission gaps, provider reauth flags and the integration watchdog's silence flag into four states. Clients render it and never recompute it. The older health-shaped fields beside it stay for one release after the clients read `health`, then go.",
   });
 
+// #1220 — a Google Health backfill that ended a data type's history short of
+// its beginning says where and why, so a client can say so instead of
+// "older history is still loading".
+const googleHealthBackfillEnded = z
+  .array(
+    z.object({
+      type: z
+        .string()
+        .describe(
+          "The measurement type whose imported history ends here (e.g. `PULSE` for heart rate).",
+        ),
+      endsAt: isoDateTime().describe(
+        "The oldest instant the imported history of this type reaches back to.",
+      ),
+      reason: z
+        .enum(["horizon", "no_progress"])
+        .describe(
+          "`horizon`: the backfill reads back a set number of years (`GOOGLE_HEALTH_BACKFILL_HORIZON_YEARS`, twenty by default) and the history goes further. `no_progress`: Google kept returning pages that reached no further back, so the import stopped there.",
+        ),
+    }),
+  )
+  .describe(
+    "Data types whose history backfill ended before the beginning of their history, with where and why. Empty when every type was read to its start. Kept after the backfill completes; cleared on reconnect.",
+  );
+
 const metricFreshnessEntry = z
   .object({
     type: z
@@ -238,7 +265,7 @@ const appleHealthMetricFreshnessEntry = metricFreshnessEntry
       .nullable()
       .optional()
       .describe(
-        "When a live sync batch last carried this type (inserted, updated or duplicate entries all count). Null when no live sync has carried it yet: a type that so far came only from the export import, or from before v1.42. `lastSeenAt` is when the newest sample was TAKEN; this is when the server last RECEIVED the type. Omitted on the `WORKOUTS` entry, which the ledger does not cover, and on every entry when the ledger read failed.",
+        "When a live sync batch last brought a new or changed row of this type. Since v1.45 a batch that carried the type with duplicates only (an unchanged `stats:` re-post or an hour posted again with its stored value included) does not move it, nor `lastTrigger` or `lastBackgroundAt`; it moves `lastSeenDuplicateAt`. Before v1.45 duplicates counted too, so a stored value can still date from a duplicates-only batch. Null when no live sync has brought anything for it yet: a type that so far came only from the export import, or from before v1.42. `lastSeenAt` is when the newest sample was TAKEN; this is when the server last RECEIVED the type. Omitted on the `WORKOUTS` entry, which the ledger does not cover, and on every entry when the ledger read failed.",
       ),
     lastTrigger: healthKitSyncTriggerEnum
       .nullable()
@@ -250,7 +277,7 @@ const appleHealthMetricFreshnessEntry = metricFreshnessEntry
       .nullable()
       .optional()
       .describe(
-        "When a live sync batch last brought a new or updated sample of this type, as opposed to duplicates only. Null when none has. Same omission rules as `lastReceivedAt`.",
+        "When a live sync batch last brought a new or updated sample of this type, as opposed to duplicates only. Since v1.45 this moves together with `lastReceivedAt`; the two differ only on a row last written before. Null when none has. Same omission rules as `lastReceivedAt`.",
       ),
     lastBackgroundAt: isoDateTime()
       .nullable()
@@ -258,11 +285,23 @@ const appleHealthMetricFreshnessEntry = metricFreshnessEntry
       .describe(
         'When a batch with `syncTrigger: "background"` last carried this type (since v1.42.4). A later `foreground`, `push` or `manual` batch moves `lastReceivedAt` and `lastTrigger` but leaves this standing, so opening the app does not hide an earlier background arrival. Null when the type has never arrived in the background as far as the server recorded: before v1.42.4 only the latest arrival was kept, so a type whose latest arrival then was a background one starts with that date and every other type starts null. Same omission rules as `lastReceivedAt`.',
       ),
+    lastSeenDuplicateAt: isoDateTime()
+      .nullable()
+      .optional()
+      .describe(
+        "v1.45 — when a live sync batch last carried this type with duplicates only, nothing new or changed. Later than `lastReceivedAt` means the phone keeps sending the type but nothing new has arrived since `lastReceivedAt`. Null when no duplicates-only batch was recorded for an existing ledger row since v1.45. Same omission rules as `lastReceivedAt`; absent on older servers.",
+      ),
     lastBackfillAt: isoDateTime()
       .nullable()
       .optional()
       .describe(
         'v1.43 — when a batch with `syncTrigger: "backfill"` last carried this type. A backfill moves only this and `syncProgress`, never `lastReceivedAt`, `lastTrigger`, `lastBackgroundAt` or the account-level sync stamps, so catching up history does not read as a run of healthy daily syncs. Absent on older servers.',
+      ),
+    lastEnteredHereAt: isoDateTime()
+      .nullable()
+      .optional()
+      .describe(
+        "v1.43.7 — present only on a type the app writes back to Apple Health (weight, blood pressure, blood glucose while their entry is `bidirectional` or `writeOnly` and enabled): when the newest reading of the type was entered here rather than arriving from Apple Health, or null when none was. Such readings go to the phone and never come back as an arrival, so `stale` already counts them: the type is quiet only when both are. Since v1.43.9 `lastSeenAt` on such a type is the newer of this and the newest reading from Apple Health, because a reading entered here is in Apple Health too; show both as the server sends them and do not recompute `stale`.",
       ),
   })
   .meta({
@@ -975,6 +1014,7 @@ const fitbitStatusResponse = z.object(connectionStatusShape()).meta({
 const googleHealthStatusResponse = z
   .object({
     ...connectionStatusShape(),
+    backfillEnded: googleHealthBackfillEnded.optional(),
     needsReauth: z
       .boolean()
       .optional()
@@ -1088,6 +1128,11 @@ const integrationEnvelopeEntry = z
       .optional()
       .meta(legacy("Null — not false — when there is no connection to judge.")),
     backfillCompleted: z.boolean().nullable().optional(),
+    backfillEnded: googleHealthBackfillEnded
+      .optional()
+      .describe(
+        "Google Health only. Data types whose history backfill ended before the beginning of their history, with where and why.",
+      ),
     scope: z.string().nullable().optional().describe("Withings only."),
     hasActivityScope: z.boolean().optional().meta(legacy("Withings only.")),
     planUnavailable: z
@@ -1109,15 +1154,39 @@ const integrationEnvelopeEntry = z
       .optional()
       .meta(
         legacy(
-          "Oura only. Collections the stored grant does not cover: they answered 401 while sibling collections succeeded with the same token. Not a failure and not counted toward the reconnect threshold; one reconnect asks for the missing scopes. Empty when the grant covers everything HealthLog reads.",
+          "Oura only. Collections the stored grant does not cover: Oura refused them for a missing scope (named in its 401, or inferred when sibling collections succeeded with the same token), or the scopes Oura reported at connect leave theirs out. Not a failure and not counted toward the reconnect threshold; one reconnect asks for the missing scopes. Empty when the grant covers everything HealthLog reads.",
         ),
       ),
     hasToken: z.boolean().optional().describe("Nightscout only."),
     allowPrivateHost: z.boolean().optional().describe("Nightscout only."),
+    retirement: z
+      .object({
+        endsOn: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .describe("The day Google turns the legacy Fitbit Web API off."),
+        ended: z
+          .boolean()
+          .describe(
+            "The day has come: the connection no longer syncs, its imported data stays, and `health` is null.",
+          ),
+        successor: z
+          .enum(["google-health"])
+          .describe(
+            "The integration that reads the same Fitbit and Pixel devices. Moving needs a fresh consent; the Fitbit grant cannot be carried over.",
+          ),
+        offered: z
+          .boolean()
+          .describe(
+            "Whether the Fitbit card is shown. False once `ended` for an account that never connected Fitbit, has no Fitbit app of its own and holds no Fitbit data: there is nothing to explain the move for. True before the turndown and for every account that had Fitbit.",
+          ),
+      })
+      .optional()
+      .describe("Fitbit only. The end of the legacy Fitbit Web API."),
     health: connectionHealth
       .nullable()
       .describe(
-        "The unified connection state, null when the provider is not connected. It supersedes `state`, `lastError`, `consecutiveFailuresByKind`, `syncHealth`, `tokenExpired`, `needsReauth`, `hasActivityScope`, `planUnavailable` and `scopeReconnect` on this entry; those nine are deprecated and removed in v1.44.",
+        "The unified connection state, null when the provider is not connected (and for Fitbit once `retirement.ended`). It supersedes `state`, `lastError`, `consecutiveFailuresByKind`, `syncHealth`, `tokenExpired`, `needsReauth`, `hasActivityScope`, `planUnavailable` and `scopeReconnect` on this entry; those nine are deprecated and still served for clients that predate `health`.",
       ),
   })
   .meta({
@@ -1983,6 +2052,11 @@ export const integrationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
             "Either limiter tripped: more than 5 syncs in 60 s, or a second full sync within the hour. `meta.errorCode` = `rate_limited_self` for both; the message distinguishes them.",
           content: { "application/json": { schema: errorEnvelope } },
         },
+        "410": {
+          description:
+            "Google turned the legacy Fitbit Web API off on 2026-10-30; nothing is fetched. `meta.errorCode` = `provider_retired`. The data already imported stays; Google Health reads the same devices.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
       },
     },
   },
@@ -2626,6 +2700,11 @@ export const integrationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         ...stdResponses,
         ...probeNotConfigured422,
         ...selfRateLimited429,
+        "410": {
+          description:
+            "Google turned the legacy Fitbit Web API off on 2026-10-30; nothing is probed. `meta.errorCode` = `provider_retired`.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
       },
     },
   },

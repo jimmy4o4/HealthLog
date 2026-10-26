@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 /**
- * v1.4.22 C4 — onboarding redirect moved from `<AuthShell>` useEffect
+ * v1.4.22 — onboarding redirect moved from `<AuthShell>` useEffect
  * to `src/proxy.ts` so it lands on the first server response instead
  * of post-hydration. The previous client-side approach caused a brief
  * dashboard flash for users with `onboardingCompletedAt === null`.
@@ -75,6 +75,16 @@ describe("proxy.ts onboarding redirect (v1.4.22 C4)", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 
+  it("counts the __Host- session cookie as a session at the page gate", () => {
+    const res = proxy(
+      makeRequest("/insights", { "__Host-healthlog_session": "sess-1" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+    const anonymous = proxy(makeRequest("/insights"));
+    expect(anonymous.headers.get("location")).toMatch(/\/auth\/login$/);
+  });
+
   it("passes through when hl_onboarding cookie is absent (completed users)", () => {
     const res = proxy(makeRequest("/", { healthlog_session: "sess-1" }));
     expect(res.status).toBe(200);
@@ -101,7 +111,7 @@ describe("proxy.ts onboarding redirect (v1.4.22 C4)", () => {
   });
 
   /**
-   * v1.4.22 W5 reconcile (Sec-MED-2) — exact-match `/onboarding`
+   * v1.4.22 — exact-match `/onboarding`
    * plus subroutes. A hypothetical `/onboarding-export` route must
    * NOT inherit the public-pass-through that the literal
    * `/onboarding` carries.

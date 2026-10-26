@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * v1.22 (B6) — Settings → AI "Your context: reminders" panel.
+ * v1.22 — Settings → AI "Your context: reminders" panel.
  *
  * The user-facing ledger for the durable "remind me about X" memory the Coach
  * captures inline (the `---REMEMBER---` sentinel) and the sweep resurfaces. The
@@ -147,6 +147,7 @@ export function CoachRemindersSection({
           )}
           <ConfirmButton
             slot="coach-reminder-delete"
+            destructive
             variant="ghost"
             size="sm"
             className="text-muted-foreground hover:text-foreground min-h-9"
@@ -188,6 +189,8 @@ export function CoachRemindersSection({
 
       {query.isError && (
         <QueryErrorRow
+          inset
+          error={query.error}
           message={t("settings.ai.coachReminders.loadError")}
           onRetry={() => query.refetch()}
         />

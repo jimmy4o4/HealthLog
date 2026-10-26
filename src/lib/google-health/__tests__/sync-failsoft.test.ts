@@ -34,6 +34,11 @@ const {
       update: vi.fn(async () => ({})),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
+    // The token refresh runs in a transaction under an advisory lock.
+    $queryRaw: vi.fn(async () => []),
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown) =>
+      run(prismaMock),
+    ),
   },
   getUserGoogleHealthCredentialsMock: vi.fn(async (): Promise<unknown> => null),
   refreshAccessTokenMock: vi.fn(),
@@ -71,7 +76,7 @@ vi.mock("@/lib/rollups/measurement-rollups", () => ({
   recomputeBucketsForMeasurement: vi.fn(async () => {}),
   recomputeUserRollups: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/insights/comprehensive-generate", () => ({
+vi.mock("@/lib/insights/status-invalidation", () => ({
   invalidateStatusInsightsForTypes: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/cache/invalidate", () => ({
@@ -80,9 +85,15 @@ vi.mock("@/lib/cache/invalidate", () => ({
 vi.mock("../credentials", () => ({
   getUserGoogleHealthCredentials: getUserGoogleHealthCredentialsMock,
 }));
-vi.mock("../client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../client")>();
-  return { ...actual, refreshAccessToken: refreshAccessTokenMock };
+vi.mock("../oauth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../oauth")>();
+  return {
+    ...actual,
+    googleHealthOAuth: {
+      ...actual.googleHealthOAuth,
+      refresh: refreshAccessTokenMock,
+    },
+  };
 });
 
 vi.mock("../sync-metrics", () => ({ syncUserMetrics: resourceFake }));

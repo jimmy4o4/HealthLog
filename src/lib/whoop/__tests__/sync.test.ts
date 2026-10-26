@@ -60,11 +60,20 @@ vi.mock("@/lib/crypto", () => ({
   decrypt: (s: string) => s.replace(/^enc\(|\)$/g, ""),
 }));
 
+vi.mock("../oauth", async (orig) => {
+  const actual = await orig<typeof import("../oauth")>();
+  return {
+    ...actual,
+    whoopOAuth: {
+      ...actual.whoopOAuth,
+      refresh: (...a: unknown[]) => refreshAccessTokenMock(...a),
+    },
+  };
+});
 vi.mock("../client", async (orig) => {
   const actual = await orig<typeof import("../client")>();
   return {
     ...actual,
-    refreshAccessToken: (...a: unknown[]) => refreshAccessTokenMock(...a),
     fetchRecoveries: (...a: unknown[]) => fetchRecoveriesMock(...a),
   };
 });
@@ -90,11 +99,16 @@ vi.mock("@/lib/integrations/status", () => ({
 vi.mock("@/lib/rollups/measurement-rollups", () => ({
   collapseToTypeDayKeys: (rows: Array<{ type: string; measuredAt: Date }>) =>
     rows.map((r) => ({ type: r.type, measuredAt: r.measuredAt })),
-  recomputeBucketsForMeasurement: (...a: unknown[]) =>
-    recomputeBucketsMock(...a),
+  recomputeBucketsForKeys: async (
+    userId: string,
+    keys: Array<{ type: string; measuredAt: Date }>,
+  ) => {
+    for (const k of keys)
+      await recomputeBucketsMock(userId, k.type, k.measuredAt);
+  },
 }));
 
-vi.mock("@/lib/insights/comprehensive-generate", () => ({
+vi.mock("@/lib/insights/status-invalidation", () => ({
   invalidateStatusInsightsForTypes: (...a: unknown[]) =>
     invalidateStatusMock(...a),
 }));
@@ -164,7 +178,7 @@ describe("getValidToken — rotating refresh", () => {
       refresh_token: "new-refresh",
       expires_in: 3600,
     });
-    prismaMock.whoopConnection.update.mockResolvedValue({});
+    prismaMock.whoopConnection.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await getValidToken("user1");
 
@@ -173,15 +187,28 @@ describe("getValidToken — rotating refresh", () => {
       clientId: "cid",
       clientSecret: "csecret",
     });
-    const updateArg = prismaMock.whoopConnection.update.mock.calls[0]![0];
-    expect(updateArg.where.id).toBe("conn1");
+    // Written only while the stored refresh token is still the one spent.
+    const updateArg = prismaMock.whoopConnection.updateMany.mock.calls[0]![0];
+    expect(updateArg.where).toEqual({
+      userId: "user1",
+      refreshToken: "enc(old-refresh)",
+    });
     expect(updateArg.data.accessToken).toBe("enc(new-access)");
     expect(updateArg.data.refreshToken).toBe("enc(new-refresh)");
     expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it("re-reads token state under an advisory lock and reuses a peer winner", async () => {
+    const stale = {
+      id: "conn1",
+      whoopUserId: "42",
+      accessToken: "enc(old-access)",
+      refreshToken: "enc(old-refresh)",
+      tokenExpiresAt: new Date(Date.now() - 1000),
+    };
     prismaMock.whoopConnection.findUnique
+      // The connection lookup, then the token read before the lock.
+      .mockResolvedValueOnce(stale)
       .mockResolvedValueOnce({
         id: "conn1",
         whoopUserId: "42",

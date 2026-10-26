@@ -577,6 +577,8 @@ describe("appointments", () => {
       t,
     );
     expect(o.today[0].value).toBe("Today 16:15, GP");
+    // The visit itself, never the bare checkups page.
+    expect(o.today[0].href).toBe("/checkups?visit=a");
   });
 
   it("says nothing about the day after tomorrow", () => {
@@ -600,6 +602,8 @@ describe("appointments", () => {
       t,
     );
     expect(o.today[0].value).toBe("Today 09:00, GP +1");
+    // A line naming two appointments opens the list both are on.
+    expect(o.today[0].href).toBe("/checkups?view=visits");
   });
 
   it("does not repeat a visit the rail already shows", () => {
@@ -626,7 +630,7 @@ describe("appointments", () => {
 });
 
 describe("locales", () => {
-  it.each(["de", "es", "fr", "it", "pl", "ko"] as Locale[])(
+  it.each(["de", "es", "fr", "it", "pl", "ko", "nl", "pt-BR"] as Locale[])(
     "resolves every %s string from its own bundle",
     (locale) => {
       const tl = getServerTranslator(locale).t;

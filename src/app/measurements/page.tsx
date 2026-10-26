@@ -23,6 +23,7 @@ import { Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "@/lib/i18n/context";
 import { SUB_PAGE_SLUGS } from "@/lib/insights/sub-page-metric";
+import { dropParams, writeUrlState } from "@/lib/url-state";
 
 const INSIGHT_METRIC_RETURN_PATHS: Readonly<Record<string, true>> =
   Object.fromEntries(
@@ -45,7 +46,7 @@ export default function MeasurementsPage() {
   const searchParams = useSearchParams();
   const { t } = useTranslations();
 
-  // v1.4.27 MB6 — read the `?add=<TYPE>` query param during render so
+  // v1.4.27 — read the `?add=<TYPE>` query param during render so
   // the dialog opens on the first paint (no flash of the page behind
   // it). The first-load param is consumed in the `useState` lazy
   // initializers: they run identically on the server and the hydration
@@ -79,7 +80,7 @@ export default function MeasurementsPage() {
   const [consumedAddRequest, setConsumedAddRequest] = useState<string | null>(
     () => addRequestParam,
   );
-  // v1.4.27 R4 RC2 — DOM handle the form portals its action row into so
+  // v1.4.27 — DOM handle the form portals its action row into so
   // the Sheet branch can sticky-pin Save / Cancel.
   const [footerEl, setFooterEl] = useState<HTMLDivElement | null>(null);
 
@@ -120,12 +121,10 @@ export default function MeasurementsPage() {
   // during SSR.
   useEffect(() => {
     if (!addParam && !returnToParam) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("add");
-    next.delete("returnTo");
-    const search = next.toString();
-    router.replace(search ? `/measurements?${search}` : "/measurements");
-  }, [addParam, returnToParam, searchParams, router]);
+    // From the live query at the moment of the write (`@/lib/url-state`), so
+    // a filter written meanwhile is never put back to its old value.
+    writeUrlState(dropParams("add", "returnTo"), { afterPaint: true });
+  }, [addParam, returnToParam]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {

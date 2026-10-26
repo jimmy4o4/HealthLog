@@ -55,6 +55,7 @@ import {
 import { type Locale } from "@/lib/i18n/config";
 import { getServerTranslator } from "@/lib/i18n/server-translator";
 import { shiftDateKey } from "@/lib/tz/format";
+import { translateOrNull } from "@/lib/i18n/translate-code";
 
 /**
  * Locale-aware string builder — the same signature the server translator
@@ -71,7 +72,7 @@ type Translate = (
 export const FDR_Q = 0.1;
 
 /**
- * RECON1 (D2-2) — effect-size floor on the SHRUNK |r|. A pair can be
+ * Effect-size floor on the SHRUNK |r|. A pair can be
  * statistically significant (p < 0.05, FDR-clean) yet explain a trivial slice
  * of variance — e.g. n=180, r=0.16 explains ~2.5% and is noise-floor signal a
  * human should not chase. Below this floor we DROP the pair from the discovered
@@ -82,7 +83,7 @@ export const FDR_Q = 0.1;
 export const EFFECT_SIZE_FLOOR = 0.2;
 
 /**
- * RECON1 (D2-2 / D2-6) — the |r| at/above which a pair earns CONFIDENT phrasing
+ * The |r| at/above which a pair earns CONFIDENT phrasing
  * ("tends to go with"). Between `EFFECT_SIZE_FLOOR` and this, the pair survives
  * but is down-tiered to a hedged "faint hint" so the narrated confidence never
  * outruns the effect.
@@ -90,7 +91,7 @@ export const EFFECT_SIZE_FLOOR = 0.2;
 export const CONFIDENT_EFFECT_THRESHOLD = 0.3;
 
 /**
- * RECON1 (D4) — James-Stein / regression-to-the-mean shrinkage constant. A
+ * James-Stein / regression-to-the-mean shrinkage constant. A
  * sparse n-of-1 Pearson estimate is noisy and over-states the effect; we pull
  * it toward null by the factor n/(n+SHRINKAGE_K) before ranking + tiering, so a
  * thin-data correlation cannot out-rank a deep, well-sampled one purely on an
@@ -113,7 +114,7 @@ export function shrinkEstimate(r: number, n: number): number {
 }
 
 /**
- * RECON1 (D2-1) — metric-family key for a discovery channel. Two channels in
+ * Metric-family key for a discovery channel. Two channels in
  * the same family (e.g. both blood-pressure components) lag-correlate trivially
  * (serial auto-correlation of one physiological signal), so a same-family
  * lagged pair is a near-tautology, not a cross-domain insight. The discovery
@@ -129,7 +130,7 @@ export function metricFamily(key: string): string {
   // tautology as MOOD→MOOD and is excluded too.
   if (key.startsWith(FACTOR_CHANNEL_PREFIX) || key === "MOOD") return "MOOD";
   if (key.startsWith("BLOOD_PRESSURE")) return "BLOOD_PRESSURE";
-  // v1.25 (W-ENV) — every environmental-exposure channel (ENV_TEMP_MEAN,
+  // v1.25 — every environmental-exposure channel (ENV_TEMP_MEAN,
   // ENV_DAYLIGHT, …) shares ONE family so the same-family guard never
   // lag-correlates two same-day weather fields against each other (a
   // near-tautology). They stay free to pair cross-domain against mood / sleep /
@@ -137,6 +138,20 @@ export function metricFamily(key: string): string {
   if (key.startsWith("ENV_")) return "ENVIRONMENT";
   if (key.startsWith("MOVEMENT_")) return "MOVEMENT";
   if (key.startsWith("CUSTOM_METRIC:")) return key;
+  // v1.44 — State of Mind is a mood self-report from another app: pairing it
+  // with the logged mood would correlate one feeling with itself.
+  if (key === "STATE_OF_MIND_VALENCE") return "MOOD";
+  // The room-climate readings are one room's air; the training channels one
+  // training record; the intake channels one supplement log.
+  if (key.startsWith("INDOOR_")) return "INDOOR";
+  if (key === WORKOUT_MINUTES_CHANNEL_KEY || key === TRAINING_LOAD_CHANNEL_KEY)
+    return "TRAINING";
+  if (
+    key === HYDRATION_CHANNEL_KEY ||
+    key === CAFFEINE_CHANNEL_KEY ||
+    key.startsWith(NUTRIENT_CHANNEL_PREFIX)
+  )
+    return "NUTRIENTS";
   // v1.21.0 (FDREXTEND) — medication compliance and symptom severity each form
   // their OWN single-channel family, so the loop's same-family guard collapses
   // only the self-lag (compliance→compliance, symptom→symptom). The returned
@@ -148,11 +163,11 @@ export function metricFamily(key: string): string {
   return key;
 }
 
-/** RECON1 (D2-6) — explicit phrasing tier a low-confidence signal must honour. */
+/** Explicit phrasing tier a low-confidence signal must honour. */
 export type ConfidenceTier = "high" | "moderate" | "faint";
 
 /**
- * RECON1 (D2-2 / D2-6) — classify a pair into a phrasing tier from its SHRUNK
+ * Classify a pair into a phrasing tier from its SHRUNK
  * effect size and paired-day depth. The tier is a contract the narration (and
  * the hallucination tests) can check, so a thin / weak signal is hedged
  * differently from a deep / strong one rather than both reading "tends to go
@@ -195,6 +210,19 @@ export interface NamedSeries {
    * there means the averaged 0–1 window, tested as one hypothesis.
    */
   lagDays?: number;
+  /**
+   * Behaviour channels only: the outcomes this channel is tested against.
+   * Absent means every outcome. A channel with one plausible question (the
+   * bedroom's air and the night's sleep) names it, so the pairs nobody asked
+   * about do not widen the false-discovery family for every other pair.
+   */
+  targets?: readonly string[];
+  /**
+   * Behaviour channels only: how the sentence names the exposure window when
+   * it is not the default next day. `overnight` is the night's mean, keyed on
+   * the day the person woke up (`lagDays: 0`).
+   */
+  phrasing?: "overnight";
 }
 
 /** One discovered, FDR-surviving correlation pair. */
@@ -220,12 +248,12 @@ export interface DiscoveredCorrelation {
   /** Benjamini-Hochberg adjusted q-value. */
   qValue: number;
   /**
-   * RECON1 (D4) — the sample-size-shrunk r (toward null) used for ranking,
+   * The sample-size-shrunk r (toward null) used for ranking,
    * the effect-size floor, and the phrasing tier. Display still uses raw `r`.
    */
   shrunkR: number;
   /**
-   * RECON1 (D2-6) — phrasing tier the narration must honour: a `faint` signal
+   * Phrasing tier the narration must honour: a `faint` signal
    * is hedged, a `high` signal stated plainly. Never `null` here (a below-floor
    * pair is dropped before this list).
    */
@@ -324,6 +352,7 @@ interface RawPair {
   lagDays: number;
   behaviourLabel?: string;
   outcomeLabel?: string;
+  phrasing?: "overnight";
 }
 
 /**
@@ -373,6 +402,7 @@ function interpret(
   t: Translate,
   behaviourLabel?: string,
   outcomeLabel?: string,
+  phrasing?: "overnight",
 ): string {
   const params = {
     behaviour: behaviourLabel ?? humanise(behaviour, t),
@@ -388,7 +418,13 @@ function interpret(
     tier === "faint" ? "faint" : tier === "high" ? "high" : "moderate";
   // Lag 0 is the averaged same-day window of the exposure channels ("on the
   // day and the day before"); every other pair reads as next-day.
-  const template = lagDays === 0 ? "dailySameDay" : "daily";
+  // The overnight room climate reads as "overnight … that night".
+  const template =
+    phrasing === "overnight"
+      ? "dailyOvernight"
+      : lagDays === 0
+        ? "dailySameDay"
+        : "daily";
   return t(`insights.correlation.${template}.${tierKey}`, params);
 }
 
@@ -416,12 +452,16 @@ function humanise(key: string, t: Translate): string {
       .toLowerCase();
     return t("insights.correlation.channelFactor", { factor });
   }
+  if (key.startsWith(NUTRIENT_CHANNEL_PREFIX)) {
+    const code = key.slice(NUTRIENT_CHANNEL_PREFIX.length);
+    const nutrient =
+      translateOrNull(t, `nutrients.names.${code}`) ?? code.replace(/_/g, " ");
+    return t("insights.correlation.channelNutrient", { nutrient });
+  }
   const labelKey = `insights.correlation.channel.${key}`;
-  const label = t(labelKey);
-  // The server translator echoes the key on a miss; fall back to a readable
-  // prettified form so an unmapped channel degrades gracefully, never English-
-  // leaks a raw key.
-  return label === labelKey ? key.replace(/_/g, " ").toLowerCase() : label;
+  // An unmapped channel falls back to a readable prettified form, never a
+  // raw key.
+  return translateOrNull(t, labelKey) ?? key.replace(/_/g, " ").toLowerCase();
 }
 
 /** Namespace prefix for a RATED-mood-factor discovery channel (v1.14.0). */
@@ -463,6 +503,95 @@ export const SYMPTOM_SEVERITY_CHANNEL_KEY = "SYMPTOM_SEVERITY";
  */
 export const MOVEMENT_AWAY_CHANNEL_KEY = "MOVEMENT_AWAY";
 export const MOVEMENT_DISTANCE_CHANNEL_KEY = "MOVEMENT_DISTANCE";
+
+// ─── v1.44 — the extended channel families ─────────────────────────────────
+//
+// Folded by the assembler beside the declared matrix rather than into
+// `DISCOVERY_BEHAVIOURS` / `DISCOVERY_OUTCOMES`: those two lists also feed the
+// per-metric status fingerprint (`status-cache.ts`), and a channel added there
+// would make every written assessment card go stale on a reading of a type no
+// card is about. Every family below is a behaviour except State of Mind, and
+// each degrades to absent below the n ≥ 20 floor like every other channel.
+
+/** Daily water intake (mL), from the nutrient log. Owned by `nutrients`. */
+export const HYDRATION_CHANNEL_KEY = "HYDRATION";
+/** Daily caffeine intake (mg), from the nutrient log. Owned by `nutrients`. */
+export const CAFFEINE_CHANNEL_KEY = "CAFFEINE";
+/** One micronutrient's daily intake: `NUTRIENT:<catalog code>`. */
+export const NUTRIENT_CHANNEL_PREFIX = "NUTRIENT:";
+/**
+ * Days with alcohol, from the `alcohol` tag on mood entries: 1 on a day with a
+ * tagged entry, 0 on a day with entries and no tag, nothing on a day without
+ * an entry. Owned by `mood`. AUDIT-C is not a channel: it is a questionnaire
+ * answered every few months about the past year, and has no day to pair.
+ */
+export const ALCOHOL_CHANNEL_KEY = "ALCOHOL";
+/** Minutes of workout per day, one per session. Owned by `workouts`. */
+export const WORKOUT_MINUTES_CHANNEL_KEY = "WORKOUT_MINUTES";
+/** The day's heart-rate training impulse (TRIMP). Owned by `workouts`. */
+export const TRAINING_LOAD_CHANNEL_KEY = "TRAINING_LOAD";
+
+/** Apple Health day totals read as behaviours (minutes per day). */
+export const EXTENDED_BEHAVIOUR_TYPES = [
+  "EXERCISE_MINUTES",
+  "STAND_MINUTES",
+  "MINDFUL_MINUTES",
+] as const;
+
+/** Apple Health readings read as outcomes. */
+export const EXTENDED_OUTCOME_TYPES = ["STATE_OF_MIND_VALENCE"] as const;
+
+/**
+ * Room-climate readings, paired with the night's sleep only. The value is the
+ * mean of the readings between 21:00 and 07:00 local time, keyed on the day
+ * the person woke up, so it pairs with that night's sleep at lag 0.
+ */
+export const INDOOR_CLIMATE_TYPES = [
+  "INDOOR_CO2",
+  "INDOOR_TEMPERATURE",
+  "INDOOR_HUMIDITY",
+] as const;
+export const INDOOR_CLIMATE_TARGETS: readonly string[] = ["SLEEP_DURATION"];
+
+/** Every fixed channel key the extended families can write. */
+export const EXTENDED_CHANNEL_KEYS: readonly string[] = [
+  HYDRATION_CHANNEL_KEY,
+  CAFFEINE_CHANNEL_KEY,
+  ALCOHOL_CHANNEL_KEY,
+  WORKOUT_MINUTES_CHANNEL_KEY,
+  TRAINING_LOAD_CHANNEL_KEY,
+  ...EXTENDED_BEHAVIOUR_TYPES,
+  ...EXTENDED_OUTCOME_TYPES,
+  ...INDOOR_CLIMATE_TYPES,
+];
+
+/**
+ * Channels whose pairs are statistics for the person only and never reach a
+ * model: the Coach tool, the period narrative and the assessment cards drop
+ * every pair that touches one. State of Mind and mindfulness sit in the
+ * report's sensitive group and are kept out of the Coach snapshot and MCP;
+ * alcohol reaches a model only through the health profile's own opt-in.
+ *
+ * The scan itself is the same on every surface, so the statistics of the
+ * remaining pairs do not depend on who is reading; the fence is applied to
+ * the result.
+ */
+export const MODEL_FENCED_CHANNELS: ReadonlySet<string> = new Set([
+  "STATE_OF_MIND_VALENCE",
+  "MINDFUL_MINUTES",
+  ALCOHOL_CHANNEL_KEY,
+]);
+
+/** Drop the pairs that touch a {@link MODEL_FENCED_CHANNELS} channel. */
+export function withoutModelFencedPairs<
+  T extends { behaviour: string; outcome: string },
+>(pairs: readonly T[]): T[] {
+  return pairs.filter(
+    (p) =>
+      !MODEL_FENCED_CHANNELS.has(p.behaviour) &&
+      !MODEL_FENCED_CHANNELS.has(p.outcome),
+  );
+}
 
 /**
  * v1.21.0 (FDREXTEND) — discovery channels that are NOT `MeasurementType` enum
@@ -539,11 +668,12 @@ export function discoverCorrelations(
   const tested: RawPair[] = [];
   for (const b of behaviours) {
     for (const o of outcomes) {
-      // RECON1 (D2-1) — skip same-metric-FAMILY lagged pairs, not just the exact
+      // Skip same-metric-FAMILY lagged pairs, not just the exact
       // self-pair. A same-family lag (mood→mood, sys→any-BP) is a serial
       // auto-correlation tautology, not a cross-domain insight; excluding it
       // before testing stops it crowding out genuine cross-metric links.
       if (metricFamily(b.key) === metricFamily(o.key)) continue;
+      if (b.targets && !b.targets.includes(o.key)) continue;
       const pairLag = b.lagDays ?? lagDays;
       const pairs = lagJoinPairs(b.points, o.points, pairLag);
       if (pairs.length < minPairs) continue;
@@ -559,6 +689,7 @@ export function discoverCorrelations(
         lagDays: pairLag,
         behaviourLabel: b.label,
         outcomeLabel: o.label,
+        ...(b.phrasing ? { phrasing: b.phrasing } : {}),
       });
     }
   }
@@ -572,7 +703,7 @@ export function discoverCorrelations(
   const discovered: DiscoveredCorrelation[] = tested
     .map((t, i) => ({ ...t, qValue: qValues[i] }))
     .filter((t) => t.pValue < 0.05 && t.qValue <= fdrQ)
-    // RECON1 (D4) — shrink each estimate toward null by its sample depth, then
+    // Shrink each estimate toward null by its sample depth, then
     // (D2-2) classify into a phrasing tier. A pair below the effect-size floor
     // tiers to `null` and is dropped: it is statistically real but explains too
     // little variance to narrate as a driver.
@@ -613,10 +744,11 @@ export function discoverCorrelations(
         translate,
         t.behaviourLabel,
         t.outcomeLabel,
+        t.phrasing,
       ),
       lagDays: t.lagDays,
     }))
-    // RECON1 (D2-2 / D4) — rank by the SHRUNK effect magnitude (a deep, strong
+    // Rank by the SHRUNK effect magnitude (a deep, strong
     // pair leads a thin one even if the thin one's raw r is higher), with q as
     // the tie-break so a tighter FDR still wins on equal effect.
     .sort(
@@ -663,6 +795,12 @@ export const DISCOVERY_BEHAVIOURS = [
 export const DISCOVERY_OUTCOMES = [
   "SLEEP_DURATION",
   "HEART_RATE_VARIABILITY",
+  // The nightly RMSSD series (WHOOP, Oura, Polar, Fitbit, Google Health) as
+  // its own outcome. It is not merged into the SDNN channel: the estimators
+  // differ in scale, so one series of both would correlate the switch between
+  // devices rather than the body. Neither HRV channel is a behaviour, so the
+  // two never pair with each other.
+  "HRV_RMSSD",
   "RESTING_HEART_RATE",
   "WEIGHT",
   // v1.22 — blood pressure as an OUTCOME (it was behaviour-only). This makes
@@ -675,7 +813,7 @@ export const DISCOVERY_OUTCOMES = [
   // BP survive. BH-FDR controls the wider pair family this opens up.
   "BLOOD_PRESSURE_SYS",
   "BLOOD_PRESSURE_DIA",
-  // v1.11.5 (F3) — mood is now an OUTCOME channel too, not only a behaviour.
+  // v1.11.5 — mood is now an OUTCOME channel too, not only a behaviour.
   // The discovery loop skips the MOOD→MOOD self-pair (`b.key === o.key`), so
   // promoting it lets the FDR scan surface "behaviour today → next-day mood"
   // relations (e.g. more daylight today → better mood tomorrow) in addition

@@ -1,19 +1,25 @@
 import { prisma } from "@/lib/db";
+import {
+  ALREADY_LINKED_REASON,
+  accountLinkedElsewhere,
+} from "@/lib/integrations/oauth-kit/account-link";
 import { apiHandler } from "@/lib/api-handler";
 import { getSession } from "@/lib/auth/session";
+import { verifyCallbackActor } from "@/lib/integrations/oauth-kit/connect-target";
 import { annotate, getEvent } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
 import { encrypt } from "@/lib/crypto";
-import { exchangeCode } from "@/lib/strava/client";
+import { stravaOAuth } from "@/lib/strava/oauth";
 import { getStravaClientCredentials } from "@/lib/strava/credentials";
 import {
   oauthStateCookieName,
   stateMatchesCookie,
   verifySignedState,
 } from "@/lib/oauth/signed-state";
+import { runOAuthCallbackOnce } from "@/lib/oauth/callback-claim";
 import { markReconnected } from "@/lib/integrations/status";
-import { STRAVA_BACKFILL_QUEUE } from "@/lib/jobs/strava-backfill";
-import { getGlobalBoss } from "@/lib/jobs/boss-instance";
+import { STRAVA_BACKFILL_QUEUE } from "@/lib/jobs/strava-backfill-queue";
+import { enqueueWhenBossReady } from "@/lib/jobs/boss-ready";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -42,9 +48,7 @@ const ERR = (reason: string) =>
 export const GET = apiHandler(async (request: NextRequest) => {
   annotate({ action: { name: "strava.callback" } });
 
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
+  const state = new URL(request.url).searchParams.get("state");
   const cookieState = request.cookies.get(
     oauthStateCookieName("strava"),
   )?.value;
@@ -61,22 +65,56 @@ export const GET = apiHandler(async (request: NextRequest) => {
   }
   const userId = verified.userId;
 
+  // Everything that can refuse the callback without the code runs before
+  // the claim, so a refused callback (a denied consent arrives without a
+  // code) never spends the state: the same authorize URL still works. The
+  // claim stays strictly before the exchange.
+  const code = new URL(request.url).searchParams.get("code");
+
   const evt = getEvent();
   if (evt) evt.setAuth({ user_id: userId, auth_method: "session" });
 
+  // The browser finishing the flow must be the record's own, or, for a
+  // managed profile, a guardian's with a live MANAGE grant on it.
   const sessionData = await getSession();
-  if (sessionData && sessionData.user.id !== userId) {
-    annotate({ meta: { reason: "cross_user" } });
+  const actorCheck = await verifyCallbackActor(
+    userId,
+    sessionData?.user.id ?? null,
+  );
+  if (!actorCheck.ok) {
+    annotate({ meta: { reason: actorCheck.reason } });
     return ERR("cross_user");
   }
+  const guardianUserId = actorCheck.guardianUserId;
 
   if (!code) return ERR("nocode");
 
+  // Single-use: a callback delivered twice exchanges its code once, and the
+  // duplicate follows the first request's result (src/lib/oauth/callback-claim.ts).
+  return runOAuthCallbackOnce(
+    "strava",
+    state,
+    {
+      fallbackUrl: new URL(
+        "/settings/integrations",
+        process.env.NEXT_PUBLIC_APP_URL!,
+      ).toString(),
+      stateCookie: oauthStateCookieName("strava"),
+    },
+    () => completeCallback(userId, guardianUserId, code),
+  );
+});
+
+async function completeCallback(
+  userId: string,
+  guardianUserId: string | null,
+  code: string,
+): Promise<NextResponse> {
   try {
     const creds = await getStravaClientCredentials(userId);
     if (!creds) return ERR("nocreds");
 
-    const tokens = await exchangeCode(code, creds);
+    const tokens = await stravaOAuth.exchange(code, creds);
 
     const athleteId =
       typeof tokens.athlete?.id === "number" ? String(tokens.athlete.id) : null;
@@ -96,6 +134,11 @@ export const GET = apiHandler(async (request: NextRequest) => {
       annotate({ meta: { reason: "cross_user" } });
       return ERR("cross_user");
     }
+    // One Strava athlete, one record.
+    if (await accountLinkedElsewhere("strava", athleteId, userId)) {
+      annotate({ meta: { reason: ALREADY_LINKED_REASON } });
+      return ERR(ALREADY_LINKED_REASON);
+    }
 
     await prisma.user.update({
       where: { id: userId },
@@ -106,7 +149,10 @@ export const GET = apiHandler(async (request: NextRequest) => {
       },
     });
 
-    await auditLog("strava.connect", { userId });
+    await auditLog("strava.connect", {
+      userId,
+      actorUserId: guardianUserId,
+    });
     await markReconnected(userId, "strava");
 
     // Enqueue the self-converging history backfill at connect time so deep
@@ -115,8 +161,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
     // (`stravaBackfillCompletedAt IS NULL`) is the safety net, so a missing
     // boss instance here never strands the connection. Mirrors the WHOOP /
     // Fitbit callback enqueue.
-    const boss = getGlobalBoss();
-    if (boss) {
+    await enqueueWhenBossReady("strava-backfill", async (boss) => {
       await boss
         .send(STRAVA_BACKFILL_QUEUE, {
           userId,
@@ -125,7 +170,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
         .catch((err) =>
           getEvent()?.addWarning(`strava-backfill enqueue failed: ${err}`),
         );
-    }
+    });
 
     const response = NextResponse.redirect(
       new URL(
@@ -139,4 +184,4 @@ export const GET = apiHandler(async (request: NextRequest) => {
     getEvent()?.setError(err);
     return ERR("token");
   }
-});
+}

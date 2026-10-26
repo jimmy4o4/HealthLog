@@ -12,16 +12,23 @@
 import { prisma } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { buildSourceRankCase } from "@/lib/analytics/source-rank-sql";
+import { dayWeightedRowsSql, foldMeanSql } from "@/lib/measurements/day-mean";
 import {
-  dayWeightedRowsSql,
-  foldMeanSql,
-  isHourlyMeanTypeSql,
-} from "@/lib/measurements/day-mean";
-import { loadUserSourcePriority } from "@/lib/rollups/measurement-read";
+  loadUserSourcePriority,
+  utcBucketEnd,
+} from "@/lib/rollups/measurement-read";
 import { classifyAgainstEffectiveRange } from "@/lib/labs/reference-range";
 import { calendarDaysUntil } from "@/lib/measurement-reminders/due-day";
 import { resolveLabFields } from "@/lib/labs/serialise";
-import { readRollupBuckets } from "@/lib/rollups/measurement-rollups";
+import { isModuleEnabled } from "@/lib/modules/gate";
+import {
+  readRollupBuckets,
+  ROLLUP_FOLD_WINDOW_MS,
+} from "@/lib/rollups/measurement-rollups";
+import {
+  canonicalWorkoutsInRange,
+  readWorkoutsAroundRange,
+} from "@/lib/workouts/canonical-read";
 import { deriveBucketedTypes } from "@/lib/signals/adapters/correlation";
 import type {
   AggregatedFeatures,
@@ -40,17 +47,36 @@ interface AllTimeExtremes {
 }
 
 /**
- * v1.18.11 P1 — full-history min / max / mean per measurement type via ONE
- * grouped SQL aggregation, with NO row materialisation in JS. Fills the
- * `allTime*` feature fields; the windowed `summarize()` covers trends + recent
- * windows, and this covers the long-horizon figures the prompt labels
- * "allTime".
+ * v1.18.11 — full-history min / max / mean per measurement type, folded in
+ * SQL with NO row materialisation in JS. Fills the `allTime*` feature fields;
+ * the windowed `summarize()` covers trends + recent windows, and this covers
+ * the long-horizon figures the prompt labels "allTime".
  *
  * One source per (type, day): each source is folded per day first, each day
  * keeps its ladder-canonical source, then the days fold into the figures —
  * the same pick the dashboard's all-time figures make. Averaging every raw
  * row let a device that samples densely (a watch's pulse) outweigh the
  * readings the source ladder prefers on the same days.
+ *
+ * Where the days come from. A day is the same per-source fold either way —
+ * count, sum, the extremes of the readings and, for an hourly-mean type, the
+ * day value — and the DAY rollup tier already holds exactly that per (type,
+ * source, day), recomputed on every write. Reading the raw rows instead meant
+ * two passes over every reading of these types the account ever recorded on
+ * every call, the largest read on the database. So the figures fold:
+ *
+ *   - the DAY tier, for every whole UTC day from `tierFrom` on, for each type
+ *     whose tier rows in that range all carry the reading extremes
+ *     (migration 0417; the boot re-fold fills older rows) and account for
+ *     the live record day by day (same days, same reading counts);
+ *   - the raw rows for the rest: the days before `tierFrom` (older than the
+ *     fold window, or the partial day the `floor` falls in), and every day of
+ *     a type the tier does not cover yet or no longer matches.
+ *
+ * The split is at a UTC midnight, so no day is folded from both, and the
+ * canonical pick per day is the same on both sides. The tier's pulse day
+ * value follows the stored day-mean method; the raw fold follows this
+ * process's mirror of it, which trails a change by at most a minute.
  *
  * Only the four types that expose `allTime*` fields are aggregated (weight,
  * systolic, diastolic, pulse). Returns a map keyed by `MeasurementType`; a type
@@ -67,19 +93,129 @@ export async function readAllTimeExtremes(
 ): Promise<Map<MeasurementType, AllTimeExtremes>> {
   const out = new Map<MeasurementType, AllTimeExtremes>();
   if (types.length === 0) return out;
+  // The first whole UTC day the tier may answer: after the fold window's
+  // edge (the fold writes nothing older, and the edge day may be partial)
+  // and after the floor's own day (only part of it is inside the floor).
+  const windowEdge = new Date(Date.now() - ROLLUP_FOLD_WINDOW_MS);
+  const tierFrom = utcBucketEnd(
+    floor !== null && floor > windowEdge ? floor : windowEdge,
+    "DAY",
+  );
+  const typeList = (list: readonly MeasurementType[]) =>
+    Prisma.join(list.map((t) => Prisma.sql`${t}::measurement_type`));
+
+  const [priorityJson, tierRows] = await Promise.all([
+    loadUserSourcePriority(userId),
+    // A type is read from the tier only when the tier accounts for the live
+    // record day by day: every day with a live reading has DAY rows whose
+    // counts add up to that day's live count, and every DAY row has its day
+    // of live readings. A bucket that outlived its rows (a hard delete with no
+    // rollup recompute) or a day the tier never got fails the comparison and
+    // the type is read raw. The figures from here are the anchor the Coach
+    // snapshot checks its coarse history against, so they must never repeat
+    // a stale bucket. The live side is a count per day off the partial
+    // `(user_id, type, measured_at)` live index, not a read of the rows.
+    prisma.$queryRaw<Array<{ type: string }>>`
+      WITH live AS (
+        SELECT m."type", date_trunc('day', m."measured_at") AS day,
+               COUNT(*)::bigint AS n
+        FROM measurements m
+        WHERE m."user_id" = ${userId}
+          AND m."deleted_at" IS NULL
+          AND m."type" IN (${typeList(types)})
+          AND m."measured_at" >= ${tierFrom}
+        GROUP BY 1, 2
+      ),
+      tier AS (
+        SELECT r."type", r."bucket_start" AT TIME ZONE 'UTC' AS day,
+               SUM(r."count")::bigint AS n,
+               bool_and(
+                 r."reading_min_value" IS NOT NULL
+                 AND r."reading_max_value" IS NOT NULL
+               ) AS complete
+        FROM measurement_rollups r
+        WHERE r."user_id" = ${userId}
+          AND r."granularity" = 'DAY'
+          AND r."type" IN (${typeList(types)})
+          AND r."bucket_start" >= ${tierFrom}
+        GROUP BY 1, 2
+      )
+      SELECT COALESCE(l."type", t."type")::text AS type
+      FROM live l
+      FULL JOIN tier t ON t."type" = l."type" AND t.day = l.day
+      GROUP BY 1
+      HAVING bool_and(COALESCE(l.n = t.n AND t.complete, false))
+    `,
+  ]);
+  const tierTypes = new Set(tierRows.map((r) => r.type));
+  const fromTier = types.filter((t) => tierTypes.has(t));
+  const rawOnly = types.filter((t) => !tierTypes.has(t));
+
   const since =
     floor === null ? Prisma.empty : Prisma.sql`AND m."measured_at" >= ${floor}`;
-  const priorityJson = await loadUserSourcePriority(userId);
-  const rank = Prisma.raw(
-    buildSourceRankCase(priorityJson, 'p."type"', 'p."source"'),
-  );
-  const typeList = Prisma.join(
-    types.map((t) => Prisma.sql`${t}::measurement_type`),
-  );
+  const rawArms: Prisma.Sql[] = [];
+  if (rawOnly.length > 0) {
+    rawArms.push(Prisma.sql`
+      SELECT m."type", m."source", m."measured_at", m."value"
+      FROM measurements m
+      WHERE m."user_id" = ${userId}
+        AND m."deleted_at" IS NULL
+        AND m."type" IN (${typeList(rawOnly)})
+        ${since}`);
+  }
+  if (fromTier.length > 0) {
+    rawArms.push(Prisma.sql`
+      SELECT m."type", m."source", m."measured_at", m."value"
+      FROM measurements m
+      WHERE m."user_id" = ${userId}
+        AND m."deleted_at" IS NULL
+        AND m."type" IN (${typeList(fromTier)})
+        ${since}
+        AND m."measured_at" < ${tierFrom}`);
+  }
+  const rank = (alias: string) =>
+    Prisma.raw(
+      buildSourceRankCase(priorityJson, `${alias}."type"`, `${alias}."source"`),
+    );
+  // The tier's canonical days, in the shape of the raw fold's: the day's
+  // reading-weighted sum and count, its reading extremes, and its day value
+  // with a weight of one (a DAY row's `mean` is the day value for an
+  // hourly-mean type).
+  const tierCanon =
+    fromTier.length === 0
+      ? Prisma.empty
+      : Prisma.sql`
+    UNION ALL
+    SELECT * FROM (
+      SELECT DISTINCT ON (r."type", r."bucket_start")
+        r."type",
+        r."count"                                                AS cnt,
+        COALESCE(r."sum_value", r."count" * r."mean")::double precision
+                                                                 AS total,
+        r."reading_min_value"                                    AS min_value,
+        r."reading_max_value"                                    AS max_value,
+        r."mean"                                                 AS wsum,
+        1.0::double precision                                    AS wdays
+      FROM measurement_rollups r
+      WHERE r."user_id" = ${userId}
+        AND r."granularity" = 'DAY'
+        AND r."type" IN (${typeList(fromTier)})
+        AND r."bucket_start" >= ${tierFrom}
+      ORDER BY r."type", r."bucket_start", (${rank("r")}), r."source"::text
+    ) tier`;
   // A day of pulse is the mean of its hours' means and the full history the
-  // mean of its days (`day-mean.ts`). `weighted` carries, per source and day,
-  // the day-weighted sum and the day's weight (one) for those types only;
-  // every other type keeps the reading-weighted mean below, unchanged.
+  // mean of its days (`day-mean.ts`). `per_source` carries, per source and
+  // day, the day-weighted sum and the day's weight (one) beside the reading
+  // count and sum; the mean below reads the weighted pair for those types
+  // only, and every other type keeps the reading-weighted mean, unchanged.
+  //
+  // One fold of one scan, no join. The weighted pair used to be a second
+  // grouping of the same rows, joined back to the per-source days before the
+  // pick; on a measurements table without planner statistics (a new install,
+  // an import under the autoanalyze threshold) that join ran as a nested
+  // loop that re-ran the weighting for every source day, and ten years of
+  // readings took seconds. `tests/integration/per-source-fold-parity.test.ts`
+  // holds the joined statement as the reference.
   const mean = Prisma.raw(
     foldMeanSql({
       typeColumn: 'c."type"',
@@ -92,55 +228,35 @@ export async function readAllTimeExtremes(
   const rows = await prisma.$queryRaw<
     Array<{ type: string; mean: number; min: number; max: number }>
   >`
-    WITH hourly_src AS (
-      SELECT m.*
-      FROM measurements m
-      WHERE m."user_id" = ${userId}
-        AND m."deleted_at" IS NULL
-        AND m."type" IN (${typeList})
-        ${since}
-        AND ${Prisma.raw(isHourlyMeanTypeSql('m."type"'))}
-    ),
-    weighted AS (
-      SELECT
-        w."type",
-        w."source",
-        date_trunc('day', w."measured_at")              AS day,
-        SUM(w."value" * w.day_weight)::double precision AS wsum,
-        SUM(w.day_weight)::double precision             AS wdays
-      FROM ${dayWeightedRowsSql("hourly_src", null, { bySource: true })} w
-      GROUP BY w."type", w."source", 3
-    ),
+    WITH live AS (${Prisma.join(rawArms, " UNION ALL ")}),
     per_source AS (
       SELECT
-        m."type",
-        m."source",
-        date_trunc('day', m."measured_at") AS day,
-        COUNT(*)::int                      AS cnt,
-        SUM(m."value")::double precision   AS total,
-        MIN(m."value")::double precision   AS min_value,
-        MAX(m."value")::double precision   AS max_value
-      FROM measurements m
-      WHERE m."user_id" = ${userId}
-        AND m."deleted_at" IS NULL
-        AND m."type" IN (${typeList})
-        ${since}
-      GROUP BY m."type", m."source", 3
-    ),
-    canon AS (
-      SELECT DISTINCT ON (p."type", p.day)
-        p."type", p.cnt, p.total, p.min_value, p.max_value, w.wsum, w.wdays
-      FROM per_source p
-      LEFT JOIN weighted w
-        ON w."type" = p."type" AND w."source" = p."source" AND w.day = p.day
-      ORDER BY p."type", p.day, (${rank}), p."source"::text
+        l."type",
+        l."source",
+        date_trunc('day', l."measured_at")              AS day,
+        COUNT(*)::int                                   AS cnt,
+        SUM(l."value")::double precision                AS total,
+        MIN(l."value")::double precision                AS min_value,
+        MAX(l."value")::double precision                AS max_value,
+        SUM(l."value" * l.day_weight)::double precision AS wsum,
+        SUM(l.day_weight)::double precision             AS wdays
+      FROM ${dayWeightedRowsSql("live", null, { bySource: true })} l
+      GROUP BY l."type", l."source", 3
     )
     SELECT
       c."type"::text                                  AS type,
       ${mean}::double precision                       AS mean,
       MIN(c.min_value)::double precision              AS min,
       MAX(c.max_value)::double precision              AS max
-    FROM canon c
+    FROM (
+      SELECT * FROM (
+        SELECT DISTINCT ON (p."type", p.day)
+          p."type", p.cnt, p.total, p.min_value, p.max_value, p.wsum, p.wdays
+        FROM per_source p
+        ORDER BY p."type", p.day, (${rank("p")}), p."source"::text
+      ) raw
+      ${tierCanon}
+    ) c
     GROUP BY c."type"
   `;
   for (const r of rows) {
@@ -154,7 +270,7 @@ export async function readAllTimeExtremes(
 }
 
 /**
- * v1.4.36 W3 T1 — bucket-window definitions for the
+ * v1.4.36 — bucket-window definitions for the
  * `bucketedMeasurements` payload. Mirrors the rollup populator's
  * granularity ladder so the read-side picks up whatever the persistent
  * table holds without a recompute round-trip.
@@ -231,12 +347,15 @@ function sanitizeLabel(text: string, max = 80): string {
  * Most-recent reading per biomarker over the lookback window; hidden markers
  * excluded; qualitative rows neutral. Only abnormal (below/above) OR trending
  * markers surface, bounded. Returns `undefined` when nothing is flagged so the
- * block is omitted rather than emitting an empty shape.
+ * block is omitted rather than emitting an empty shape, and when the `labs`
+ * module is off, before any row is read: the briefing prompt never carries a
+ * switched-off domain.
  */
 export async function readLabsBriefingBlock(
   userId: string,
   now: number,
 ): Promise<AggregatedFeatures["labs"] | undefined> {
+  if (!(await isModuleEnabled(userId, "labs"))) return undefined;
   const nowDate = new Date(now);
   const cutoff = new Date(nowDate);
   cutoff.setMonth(cutoff.getMonth() - LABS_LOOKBACK_MONTHS);
@@ -415,17 +534,35 @@ export async function readWorkoutsBlock(
   now: number,
 ): Promise<AggregatedFeatures["workouts"] | undefined> {
   const since = new Date(now - WORKOUT_WINDOW_DAYS * MS_PER_DAY);
-  const rows = await prisma.workout.findMany({
-    where: { userId, startedAt: { gte: since } },
-    orderBy: { startedAt: "desc" },
-    take: 2000,
-    select: {
-      sportType: true,
-      startedAt: true,
-      durationSec: true,
-      totalDistanceM: true,
-    },
-  });
+  const [account, stored] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { sourcePriorityJson: true },
+    }),
+    readWorkoutsAroundRange({ from: since, to: null }, (bounds) =>
+      prisma.workout.findMany({
+        where: { userId, startedAt: bounds },
+        orderBy: [{ startedAt: "desc" }, { id: "asc" }],
+        take: 2000,
+        select: {
+          id: true,
+          source: true,
+          sportType: true,
+          startedAt: true,
+          durationSec: true,
+          totalDistanceM: true,
+        },
+      }),
+    ),
+  ]);
+  // One session synced by two services (or re-sent by HealthKit) is one
+  // workout: the same collapse the workout list applies, so the count and the
+  // minutes here match what the person sees there. The picker returns its rows
+  // oldest first; the block reads the newest at index 0.
+  const rows = canonicalWorkoutsInRange(
+    stored,
+    account?.sourcePriorityJson ?? null,
+  ).reverse();
   if (rows.length === 0) return undefined;
 
   const tally = (windowDays: number) => {
@@ -467,7 +604,7 @@ export async function readWorkoutsBlock(
 }
 
 /**
- * S10 — ECG recording descriptor for the briefing narrative (device-verdict
+ * ECG recording descriptor for the briefing narrative (device-verdict
  * only). A bounded, non-diagnostic snapshot of the user's on-device ECG
  * recordings over the trailing window: how many exist, the distribution of the
  * RECORDING DEVICE's OWN verdicts (never HealthLog's), and the latest

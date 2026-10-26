@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W17b — Withings activity-sync unit tests.
+ * v1.4.25 — Withings activity-sync unit tests.
  *
  * Coverage focuses on the per-page response shape, field mapping, and
  * the writer's idempotency hook. The end-to-end DB path is covered by
@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => {
-  // v1.20.2 F3 — the write path batches: one `findMany` resolves the
+  // v1.20.2 — the write path batches: one `findMany` resolves the
   // overwrite-vs-insert decision for the whole sync, `createMany` lands
   // every fresh slot, and changed-value overwrites run inside a
   // `$transaction([...update])`. The mock `$transaction` awaits the array
@@ -31,6 +31,12 @@ vi.mock("@/lib/db", () => {
     },
   };
 });
+
+// Which brand-18 days another connected source already covers; each test
+// that needs one sets it. Its SQL is covered by the integration suite.
+vi.mock("@/lib/withings/other-step-source-days", () => ({
+  daysWithOtherStepSource: vi.fn().mockResolvedValue(new Set()),
+}));
 
 vi.mock("@/lib/tz/resolver", () => ({
   resolveUserTimezone: vi.fn(),
@@ -69,12 +75,23 @@ vi.mock("@/lib/rollups/measurement-rollups", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/rollups/measurement-rollups")
   >("@/lib/rollups/measurement-rollups");
+  const perKey = vi.fn().mockResolvedValue(undefined);
   return {
     ...actual,
-    recomputeBucketsForMeasurement: vi.fn().mockResolvedValue(undefined),
+    recomputeBucketsForMeasurement: perKey,
+    // The keyed refold, observed as the per-key recomputes it stands for.
+    recomputeBucketsForKeys: vi.fn(
+      async (
+        userId: string,
+        keys: Array<{ type: string; measuredAt: Date }>,
+      ) => {
+        for (const k of keys) await perKey(userId, k.type, k.measuredAt);
+      },
+    ),
   };
 });
 
+import { daysWithOtherStepSource } from "@/lib/withings/other-step-source-days";
 import { prisma } from "@/lib/db";
 import {
   parkIntegrationAtReauth,
@@ -91,6 +108,7 @@ interface FakeActivity {
   steps?: number;
   distance?: number;
   calories?: number;
+  brand?: number;
 }
 
 function installFetchMock(entries: FakeActivity[]) {
@@ -174,7 +192,7 @@ describe("fetchWithingsActivity", () => {
 });
 
 /**
- * v1.20.2 F3 — helper: pull the flat `data[]` the batched `createMany`
+ * v1.20.2 — helper: pull the flat `data[]` the batched `createMany`
  * received (the writer always passes a single call with every fresh
  * slot). Returns `[]` when `createMany` never fired.
  */
@@ -198,7 +216,7 @@ describe("syncUserActivity — field mapping + idempotency", () => {
     const imported = await syncUserActivity("user-1");
 
     expect(imported).toBe(3);
-    // v1.20.2 F3 — one batched insert carrying all three metric rows.
+    // v1.20.2 — one batched insert carrying all three metric rows.
     expect(prisma.measurement.createMany).toHaveBeenCalledTimes(1);
 
     const types = createManyRows().map((r) => r.type as string);
@@ -404,6 +422,58 @@ describe("syncUserActivity — field mapping + idempotency", () => {
     expect(types).not.toContain("WALKING_RUNNING_DISTANCE");
   });
 
+  it("skips a day Health Mate holds from another app that syncs its own steps (brand 18)", async () => {
+    // An Apple Health or Google Fit day written into Health Mate comes back
+    // from Getactivity as brand 18 ("external"). When that app reaches
+    // HealthLog from its own integration, under WITHINGS it is a second copy.
+    installFetchMock([
+      { date: "2026-05-12", steps: 8000, calories: 380, brand: 1 },
+      { date: "2026-05-13", steps: 9100, calories: 410, brand: 18 },
+    ]);
+    vi.mocked(daysWithOtherStepSource).mockResolvedValueOnce(
+      new Set(["2026-05-13"]),
+    );
+    vi.mocked(prisma.measurement.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.measurement.createMany).mockResolvedValue({
+      count: 2,
+    } as never);
+
+    await syncUserActivity("user-1");
+
+    expect(vi.mocked(daysWithOtherStepSource)).toHaveBeenCalledWith(
+      "user-1",
+      ["2026-05-13"],
+      expect.any(String),
+    );
+    const rows = createManyRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.value)).toEqual(
+      expect.not.arrayContaining([9100, 410]),
+    );
+  });
+
+  it("keeps a brand-18 day when no other source delivered steps that day", async () => {
+    // A phone whose steps only Health Mate reads: the external day is the
+    // account's only copy, so skipping it would lose the day.
+    installFetchMock([
+      { date: "2026-05-12", steps: 8000, calories: 380, brand: 1 },
+      { date: "2026-05-13", steps: 9100, calories: 410, brand: 18 },
+    ]);
+    vi.mocked(daysWithOtherStepSource).mockResolvedValueOnce(new Set());
+    vi.mocked(prisma.measurement.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.measurement.createMany).mockResolvedValue({
+      count: 4,
+    } as never);
+
+    await syncUserActivity("user-1");
+
+    const rows = createManyRows();
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => r.value)).toEqual(
+      expect.arrayContaining([9100, 410]),
+    );
+  });
+
   it("ingests a 0-step rest day rather than dropping it", async () => {
     // Withings reports 0 steps for a day a user spent in bed — that's
     // a valid datapoint, not a missing one. The mapper must not skip
@@ -580,7 +650,7 @@ describe("syncUserActivity — scope-skip guard (v1.4.26)", () => {
   });
 
   it("classifies a Withings 403 in the catch-block as reauth_required and STILL pages (defence-in-depth)", async () => {
-    // BL-P3-2 — the defence-in-depth 403 catch-block stays on
+    // The defence-in-depth 403 catch-block stays on
     // `recordSyncFailure` so a genuinely unexpected 403 (Withings
     // revokes scope between OAuth and the next sync without
     // invalidating the refresh token) still trips the 3-strike alert.

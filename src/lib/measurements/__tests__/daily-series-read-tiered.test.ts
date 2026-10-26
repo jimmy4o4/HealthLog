@@ -1,5 +1,5 @@
 /**
- * v1.19.2 W-CHARTS — `readDailySeries` long-range tier step-up.
+ * v1.19.2 — `readDailySeries` long-range tier step-up.
  *
  * Pins that a window WIDER than the DAY bucket cap routes through the
  * tiered rollup reader (whole-history coverage, downsampled by tier)
@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
+  findFirst: vi.fn(),
   queryRaw: vi.fn(),
   readTieredRollupSeries: vi.fn(),
 }));
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => ({
   prisma: {
     measurementRollup: { findMany: mocks.findMany },
+    measurement: { findFirst: mocks.findFirst },
     $queryRaw: mocks.queryRaw,
   },
 }));
@@ -33,6 +35,9 @@ const DAY_MS = 86_400_000;
 
 beforeEach(() => {
   mocks.findMany.mockReset();
+  mocks.findFirst.mockReset();
+  // No reading older than the rollups unless a case says so.
+  mocks.findFirst.mockResolvedValue(null);
   mocks.queryRaw.mockReset();
   mocks.readTieredRollupSeries.mockReset();
   // The daily path folds live, one row per local day.
@@ -75,6 +80,7 @@ describe("readDailySeries — long-range tier step-up", () => {
     mocks.readTieredRollupSeries.mockResolvedValueOnce({
       granularity: "MONTH",
       rows: tieredRows,
+      firstDay: new Date("2017-01-01T00:00:00.000Z"),
     });
 
     const result = await readDailySeries({
@@ -87,7 +93,7 @@ describe("readDailySeries — long-range tier step-up", () => {
     });
 
     expect(mocks.readTieredRollupSeries).toHaveBeenCalledTimes(1);
-    // v1.26.0 SEAM-N2 — the resolved `[from, to]` bounds are threaded so the
+    // v1.26.0 — the resolved `[from, to]` bounds are threaded so the
     // tier reads the REQUESTED window, not a trailing "to now" slice.
     expect(mocks.readTieredRollupSeries.mock.calls[0][0].from).toBe(from);
     expect(mocks.readTieredRollupSeries.mock.calls[0][0].to).toBe(to);
@@ -96,6 +102,51 @@ describe("readDailySeries — long-range tier step-up", () => {
     expect(result).toHaveLength(2);
     // The daily path was NOT consulted for the long window.
     expect(mocks.queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("folds the readings older than the rollups live and puts them first", async () => {
+    const to = new Date("2026-06-03T12:00:00.000Z");
+    const from = new Date(to.getTime() - 3650 * DAY_MS);
+    mocks.readTieredRollupSeries.mockResolvedValueOnce({
+      granularity: "MONTH",
+      rows: [
+        {
+          type: "WEIGHT",
+          value: 79,
+          measuredAt: "2021-07-01T12:00:00.000Z",
+          count: 30,
+        },
+      ],
+      firstDay: new Date("2021-07-04T00:00:00.000Z"),
+    });
+    mocks.findFirst.mockResolvedValueOnce({ id: "older" });
+    mocks.queryRaw.mockResolvedValueOnce([
+      {
+        type: "WEIGHT",
+        bucket_start: new Date("2018-03-01T00:00:00.000Z"),
+        avg: 84,
+        cnt: 4,
+        min_value: 83,
+        max_value: 85,
+      },
+    ]);
+
+    const result = await readDailySeries({
+      userId: "u",
+      type: "WEIGHT",
+      from,
+      to,
+      priorityJson: null,
+      timeZone: TZ,
+    });
+
+    // The head reads before the first tier bucket (July 2021) only.
+    expect(mocks.findFirst.mock.calls[0][0].where.measuredAt.lt).toEqual(
+      new Date("2021-07-01T00:00:00.000Z"),
+    );
+    expect(result).toHaveLength(2);
+    expect(result[0].value).toBe(84);
+    expect(result[1].measuredAt).toBe("2021-07-01T12:00:00.000Z");
   });
 
   it("falls through to the daily path on a tiered coverage miss (no silent empty)", async () => {

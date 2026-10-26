@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W5e — per-user, per-metric-class source priority. When more
+ * v1.4.25 — per-user, per-metric-class source priority. When more
  * than one ingest source ships the same metric for the same day, the
  * analytics aggregator consults this map to pick ONE canonical source
  * per day (so cumulative metrics like steps don't double-count) or to
@@ -14,7 +14,7 @@
  * Persisted as `User.sourcePriorityJson` (nullable Jsonb). Null = use
  * `DEFAULT_SOURCE_PRIORITY` verbatim.
  *
- * v1.4.25 W8c — two-axis extension. The original (W5e) shape carried a
+ * v1.4.25 — two-axis extension. The original (W5e) shape carried a
  * per-metric ladder at the top level (e.g. `weight: ["WITHINGS", …]`).
  * W8c adds two optional containers ON TOP of that:
  *   - `metricPriority`     — the per-metric ladder, identical in shape
@@ -39,7 +39,7 @@ import {
   measurementTypeEnum,
 } from "@/lib/validations/measurement";
 
-// v1.4.25 Fix-G — `annotate` from `@/lib/logging/context` was the
+// v1.4.25 — `annotate` from `@/lib/logging/context` was the
 // canonical breadcrumb for a parse failure, but the helper pulls
 // `node:async_hooks` via `AsyncLocalStorage`. Any client component that
 // reaches for a type-only export here (e.g.
@@ -135,7 +135,7 @@ export const SOURCE_PRIORITY_METRIC_KEYS = [
   // `RECOVERY_SCORE` rows distinguished by source — this ladder lets the
   // same picker resolve native-above-proxy without a second engine.
   "recovery",
-  // v1.18.10 I-5 — native-vs-derived stress. HealthLog computes a COMPUTED
+  // v1.18.10 — native-vs-derived stress. HealthLog computes a COMPUTED
   // HRV-derived `STRESS_SCORE` proxy; a device-native producer (Oura
   // `daily_stress`) is the deferred second source. Laddering it now makes the
   // picker deterministic the instant a second producer is enabled, instead of
@@ -157,7 +157,7 @@ export const SOURCE_PRIORITY_METRIC_KEYS = [
 export type SourcePriorityMetricKey =
   (typeof SOURCE_PRIORITY_METRIC_KEYS)[number];
 
-// v1.4.27 B7 / BL-P4-11-S1 — derive the metric-priority schema shape
+// v1.4.27 — derive the metric-priority schema shape
 // from `SOURCE_PRIORITY_METRIC_KEYS` so the schema and the enum cannot
 // drift. Adding a new metric class is now a single-line constant edit
 // instead of a two-place change that the lint chain doesn't enforce.
@@ -171,7 +171,7 @@ const metricPriorityShape: Record<
 const metricPriorityObjectSchema = z.object(metricPriorityShape).partial();
 
 /**
- * v1.4.25 W8c — device-type ladder per metric class. Walked by
+ * v1.4.25 — device-type ladder per metric class. Walked by
  * `pickCanonicalSource()` AFTER the source axis has narrowed the
  * candidate row down to the winning source.
  *
@@ -206,7 +206,7 @@ const deviceTypePrioritySchema = z
 export const sourcePrioritySchema = z
   .object({
     // ── v1.4.25 W5e flat shape (backward-compat) ──
-    // v1.4.27 B7 — derived from the shared metric-priority shape so the
+    // v1.4.27 — derived from the shared metric-priority shape so the
     // flat keys cannot drift from the nested `metricPriority` schema.
     ...metricPriorityShape,
     // ── v1.4.25 W8c additions ──
@@ -234,6 +234,16 @@ export type DeviceTypePriority = z.infer<typeof deviceTypePrioritySchema>;
  *     pulse-ox, Thermo). Apple Health is second-hand (HealthKit
  *     receives the same reading via Withings' Health Mate iOS app).
  */
+// v1.43.11 — the sources that had no place on any ladder. A source a ladder
+// does not name ranks 90, below everything it does, so a typed weight from a
+// Telegram reminder lost its day to a WHOOP strap's estimate, and a Health
+// Connect day lost to every other source. Health Connect is the Android
+// counterpart of the HealthKit relay and sits right after APPLE_HEALTH on
+// the ladders for what it imports; the readings a person enters or bridges
+// themselves (EXTERNAL: their own hardware's uploader, MCP: an assistant
+// writing on their word, TELEGRAM: a reply to a reminder) sit right after
+// MANUAL, in the alphabetical order they already broke ties in. Relative to
+// each other the existing sources keep their order.
 export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
   // v1.12.0 — Fitbit/Pixel rides below Apple Health for cumulative metrics:
   // HealthKit still aggregates the broadest device set, and a Fitbit-only
@@ -253,6 +263,7 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
   // still survives.
   steps: [
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "WITHINGS",
     "FITBIT",
     "GOOGLE_HEALTH",
@@ -260,24 +271,35 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "POLAR",
     "STRAVA",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   activeEnergy: [
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "WITHINGS",
     "FITBIT",
     "GOOGLE_HEALTH",
     "OURA",
     "POLAR",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   walkingRunningDistance: [
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "WITHINGS",
     "FITBIT",
     "GOOGLE_HEALTH",
     "OURA",
     "POLAR",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   flightsClimbed: [
     "APPLE_HEALTH",
@@ -285,6 +307,9 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "FITBIT",
     "GOOGLE_HEALTH",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   // v1.11.0 — WHOOP leads the recovery-input ladders (sleep / HRV / RHR):
   // a worn-all-night strap has higher-resolution overnight sampling than
@@ -319,18 +344,31 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "OURA",
     "POLAR",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "WITHINGS",
   ],
   // A real scale beats a strap's body-measurement estimate for weight.
   weight: [
     "WITHINGS",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
     "WHOOP",
     "FITBIT",
     "GOOGLE_HEALTH",
   ],
-  bloodPressure: ["WITHINGS", "APPLE_HEALTH", "MANUAL"],
+  bloodPressure: [
+    "WITHINGS",
+    "APPLE_HEALTH",
+    "HEALTH_CONNECT",
+    "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
+  ],
   // v1.17.0 — continuous optical-HR wearables (Fitbit / Polar / Oura) rank
   // above a hand-typed MANUAL pulse; the device-source order matches the
   // rhr / hrv ladders (FITBIT > OURA > POLAR). Withings BPM cuff + the
@@ -343,12 +381,29 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "OURA",
     "POLAR",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
-  bodyFat: ["WITHINGS", "APPLE_HEALTH", "MANUAL", "FITBIT", "GOOGLE_HEALTH"],
+  bodyFat: [
+    "WITHINGS",
+    "APPLE_HEALTH",
+    "HEALTH_CONNECT",
+    "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
+    "FITBIT",
+    "GOOGLE_HEALTH",
+  ],
   bodyTemperature: [
     "WITHINGS",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
     "FITBIT",
     "GOOGLE_HEALTH",
   ],
@@ -363,15 +418,23 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "OURA",
     "POLAR",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   vo2Max: [
     "WITHINGS",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "FITBIT",
     "GOOGLE_HEALTH",
     "OURA",
     "MANUAL",
+    "EXTERNAL",
+    "MCP",
+    "TELEGRAM",
   ],
   // v1.11.0 — new WHOOP-overlapping keys. ScanWatch dermal reading is the
   // primary skin-temperature sensor; WHOOP's strap is second, Fitbit third,
@@ -386,6 +449,7 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
     "OURA",
     "POLAR",
     "APPLE_HEALTH",
+    "HEALTH_CONNECT",
     "WITHINGS",
   ],
   // v1.11.0 — native-vs-derived recovery. WHOOP's device-native Recovery
@@ -393,7 +457,7 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
   // fallback for users without a strap. v1.17.0 — Oura readiness + Polar
   // nightly recovery slot below WHOOP and above the computed proxy.
   recovery: ["WHOOP", "OURA", "POLAR", "COMPUTED"],
-  // v1.18.10 I-5 — native-vs-derived stress. Oura's device-native
+  // v1.18.10 — native-vs-derived stress. Oura's device-native
   // `daily_stress` (the deferred second producer) outranks HealthLog's
   // COMPUTED HRV-derived proxy; the proxy is the fallback for users without a
   // device-native stress signal. Single-producer today.
@@ -404,12 +468,22 @@ export const DEFAULT_SOURCE_PRIORITY: Required<MetricPriority> = {
   // on now. Mirrors the recovery ladder's native-above-computed ordering.
   sleepDebt: ["WHOOP", "OURA", "POLAR", "COMPUTED"],
   // v1.42 (#1110) — the straps and rings that measure RMSSD overnight lead;
-  // the HealthKit relay of a third-party reading is the fallback.
-  hrvRmssd: ["WHOOP", "OURA", "POLAR", "APPLE_HEALTH"],
+  // the HealthKit relay of a third-party reading is the fallback. Fitbit and
+  // Google Health report RMSSD too and take the places they hold on the SDNN
+  // ladder they used to be filed under.
+  hrvRmssd: [
+    "WHOOP",
+    "FITBIT",
+    "GOOGLE_HEALTH",
+    "OURA",
+    "POLAR",
+    "APPLE_HEALTH",
+    "HEALTH_CONNECT",
+  ],
 };
 
 /**
- * v1.4.25 W8c — default device-type ladder. Open-wearables' research
+ * v1.4.25 — default device-type ladder. Open-wearables' research
  * recommendation: watch first (highest fidelity for cumulative + HR
  * metrics), then ring/band (wrist-adjacent), then phone (fallback
  * cumulative when wearables are off-wrist), then scale (only writes
@@ -468,7 +542,7 @@ export function parseSourcePriority(raw: unknown): ResolvedSourcePriority {
 
   const parsed = sourcePrioritySchema.safeParse(raw);
   if (!parsed.success) {
-    // v1.4.25 W10 reconcile (Sr-M2) — emit a wide-event tag so a future
+    // v1.4.25 — emit a wide-event tag so a future
     // schema-tightening regression that silently nukes a user's saved
     // ladder surfaces in ops dashboards rather than as a "why did my
     // priorities reset?" user report. `annotate()` is a no-op outside a
@@ -539,7 +613,7 @@ function buildResolved(
     metricPriority: merged,
     deviceTypePriority,
   };
-  // v1.4.25 W10 reconcile (Code-M1) — deep-freeze the resolved blob so
+  // v1.4.25 — deep-freeze the resolved blob so
   // a caller who mutates `resolved.metricPriority.weight = …` after
   // parseSourcePriority() returns trips at runtime instead of silently
   // desyncing the two views (the top-level flat keys share their
@@ -586,7 +660,7 @@ export function resolveSleepDebtSource(
 }
 
 /**
- * v1.4.25 W8c — runtime device-type checker for ingest paths. Returns
+ * v1.4.25 — runtime device-type checker for ingest paths. Returns
  * a `DeviceType` for any input the iOS app or Withings webhook might
  * supply; falls back to `"unknown"` when the value isn't part of the
  * canonical enum. Keeps the picker on the happy path even when a
@@ -610,7 +684,7 @@ export function getSourceLadder(
 }
 
 /**
- * v1.4.25 W8c — resolve the device-type ladder for a given metric.
+ * v1.4.25 — resolve the device-type ladder for a given metric.
  * Lookup order:
  *   1. `deviceTypePriority[metricType]` — per-metric override.
  *   2. `deviceTypePriority.default`     — global fallback the user set.

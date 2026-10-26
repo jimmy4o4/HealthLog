@@ -55,7 +55,7 @@ vi.mock("@/lib/jobs/boss-instance", () => ({
   getGlobalBoss: () => mocks.getGlobalBossMock(),
 }));
 
-// v1.4.36 QA H3 — `ensureUserRollupsFresh` now annotates + console-
+// v1.4.36 — `ensureUserRollupsFresh` now annotates + console-
 // errors on populator failures so silent regressions show up in ops.
 // Mock the annotate boundary so the test can assert the meta payload.
 vi.mock("@/lib/logging/context", () => ({
@@ -181,13 +181,15 @@ describe("recomputeBucketsForMeasurement", () => {
         mean: 82.5,
         min_value: 80.0,
         max_value: 85.0,
-        // v1.4.39 W-SUM — writer always populates `sum_value` (AVG
+        // v1.4.39 — writer always populates `sum_value` (AVG
         // and SUM compose in the same $queryRaw aggregate). 3 * 82.5
         // = 247.5 so the round-trips line up with `mean * count`.
         sum_value: 247.5,
         sd: 2.0,
         slope: -0.1,
         r2: 0.9,
+        reading_min_value: 80.5,
+        reading_max_value: 84.5,
       },
     ]);
     getGlobalBossMock.mockReturnValue({ send: bossSend });
@@ -210,23 +212,27 @@ describe("recomputeBucketsForMeasurement", () => {
     // instead of raising (or being dropped). Param layout per row:
     // [userId, type, granularity, bucketStart, source, count, mean,
     //  min, max, sum, sd, slope, r2, sumX, sumXy, sumXx, sumYy,
-    //  computedAt].
+    //  readingMin, readingMax, computedAt].
     expect(txExecuteRawUnsafe).toHaveBeenCalledTimes(1);
     const [sql, ...params] = txExecuteRawUnsafe.mock.calls[0];
     expect(sql).toContain(
       "ON CONFLICT (user_id, type, granularity, bucket_start, source)",
     );
     expect(sql).toContain("DO UPDATE SET");
-    expect(params).toHaveLength(18);
+    expect(params).toHaveLength(20);
     expect(params[0]).toBe("user-1");
     expect(params[1]).toBe("WEIGHT");
     expect(params[2]).toBe("DAY");
     expect(params[4]).toBe("MANUAL");
     expect(params[5]).toBe(3);
     expect(params[6]).toBe(82.5);
-    // v1.4.39 W-SUM — sumValue flows through. Cumulative read paths
+    // v1.4.39 — sumValue flows through. Cumulative read paths
     // (steps, flights, distance, daylight, active-energy) consume it.
     expect(params[9]).toBe(247.5);
+    // The reading extremes, beside the range-widened min / max.
+    expect(params[7]).toBe(80.0);
+    expect(params[17]).toBe(80.5);
+    expect(params[18]).toBe(84.5);
 
     // WEEK / MONTH / YEAR — three enqueues against the worker queue.
     expect(bossSend).toHaveBeenCalledTimes(3);
@@ -453,13 +459,13 @@ describe("persistRollupRows — large path (via recomputeUserRollups)", () => {
     expect(deleteMany.mock.calls[0][0].where.userId).toBe("user-1");
     expect(deleteMany.mock.calls[0][0].where.granularity).toBe("DAY");
 
-    // 3 chunks of 18 params per row, every one an ON CONFLICT DO UPDATE
+    // 3 chunks of 20 params per row, every one an ON CONFLICT DO UPDATE
     // upsert — tolerant of a mid-transaction hook insert AND of a
     // concurrent fold on the same partition (v1.28.33, issue #486).
     expect(txExecuteRawUnsafe).toHaveBeenCalledTimes(3);
-    expect(txExecuteRawUnsafe.mock.calls[0]).toHaveLength(1 + 500 * 18);
-    expect(txExecuteRawUnsafe.mock.calls[1]).toHaveLength(1 + 500 * 18);
-    expect(txExecuteRawUnsafe.mock.calls[2]).toHaveLength(1 + 200 * 18);
+    expect(txExecuteRawUnsafe.mock.calls[0]).toHaveLength(1 + 500 * 20);
+    expect(txExecuteRawUnsafe.mock.calls[1]).toHaveLength(1 + 500 * 20);
+    expect(txExecuteRawUnsafe.mock.calls[2]).toHaveLength(1 + 200 * 20);
     for (const call of txExecuteRawUnsafe.mock.calls) {
       expect(call[0]).toContain("ON CONFLICT");
       expect(call[0]).toContain("DO UPDATE SET");
@@ -496,6 +502,19 @@ describe("persistRollupRows — large path (via recomputeUserRollups)", () => {
    * instant, a different oldest bucket was corrupted on each run and nothing
    * repaired it. The window must be snapped out to whole buckets first.
    */
+  it("stops between granularities once the job's budget is spent", async () => {
+    queryRawUnsafe.mockResolvedValue([]);
+    let asked = 0;
+    const result = await recomputeUserRollups("user-1", {
+      // The budget runs out after the first granularity was folded.
+      shouldStop: () => ++asked > 1,
+    });
+    expect(result.stopped).toBe(true);
+    // The first granularity's aggregate, then nothing more.
+    expect(queryRawUnsafe).toHaveBeenCalledTimes(1);
+    queryRawUnsafe.mockReset();
+  });
+
   describe("bucket alignment of the recompute window", () => {
     it("snaps a mid-day `from` down to the start of its DAY bucket", async () => {
       queryRawUnsafe.mockResolvedValueOnce(syntheticRows(1));
@@ -562,7 +581,7 @@ describe("persistRollupRows — large path (via recomputeUserRollups)", () => {
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(typeof transaction.mock.calls[0][0]).toBe("function");
     expect(txExecuteRawUnsafe).toHaveBeenCalledTimes(1);
-    expect(txExecuteRawUnsafe.mock.calls[0]).toHaveLength(1 + 2 * 18);
+    expect(txExecuteRawUnsafe.mock.calls[0]).toHaveLength(1 + 2 * 20);
     expect(result.rowsUpserted).toBe(2);
   });
 });

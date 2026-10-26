@@ -35,7 +35,7 @@ import { ChartLine, Table2 } from "lucide-react";
 import { ChartErrorBoundary } from "@/components/charts/chart-error-state";
 import { ChartSkeleton } from "@/components/charts/chart-skeleton";
 import { QueryErrorRow } from "@/components/ui/query-error-row";
-import { ViewToggle } from "@/components/ui/view-toggle";
+import { Segmented } from "@/components/ui/segmented";
 import { useCoachMessageResults } from "@/hooks/use-coach-message-results";
 import {
   COACH_RESULT_UI_KEYS,
@@ -205,7 +205,7 @@ export function CoachResults({
   const expected = hasLive
     ? countResultsInSection(liveWithProvenance(live ?? [], metas), section)
     : countResultsInSection(metas, section);
-  const { ref, results, isError, refetch } = useCoachMessageResults({
+  const { ref, results, isError, error, refetch } = useCoachMessageResults({
     conversationId,
     messageId,
     enabled: !hasLive && expected > 0,
@@ -222,6 +222,7 @@ export function CoachResults({
     >
       {!hasLive && isError ? (
         <QueryErrorRow
+          error={error}
           slot="coach-results-error"
           retrySlot="coach-results-retry"
           message={t(COACH_RESULT_UI_KEYS.loadFailed)}
@@ -285,12 +286,14 @@ function CoachResultView({
   }
 
   const toggle = (
-    <ViewToggle<ResultView>
-      view={view}
+    <Segmented<ResultView>
+      mode="toggle"
+      iconOnly
+      value={view}
       onChange={setView}
-      groupLabel={t(COACH_RESULT_UI_KEYS.viewLabel)}
-      dataSlotPrefix="coach-result-view"
-      segments={[
+      label={t(COACH_RESULT_UI_KEYS.viewLabel)}
+      optionSlot={(value) => `coach-result-view-${value}`}
+      options={[
         {
           value: "chart",
           label: t(COACH_RESULT_UI_KEYS.viewChart),

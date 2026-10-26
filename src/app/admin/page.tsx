@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTranslations } from "@/lib/i18n/context";
 import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { AdminShell } from "@/components/admin/admin-shell";
+import { RecoveryReadinessCard } from "@/components/admin/recovery-readiness-card";
 import { SystemStatusSummary } from "@/components/admin/system-status-summary";
 import { VersionTileSection } from "@/components/admin/version-tile-section";
 import { RecentAuditPreview } from "@/components/admin/recent-audit-preview";
@@ -24,8 +25,11 @@ export default function AdminOverviewPage() {
   // Many sub-sections share `useAdminSettings()` and render defaults
   // silently on error — the banner makes the failure visible so the
   // admin knows the toggles below aren't reflecting real state.
-  const { isError: settingsError, refetch: refetchSettings } =
-    useAdminSettings();
+  const {
+    isError: settingsError,
+    error: settingsFailure,
+    refetch: refetchSettings,
+  } = useAdminSettings();
 
   if (!user || user.role !== "ADMIN") return null;
 
@@ -36,6 +40,7 @@ export default function AdminOverviewPage() {
             now (its own grid row, so the nav lines up with the first card). */}
         {settingsError && (
           <QueryErrorRow
+            error={settingsFailure}
             message={t("admin.adminSettingsLoadError")}
             onRetry={() => void refetchSettings()}
           />
@@ -44,6 +49,9 @@ export default function AdminOverviewPage() {
         <VersionTileSection />
 
         <SystemStatusSummary />
+
+        {/* v1.46 — every backup signal, the recovery kit included. */}
+        <RecoveryReadinessCard />
 
         <RecentAuditPreview />
       </div>

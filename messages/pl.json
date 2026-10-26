@@ -1,5 +1,6 @@
 {
   "common": {
+    "listCapped": "Widać tylko ostatnie {count}; starsze wpisy nie są tu wymienione.",
     "save": "Zapisz",
     "conflictReloaded": "Odświeżono z serwera. Wprowadź zmianę jeszcze raz.",
     "cancel": "Anuluj",
@@ -54,7 +55,10 @@
     "durationClockHours": "{time} godz.",
     "errorIdLabel": "ID błędu",
     "errorIdCopy": "Kopiuj ID błędu",
-    "errorIdCopied": "Skopiowano ID błędu"
+    "errorIdCopied": "Skopiowano ID błędu",
+    "readThrottled": "W tej chwili jest zbyt wiele zapytań, więc spróbuj ponownie później.",
+    "sessionEnded": "Twoja sesja wygasła, więc zaloguj się ponownie, aby kontynuować.",
+    "signIn": "Zaloguj się"
   },
   "apiErrors": {
     "measurement": {
@@ -171,6 +175,9 @@
           "failed": "Nie udało się odczytać etykiety. Spróbuj ostrzejszego zdjęcia."
         }
       }
+    },
+    "aiRuns": {
+      "readerBusy": "Czytnik dokumentów jest zajęty innymi zadaniami. Spróbuj ponownie za minutę."
     }
   },
   "doctorReport": {
@@ -397,7 +404,42 @@
     "lifeSittingValue": "{hours} godz., według deklaracji",
     "lifeWork": "Praca",
     "lifeNightWork": "praca w nocy",
-    "lifeExposures": "narażenia: {list}"
+    "lifeExposures": "narażenia: {list}",
+    "workouts": {
+      "title": "Treningi",
+      "summary": "{sessions} treningów, łącznie {hours} h; średnio {perWeek} treningu i {minutesPerWeek} minut tygodniowo.",
+      "colSport": "Dyscyplina",
+      "colSessions": "Treningi",
+      "colTime": "Czas",
+      "colDistance": "Dystans",
+      "colEnergy": "Energia",
+      "colHeartRate": "Średnie tętno",
+      "moreSports": "Kolejne dyscypliny ({count}) są wliczone do sum, ale nie wymienione."
+    },
+    "medicationEffect": {
+      "title": "Zmiana wokół rozpoczęcia leków",
+      "colMedication": "Lek / pomiar",
+      "colStart": "Początek",
+      "colLevel": "Zmiana poziomu (95% CI)",
+      "colSlope": "Zmiana trendu (95% CI)",
+      "colDays": "Dni przed / po",
+      "to": "do",
+      "week": "tydzień",
+      "reasonNoStart": "Brak zapisanej daty rozpoczęcia",
+      "reasonBefore": "Za mało pomiarów przed rozpoczęciem",
+      "reasonAfter": "Za mało pomiarów od rozpoczęcia",
+      "reasonFit": "Nie można obliczyć",
+      "excludedAdherence": "Pominięto {count} dni po rozpoczęciu (przyjęto mniej niż {floor}% dawek)",
+      "excludedNotTaking": "Pominięto {count} dni (lek wstrzymany lub przerwa między kuracjami)",
+      "notTracked": "przyjmowanie nie jest rejestrowane, więc nie pominięto dni z powodu opuszczonych dawek",
+      "endDoseChange": "okres kończy się {date}, przed pierwszą zmianą dawki",
+      "days": "{before} dni przed, {after} dni po rozpoczęciu, pominięto {excluded} dni",
+      "method": "Regresja segmentowa na wartościach dziennych od 90 dni przed do najwyżej 180 dni po rozpoczęciu, przedziały Neweya-Westa. Pominięto dni po rozpoczęciu, w których w ciągu poprzednich 14 dni przyjęto mniej niż 80% dawek. Opisuje związek w czasie, a nie udowodnione działanie leku.",
+      "autocorrelation": "silna zależność od poprzedniego dnia, więc zakresy mogą nadal być zbyt wąskie",
+      "window": "analizowano od {from} do {to}, może to wykraczać poza okres raportu",
+      "windowLine": "Analizowano od {from} do {to}. Ten okres może wykraczać poza okres raportu."
+    },
+    "screenerUnvalidated": "{label}: {count} z {total} wyników uzyskano w tłumaczeniu niezwalidowanym naukowo; należy traktować je orientacyjnie."
   },
   "errorBoundary": {
     "title": "Coś poszło nie tak",
@@ -590,7 +632,9 @@
       "title": "Nieprawidłowe zaproszenie",
       "description": "Ten link z zaproszeniem jest niekompletny lub został źle skopiowany. Poproś osobę, która cię zaprosiła, o nowy link.",
       "toLogin": "Przejdź do logowania"
-    }
+    },
+    "deletionPending": "To konto zostanie usunięte {date} i do tego czasu jest zablokowane. Administrator tego serwera może cofnąć usunięcie przed tą datą.",
+    "deletionPendingNoDate": "To konto czeka na usunięcie i jest zablokowane. Administrator tego serwera może cofnąć usunięcie, dopóki się nie zakończy."
   },
   "dashboard": {
     "title": "Pulpit",
@@ -739,13 +783,13 @@
         "bmi": "kg/m²"
       }
     },
-    "keyBackupBanner": {
-      "title": "Zrób kopię klucza szyfrowania",
-      "body": "Bez kopii klucza Twoich danych nie da się odzyskać po ponownej instalacji. To zajmie minutę.",
-      "action": "Otwórz krok"
-    },
     "quickAddSymptom": "Zapisz objaw",
-    "todayCardVisible": "Pokaż górną kartę"
+    "todayCardVisible": "Pokaż górną kartę",
+    "recoveryKitBanner": {
+      "title": "Zapisz zestaw odzyskiwania",
+      "body": "Bez kopii kluczy, których używa ten serwer, jego danych nie da się odzyskać po ponownej instalacji. To zajmie kilka minut.",
+      "action": "Otwórz zestaw"
+    }
   },
   "measurements": {
     "title": "Pomiary",
@@ -842,7 +886,7 @@
     "nextPage": "Następna strona",
     "dailyTotalCaption": "({count} pomiarów)",
     "openMetricInsights": "Otwórz analizę {type}",
-    "sleepNapCaption": "+{count} drzemka/i",
+    "sleepNapCaption": "w tym {count} drzemka/i",
     "sleepAwakeningsCaption": "{count} przebudzenia",
     "expandDay": "Pokaż pomiary z tego dnia",
     "collapseDay": "Ukryj pomiary z tego dnia",
@@ -907,6 +951,15 @@
     "unitRating": "poziom",
     "typeWho5Score": "Wynik WHO-5",
     "typeSciScore": "Wynik SCI",
+    "typeExerciseMinutes": "Minuty ćwiczeń",
+    "typeStandMinutes": "Minuty stania",
+    "typeStandHours": "Godziny stania",
+    "typeMindfulMinutes": "Minuty uważności",
+    "typeStateOfMindValence": "Stan umysłu",
+    "typeAfibBurden": "Obciążenie AF",
+    "typeIndoorCo2": "CO₂ w pomieszczeniu",
+    "typeIndoorTemperature": "Temperatura w pomieszczeniu",
+    "typeIndoorHumidity": "Wilgotność w pomieszczeniu",
     "durationReadAs": "Odczytano jako {duration}",
     "durationHoursMinutes": "{hours} godz. {minutes} min",
     "durationHoursOnly": "{hours} godz.",
@@ -1272,7 +1325,8 @@
       "bodyNotLogged": "Na ten dzień nic nie zapisano w dzienniku choroby",
       "openIllness": "Otwórz"
     },
-    "sourceNotification": "Powiadomienie"
+    "sourceNotification": "Powiadomienie",
+    "tagCatalogLoadError": "Nie udało się załadować tagów."
   },
   "medications": {
     "title": "Leki",
@@ -1508,13 +1562,13 @@
         "weekdays": {
           "label": "Dni tygodnia",
           "short": {
-            "mo": "Mo",
-            "tu": "Wt",
-            "we": "Śr",
-            "th": "Cz",
-            "fr": "Fr",
-            "sa": "Sa",
-            "su": "Nd"
+            "mo": "Pon",
+            "tu": "Wto",
+            "we": "Śro",
+            "th": "Czw",
+            "fr": "Pią",
+            "sa": "Sob",
+            "su": "Nie"
           },
           "long": {
             "mo": "Poniedziałek",
@@ -2345,7 +2399,31 @@
       },
       "scaleAbsolute": "Bezwzględne",
       "scalePercentSinceStart": "% od początku",
-      "scaleToggleLabel": "Skala wykresu"
+      "scaleToggleLabel": "Skala wykresu",
+      "segmented": {
+        "title": "Zmiana na początku",
+        "level": "Zaraz na początku poziom przesunął się o {value} {unit} (zakres 95%: od {low} do {high}).",
+        "slope": "Po rozpoczęciu trend tygodniowy zmienił się o {value} {unit} na tydzień (zakres 95%: od {low} do {high}).",
+        "preSlope": "Przed rozpoczęciem trend wynosił {value} {unit} na tydzień.",
+        "includesZero": "Gdy zakres obejmuje zero, te pomiary są zgodne także z brakiem zmiany.",
+        "basis": "Na podstawie {before} dni przed i {after} dni po rozpoczęciu (od {from} do {to}).",
+        "excludedAdherence": "Pominięto {count} dni po rozpoczęciu, bo w ciągu {lookback} dni przed nimi przyjęto mniej niż {floor}% dawek.",
+        "excludedNotTaking": "Pominięto {count} dni, bo lek był wstrzymany albo przypadały między kuracjami.",
+        "notTracked": "Przyjmowanie tego leku nie jest rejestrowane, więc nie pominięto żadnych dni z powodu opuszczonych dawek.",
+        "endDoseChange": "Okres kończy się przed pierwszą zmianą dawki, więc opisuje dawkę początkową.",
+        "confoundersTitle": "Inne zmiany leków w tym okresie, których ten widok nie potrafi oddzielić od tego leku:",
+        "confounderStarted": "{name} rozpoczęty {date}",
+        "confounderStopped": "{name} zakończony {date}",
+        "confounderDoseChange": "{name}: zmiana dawki {date}",
+        "confounderPaused": "{name} wstrzymany {date}",
+        "confounderResumed": "{name} wznowiony {date}",
+        "method": "Jak to jest liczone: przez dzienne wartości sprzed rozpoczęcia prowadzi się jedną prostą, a przez te późniejsze drugą. Skok między nimi w dniu rozpoczęcia to zmiana poziomu, różnica ich nachyleń to zmiana trendu. Zakresy uwzględniają, że wartości z jednego dnia przenoszą się na następny.",
+        "needStart": "Ustaw datę rozpoczęcia, aby zobaczyć zmianę na początku.",
+        "needBefore": "Do zmiany na początku potrzeba pomiarów z co najmniej {days} dni rozłożonych na {span} dni przed rozpoczęciem.",
+        "needAfter": "Do zmiany na początku potrzeba pomiarów z co najmniej {days} dni rozłożonych na {span} dni od rozpoczęcia, w dni z przyjętymi dawkami.",
+        "fitFailed": "Nie udało się dopasować tych pomiarów, więc zmiana na początku nie jest pokazana.",
+        "autocorrelation": "Wartości dzienne silnie zależą od poprzedniego dnia, więc nawet te zakresy mogą być zbyt wąskie."
+      }
     },
     "import": {
       "resultSuccess": "Zaimportowano przyjęcia: {imported}",
@@ -2592,7 +2670,8 @@
       "complianceHeatmap": "Mapa cieplna przyjmowania leków od {start} do {end}, {days} aktywnych dni.",
       "complianceHeatmapEmpty": "Mapa cieplna przyjmowania leków, brak aktywnych dni."
     },
-    "medicationsEmptyAction": "Dodaj lek"
+    "medicationsEmptyAction": "Dodaj lek",
+    "rangeLabel": "Zakres czasu"
   },
   "chart": {
     "overlay": {
@@ -2673,7 +2752,20 @@
         "ENV_PRESSURE_DELTA": "dobowa zmiana ciśnienia",
         "ENV_PM25": "pył drobny (PM2,5)",
         "ENV_OZONE_8H": "ozon",
-        "ENV_POLLEN_MAX": "pyłki"
+        "ENV_POLLEN_MAX": "pyłki",
+        "HRV_RMSSD": "zmienność rytmu serca (RMSSD)",
+        "HYDRATION": "spożycie wody",
+        "CAFFEINE": "spożycie kofeiny",
+        "ALCOHOL": "spożycie alkoholu",
+        "WORKOUT_MINUTES": "minuty treningu",
+        "TRAINING_LOAD": "obciążenie treningowe",
+        "EXERCISE_MINUTES": "minuty ćwiczeń",
+        "STAND_MINUTES": "minuty na stojąco",
+        "MINDFUL_MINUTES": "minuty uważności",
+        "STATE_OF_MIND_VALENCE": "zapisany stan ducha",
+        "INDOOR_CO2": "CO2 w pomieszczeniu",
+        "INDOOR_TEMPERATURE": "temperatura w pomieszczeniu",
+        "INDOOR_HUMIDITY": "wilgotność w pomieszczeniu"
       },
       "daily": {
         "high": "Gdy {behaviour} rośnie, {outcome} następnego dnia zwykle wykazuje tendencję do {direction} w Twoich danych. To wzorzec wart obserwacji, nie przyczyna.",
@@ -2701,6 +2793,12 @@
         "high": "Więcej {behaviour} tego samego dnia i dzień wcześniej idzie w twoich danych zwykle w parze z {direction} {outcome}. To wzorzec wart obserwacji, nie przyczyna.",
         "moderate": "Więcej {behaviour} tego samego dnia i dzień wcześniej wydaje się, na podstawie dotychczasowych danych, iść w parze z {direction} {outcome}. To wzorzec wart obserwacji, nie przyczyna.",
         "faint": "Więcej {behaviour} tego samego dnia i dzień wcześniej pokazuje w twoich danych co najwyżej słaby ślad {direction} {outcome}. To za mało, by na tym polegać, i nigdy nie jest to przyczyna."
+      },
+      "channelNutrient": "spożycie: {nutrient}",
+      "dailyOvernight": {
+        "high": "Więcej {behaviour} w nocy idzie w twoich danych zwykle w parze z {direction} {outcome} tej samej nocy. To wzorzec wart obserwacji, nie przyczyna.",
+        "moderate": "Więcej {behaviour} w nocy wydaje się, na podstawie dotychczasowych danych, iść w parze z {direction} {outcome} tej samej nocy. To wzorzec wart obserwacji, nie przyczyna.",
+        "faint": "Więcej {behaviour} w nocy pokazuje w twoich danych co najwyżej słaby ślad {direction} {outcome} tej samej nocy. To za mało, by na tym polegać, i nigdy nie jest to przyczyna."
       }
     },
     "noAnalysisYet": "Brak oceny.",
@@ -2927,6 +3025,7 @@
       "refusalInjection": "Twoja wiadomość zawiera instrukcje, które próbują nadpisać moje wytyczne. Jestem coachem HealthLog i podsumowuję wyłącznie twoje własne dane zdrowotne. Przeformułuj pytanie w tych ramach.",
       "errorBudget": "Osiągnięto dzienny limit coacha. Limit resetuje się o północy w Twojej strefie czasowej.",
       "errorProvider": "Coach nie mógł teraz skontaktować się z dostawcą analizy. Spróbuj za chwilę.",
+      "errorReasoningOnly": "Model tylko rozumował i nie napisał odpowiedzi. Spróbuj ponownie albo wybierz inny model w ustawieniach AI.",
       "errorDemo": "W wersji demo Coach nie odpowiada.",
       "errorNoProvider": "Coach czyta Twoje zapisane dane zdrowotne i odpowiada na pytania o nie (to nie porada medyczna). HealthLog potrzebuje do tego dostawcy AI: połącz własny klucz lub model lokalny.",
       "errorNoProviderAction": "Połącz dostawcę AI",
@@ -3139,11 +3238,11 @@
           "last30days": "{days} dni",
           "last90days": "{days} dni",
           "lastYear": "{months} miesięcy",
-          "allTime": "Wszystko"
+          "allTime": "{months} miesięcy szczegółowo, wyniki badań dłużej"
         },
         "detailDays": "Coach nie czyta niczego starszego niż {days} dni, w żadnej odpowiedzi.",
         "detailMonths": "Coach nie czyta niczego starszego niż {months} miesięcy, w żadnej odpowiedzi.",
-        "detailAll": "Wszystko, co zostało zapisane: {dailyMonths} miesięcy z dokładnością do dnia, starsze pomiary jako wartości miesięczne do {years} lat wstecz, wyniki badań z ostatnich {labMonths} miesięcy.",
+        "detailAll": "Bez limitu Coach czyta {dailyMonths} miesięcy pomiarów z dokładnością do dnia, a starsze pomiary jako wartości miesięczne do {years} lat wstecz. Z wyników badań czyta ostatnią wartość ostatnio mierzonych markerów, a dla markera, o który pytasz, także {labRecent} poprzednich wyników; starsze są podsumowane rocznie do {labYears} lat wstecz, a wcześniejsze lata tylko zliczane.",
         "note": "Twój profil, obecne leki, trwająca choroba i nadchodzące wizyty pozostają widoczne; podsumowania wymagające dłuższej historii są skracane lub pomijane. Odpowiedzi, których Coach udzielił wcześniej w starszych rozmowach, mogą nadal przytaczać starsze wartości."
       },
       "showConversations": "Pokaż rozmowy",
@@ -3173,7 +3272,8 @@
         "steadyLatestAbove": "Twoje pomiary zwykle wynoszą {low} {unit}; ostatni pomiar, z {date}, wyniósł {value} i był wyższy.",
         "steadyLatestBelow": "Twoje pomiary zwykle wynoszą {low} {unit}; ostatni pomiar, z {date}, wyniósł {value} i był niższy.",
         "insufficient": "Wciąż poznaję twój zwykły zakres. Rejestruj jeszcze przez kilka dni.",
-        "driver": "{note}"
+        "driver": "{note}",
+        "loadError": "Nie udało się załadować twojego typowego zakresu."
       },
       "scope": {
         "prefix": "Coach jest już przy {metric}"
@@ -3257,11 +3357,12 @@
         "provider": "Odpowiada przez",
         "modelManaged": "Model tego dostawcy ustawisz w ustawieniach AI.",
         "noProvider": "Brak dostępnego dostawcy",
+        "allSettings": "Wszystkie ustawienia AI",
+        "operatorCodex": "ChatGPT (udostępniony przez operatora)",
+        "changeModel": "Zmień w Ustawieniach > AI",
         "saving": "Zapisywanie…",
         "saveFailed": "Nie udało się zapisać zmiany.",
-        "allSettings": "Wszystkie ustawienia AI",
         "providerNotActive": "{provider} nie mógł przejąć odpowiedzi: brak działającego logowania lub klucza. Skonfiguruj go w ustawieniach AI.",
-        "operatorCodex": "ChatGPT (udostępniony przez operatora)",
         "operatorManaged": "Tym połączeniem zarządza operator Twojego serwera. Gdy skonfigurujesz własnego dostawcę, to on odpowie jako pierwszy."
       },
       "answer": {
@@ -3505,7 +3606,7 @@
         "headphoneAudioBody": "Poziom dźwięku w słuchawkach śledzi w decybelach, jak głośno słuchasz przez słuchawki. Ściszanie głośności i robienie przerw chroni słuch w dłuższej perspektywie.",
         "audioEventsBody": "Zdarzenia głośnego dźwięku oznaczają momenty, gdy hałas wokół ciebie osiągnął poziom mogący przy wystarczającej ekspozycji uszkodzić słuch. Częste zdarzenia to sygnał, by poszukać cichszego otoczenia lub ochrony słuchu.",
         "daylightBody": "Czas w świetle dziennym to ilość czasu spędzanego w świetle na zewnątrz każdego dnia. Regularne światło dzienne wspiera zdrowy rytm snu i czuwania oraz nastrój (CDC 2024), a czas na świeżym powietrzu wiąże się ze zdrowiem oczu.",
-        "bloodGlucoseBody": "Poziom glukozy we krwi to ilość cukru we krwi, głównego źródła energii organizmu. Rośnie po jedzeniu i ustala się między posiłkami; wartości utrzymujące się wysoko mogą sygnalizować cukrzycę lub stan przedcukrzycowy.",
+        "bloodGlucoseBody": "Poziom glukozy we krwi to ilość cukru we krwi, głównego źródła energii organizmu. Rośnie po jedzeniu i ustala się między posiłkami. Jako ogólna wskazówka dla dorosłych bez cukrzycy: wynik na czczo poniżej {prediabetesFrom} {unit} jest prawidłowy, {prediabetesFrom}–{prediabetesTo} oznacza stan przedcukrzycowy, a {diabetesFrom} lub więcej mieści się w zakresie cukrzycy (ADA 2024). Pojedynczy wysoki wynik nie jest diagnozą; lekarz potwierdza ją powtórnym badaniem, a osoby leczące cukrzycę mają inne cele, ustalone przez lekarza.",
         "skinTemperatureBody": "Temperatura skóry to tutaj niewielka nocna zmiana temperatury nadgarstka względem twojej własnej wartości bazowej, a nie bezwzględny pomiar gorączki. Zmiany mogą odzwierciedlać sen, otoczenie, chorobę lub fazę cyklu menstruacyjnego.",
         "cardioFitnessBody": "VO₂ max to ilość tlenu, jaką organizm potrafi wykorzystać przy maksymalnym wysiłku. To najlepszy laboratoryjny wskaźnik wydolności tlenowej, który urządzenia noszone szacują pośrednio. Wyższy lub rosnący trend to mocny sygnał dobrego zdrowia układu krążenia.",
         "cardioRecoveryBody": "Regeneracja serca to liczba uderzeń na minutę, o jaką spada tętno w pierwszej minucie po zakończeniu intensywnego wysiłku. Większy spadek oznacza, że serce szybciej się uspokaja, co świadczy o dobrej kondycji.",
@@ -3558,6 +3659,7 @@
       "falls": "upadki",
       "years": "lata",
       "breathingEvents": "zdarzenia",
+      "standHours": "godz.",
       "respiratoryRate": "oddechów/min"
     },
     "sleep": {
@@ -3800,6 +3902,16 @@
         "editTitle": "Edytuj trening",
         "editAction": "Edytuj",
         "updated": "Trening zaktualizowany"
+      },
+      "load": {
+        "title": "Obciążenie treningowe",
+        "fitness": "Wydolność",
+        "fatigue": "Zmęczenie",
+        "form": "Forma",
+        "explainer": "Wydolność to twój bodziec treningowy z tętna uśredniony z około sześciu tygodni, zmęczenie z około tygodnia, a forma to różnica. Liczby porównuje się z twoją własną przeszłością, nie z innymi osobami ani aplikacjami.",
+        "warmingUp": "Na podstawie dotychczasowych {days} dni: dopóki nie minie sześć tygodni, wydolność wychodzi niższa, niż jest.",
+        "coverage": "Udało się ocenić {rated} z ostatnich {days} dni. Dzień bez danych o aktywności lub z treningiem, którego nie dało się ocenić, jest pomijany, a nie liczony jako odpoczynek.",
+        "asOf": "Stan na {date}, ostatni dzień, który dało się ocenić."
       }
     },
     "bloodGlucose": {
@@ -4214,13 +4326,8 @@
         "metricNextDayRecovery": "Regeneracja następnego dnia",
         "metricNextDayRestingHr": "Tętno spoczynkowe następnego dnia",
         "metricNextDayHrv": "Zmienność rytmu serca następnego dnia",
-        "unitHours": "godz.",
-        "unitKcal": "kcal",
-        "unitScore": "pkt",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "detailSameDay": "Średnio {withAvg} {unit} w {withDays} dniach z tym tagiem wobec {withoutAvg} {unit} bez niego.",
-        "detailNextDay": "Średnio {withAvg} {unit} dzień po {withDays} dniach z tym tagiem wobec {withoutAvg} {unit} w pozostałe dni."
+        "detailSameDay": "Średnio {withAvg} w {withDays} dniach z tym tagiem wobec {withoutAvg} bez niego.",
+        "detailNextDay": "Średnio {withAvg} dzień po {withDays} dniach z tym tagiem wobec {withoutAvg} w pozostałe dni."
       },
       "factorCrosstab": {
         "title": "Twoje ocenione czynniki i parametry życiowe",
@@ -4232,15 +4339,8 @@
         "metricHrv": "Zmienność rytmu serca",
         "metricWeight": "Waga",
         "metricBloodPressureSys": "Skurczowe",
-        "unitHours": "godz.",
-        "unitScore": "pkt",
-        "unitSteps": "kroki",
-        "unitBpm": "bpm",
-        "unitMs": "ms",
-        "unitKg": "kg",
-        "unitMmHg": "mmHg",
-        "detail": "Średnio {lowAvg} {unit} w {lowDays} dniach z niską oceną {factor} wobec {highAvg} {unit} w dniach z wysoką oceną.",
-        "detailInverse": "Średnio {lowAvg} {unit} w Twoich {lowDays} gorszych dniach {factor} wobec {highAvg} {unit} w lepszych."
+        "detail": "Średnio {lowAvg} w {lowDays} dniach z niską oceną {factor} wobec {highAvg} w dniach z wysoką oceną.",
+        "detailInverse": "Średnio {lowAvg} w Twoich {lowDays} gorszych dniach {factor} wobec {highAvg} w lepszych."
       },
       "discovery": {
         "title": "Co się wyróżnia",
@@ -4253,7 +4353,12 @@
         "outcomeDown": "Lepszy nastrój zwykle wiąże się z niższym {factor} następnego dnia w Twoich danych.",
         "stat": "{n} sparowanych dni, r = {r}, q = {q}",
         "statLabel": "Jak to obliczono",
-        "explainerLabel": "Jak to obliczono"
+        "explainerLabel": "Jak to obliczono",
+        "channel": {
+          "ALCOHOL": "spożycie alkoholu",
+          "WORKOUT_MINUTES": "minuty treningu",
+          "TRAINING_LOAD": "obciążenie treningowe"
+        }
       },
       "inTargetTitle": "W Twoim zakresie",
       "dimensions": {
@@ -4290,7 +4395,8 @@
         "caveat": "To porównanie z twoimi wcześniejszymi dniami, nie stwierdzenie, jak doszło do takiego przebiegu dnia.",
         "learning": "Faza uczenia: zapisano {entries} z {threshold} dni. Porównanie pojawi się, gdy będzie ich dość.",
         "noPattern": "W zapisanych dotąd {entries} dniach nic nie jest na tyle regularne, by porównać z nimi dzień. Gdy zapisujesz też kontekst dnia, więcej da się porównać.",
-        "featureValue": "{field}: {value}"
+        "featureValue": "{field}: {value}",
+        "loadError": "Nie udało się załadować wartości oczekiwanej na podstawie twoich wzorców."
       },
       "patterns": {
         "title": "Wzorce w twoim nastroju",
@@ -4389,6 +4495,10 @@
             "consistency": "Regularność",
             "timing": "Pora",
             "composition": "Struktura"
+          },
+          "gap": {
+            "fewNights": "za mało nocy ({count} z {needed})",
+            "noMainSleep": "ostatni dzień tylko z drzemką"
           }
         },
         "READINESS": {
@@ -4656,7 +4766,10 @@
       "description": "Jak dobrze Twój organizm się zregenerował: sygnały regeneracji, obciążenia i load, które Twoje urządzenie rejestruje w nocy.",
       "scoreCrossLink": "Zobacz łączny wynik regeneracji",
       "emptyTitle": "Brak danych o regeneracji",
-      "empty": "Na razie nie ma tu nic do pokazania. Ta strona pokazuje odczyty ładowania, wysiłku i obciążenia, które rejestrują WHOOP i Polar, oraz poziom odporności z Oura. Gotowość (readiness) z Oura pojawia się jako wynik regeneracji, link powyżej.",
+      "empty": "Ta strona wypełnia się wartościami regeneracji, obciążenia i obciążenia treningowego z WHOOP lub Polar oraz poziomem odporności z Oura.",
+      "emptyOuraPermission": "Poziom odporności Oura wymaga uprawnienia do danych o stresie, więc połącz Oura ponownie raz w Integracjach i zezwól na nie.",
+      "emptyOuraNoResilience": "Oura jest połączona, a jej poziom odporności pojawi się tutaj, gdy tylko Oura go dostarczy.",
+      "emptyAction": "Otwórz integracje",
       "block": {
         "ansChargeExplainer": "Jak naładowany jest Twój autonomiczny układ nerwowy na dany dzień: odczyt regeneracji oparty na nocnych sygnałach serca i oddechu.",
         "dayStrainExplainer": "Dzienne obciążenie sercowo-naczyniowe na skali wysiłku Twojego urządzenia. Odczytuj je w odniesieniu do regeneracji, nie jako cel sam w sobie.",
@@ -4665,7 +4778,8 @@
         "averageHeartRateExplainer": "Twoje średnie tętno w ciągu całego dnia lub cyklu, zgodnie z odczytem Twojego urządzenia.",
         "maxHeartRateExplainer": "Twoje maksymalne tętno w ciągu całego dnia lub cyklu, zgodnie z odczytem Twojego urządzenia.",
         "energyExpenditureKjExplainer": "Energia, którą Twój organizm wydatkował w ciągu dnia, w kilodżulach, zgodnie z natywnym odczytem urządzenia."
-      }
+      },
+      "loadError": "Nie udało się załadować Twoich wartości regeneracji."
     },
     "bodyTempDeviation": {
       "title": "Odchylenie temperatury ciała",
@@ -4705,7 +4819,8 @@
       "shiftDown": "{vital} przesunął się w dół względem Twojej ostatniej normy.",
       "rangeContext": "Teraz {value}, zwykle {low}–{high}.",
       "rangeContextTimeOfDay": "Teraz {value}, zwykle {low}–{high} o tej porze dnia.",
-      "shiftContext": "Około {before} wcześniej, {after} od tego czasu."
+      "shiftContext": "Około {before} wcześniej, {after} od tego czasu.",
+      "shiftDays": "Na podstawie {before} dni wcześniej i {after} od tego czasu."
     },
     "breathingScreening": {
       "sectionTitle": "Oddychanie podczas snu",
@@ -5160,7 +5275,7 @@
         "changeInSettings": "Zmień w Ustawieniach, Konto",
         "cta": "Potwierdź i kontynuuj",
         "managedTitle": "Osoba, którą się opiekujesz",
-        "managedBody": "Jej kartoteka nie ma własnego logowania; zarządzasz nią ze swojego konta. Do jej utworzenia potrzebny jest drugi składnik na Twoim koncie.",
+        "managedBody": "Jej kartoteka nie ma własnego logowania; zarządzasz nią ze swojego konta. Do jej utworzenia potrzebny jest drugi składnik albo klucz dostępu na Twoim koncie.",
         "managedCreate": "Utwórz profil i zakończ",
         "managedLater": "Możesz też utworzyć go później w Ustawieniach, Dostęp współdzielony.",
         "finishWithoutProfile": "Zakończ bez profilu"
@@ -5285,12 +5400,17 @@
       "groups": {
         "account": "Konto",
         "yourData": "Twoje dane",
-        "display": "Wyświetlanie",
         "healthProfile": "Profil zdrowotny",
         "ai": "AI",
         "connectivity": "Łączność",
-        "system": "System"
-      }
+        "system": "System",
+        "tracking": "Śledzenie",
+        "arrangement": "Układ",
+        "notifications": "Powiadomienia",
+        "connections": "Połączenia",
+        "data": "Dane"
+      },
+      "allSections": "Wszystkie sekcje"
     },
     "sharedRecord": {
       "managedSettings": {
@@ -5402,8 +5522,15 @@
       "unavailableTitle": "Niedostępne w tym udostępnionym rekordzie",
       "unavailableDescription": "Ten obszar Ustawień jest celowo niedostępny podczas przeglądania rekordu innej osoby.",
       "integrationStatusDescription": "Stan połączenia dla tego zarządzanego rekordu.",
-      "integrationStatusDetail": "Profil zarządzany pokazuje połączone usługi tylko jako stan. Opiekunowie nie mogą łączyć, ponownie łączyć, synchronizować ani rozłączać.",
-      "integrationStatusDocs": "Jak działa udostępnianie"
+      "integrationStatusDetail": "Usługi połączone tutaj wysyłają dane do profilu {name}, a nie do Twojego. Jeśli profil nie ma własnej aplikacji u dostawcy, używa Twojej.",
+      "integrationStatusDocs": "Jak działa udostępnianie",
+      "integrationConnectsFor": "Łączy dla: {name}",
+      "integrationConnectFor": "Połącz dla: {name}",
+      "integrationDisconnect": "Rozłącz",
+      "integrationDisconnectTitle": "Rozłączyć {provider} od profilu {name}?",
+      "integrationDisconnectBody": "Nowe dane przestaną napływać. Wszystko, co już zaimportowano, zostaje w profilu {name}.",
+      "integrationNoClientApp": "Ani {name}, ani Twoje konto nie ma jeszcze aplikacji {provider}. Najpierw skonfiguruj ją we własnych integracjach.",
+      "integrationConnectFailed": "Nie udało się rozpocząć łączenia z {provider}."
     },
     "sections": {
       "account": {
@@ -5424,11 +5551,25 @@
         "remindersHeading": "Przypomnienia",
         "matrixLink": "Powiadomienia wg kanału",
         "channelsLink": "Kanały dostarczania",
-        "displayHeading": "Na telefonie"
+        "displayHeading": "Na telefonie",
+        "elsewhere": {
+          "title": "Ustawiane tam, gdzie należą",
+          "description": "Te przypomnienia ustawiasz obok tego, czego dotyczą.",
+          "doses": {
+            "title": "Dawki leków",
+            "description": "Godziny przyjmowania i przypomnienia ustawiasz przy każdym leku.",
+            "link": "Otwórz leki"
+          },
+          "cycle": {
+            "title": "Cykl",
+            "description": "Przypomnienia o miesiączce i dniach płodnych włączasz dla każdego kanału w tabeli powiadomień.",
+            "link": "Otwórz tabelę powiadomień"
+          }
+        }
       },
       "layout": {
         "title": "Układ",
-        "backToHub": "Powrót do układu",
+        "backToHub": "Wróć do Układu",
         "dashboard": {
           "title": "Pulpit",
           "description": "Układ i kolejność kafelków."
@@ -5437,7 +5578,7 @@
           "title": "Analizy",
           "description": "Kolejność przeglądu i pigułek nawigacyjnych."
         },
-        "subtitle": "Wybierz, co pokazują pulpit, analizy i moduły śledzenia oraz w jakiej kolejności.",
+        "subtitle": "Wybierz kolejność i widok pulpitu, analiz i list śledzenia.",
         "medications": {
           "title": "Leki",
           "description": "Widok listy i ręczna kolejność."
@@ -5453,10 +5594,6 @@
         "vorsorge": {
           "title": "Badania kontrolne",
           "description": "Widok listy i kolejność przypomnień."
-        },
-        "mood": {
-          "title": "Tagi nastroju",
-          "description": "Grupy, tagi i zarchiwizowane tagi w wyborze nastroju."
         },
         "documents": {
           "title": "Dokumenty",
@@ -5601,7 +5738,7 @@
             "passphrasePlaceholder": "Hasło-fraza (min. 12 znaków)",
             "passphraseHelp": "Wyprowadza klucz archiwum za pomocą Argon2id i pieczętuje je AES-256-GCM. Zapisz plik z rozszerzeniem .hlx.",
             "noRecoveryWarning": "Nie ma odzyskiwania: jeśli zgubisz tę frazę, archiwum nie da się otworzyć. Przechowuj ją bezpiecznie.",
-            "detail": "Ten sam kształt co cotygodniowa kopia automatyczna. Niektóre rodzaje wpisów nie są jeszcze przenoszone; manifest pliku wskazuje, co zawiera.",
+            "detail": "Przenośna kopia twojej dokumentacji do przechowywania i czytania: wartości w zwykłym JSON, dokumenty tylko jako metadane. To nie jest cotygodniowa kopia konta, którą ten serwer trzyma do przywracania konta, i nie odtworzy konta na innym serwerze. Niektóre rodzaje danych nie są jeszcze uwzględnione; manifest pliku wymienia, co zawiera.",
             "contents": "Twoje pomiary, leki, nastrój, cykl, wyniki badań, epizody chorobowe, alergie, wywiad rodzinny, składniki odżywcze, treningi, Twój profil zdrowia i własne wskaźniki w jednym pliku JSON."
           }
         },
@@ -5647,7 +5784,7 @@
             "cycleDaysFailed": "{count} dni cyklu nie udało się zapisać: {reason}"
           },
           "json": {
-            "title": "Plik JSON",
+            "title": "Pomiary i nastrój (JSON)",
             "description": "Wklej JSON lub prześlij plik .json z pomiarami i wpisami nastroju.",
             "pasteLabel": "Wklej JSON",
             "fileInputLabel": "Wybierz plik JSON do zaimportowania",
@@ -5663,8 +5800,11 @@
             "readFailed": "Nie można odczytać tego pliku.",
             "resultSummary": "Zaimportowano {measurements} pomiarów i {moods} wpisów nastroju, pominięto {skipped}.",
             "resultSuccess": "Zaimportowano {measurements} pomiarów i {moods} wpisów nastroju",
+            "droppedLinks": "Zaimportowano bez tych tagów, bo to konto nie ma żadnego o tej nazwie: {keys}",
+            "keptLabels": "To konto ma już tagi lub grupy z tymi kluczami pod własną nazwą, więc zostały zachowane: {keys}",
             "resultNothing": "Nic nie zaimportowano. Pominięto wszystkie {skipped} wpisów.",
-            "resultEmpty": "Ten plik nie zawierał pomiarów ani wpisów nastroju."
+            "resultEmpty": "Ten plik nie zawierał pomiarów ani wpisów nastroju.",
+            "limitsHint": "Do {mb} MB i do {rows} wpisów na listę. Dodaje wpisy do twojej dokumentacji; nie przywraca pełnej kopii zapasowej."
           },
           "csv": {
             "title": "Plik CSV",
@@ -5810,7 +5950,7 @@
             }
           }
         },
-        "subtitle": "Wyeksportuj dane lub zaimportuj z kopii zapasowej."
+        "subtitle": "Eksportuj swoje dane albo importuj pomiary i wpisy z innych aplikacji i plików."
       },
       "about": {
         "title": "O tej aplikacji",
@@ -5848,7 +5988,28 @@
         },
         "manageIn": "Zarządzaj w {section}",
         "operatorDisabled": "Wyłączone na całym serwerze",
-        "subtitle": "Wybierz, które obszary śledzenia pokazuje HealthLog w aplikacji."
+        "subtitle": "Wybierz, które obszary śledzenia pokazuje HealthLog w aplikacji.",
+        "backToHub": "Wróć do Modułów",
+        "openModuleSettings": "Ustawienia modułu",
+        "pages": {
+          "medications": {
+            "title": "Leki",
+            "description": "Miejsca wstrzyknięć pomijane w rotacji."
+          },
+          "mood": {
+            "title": "Tagi nastroju",
+            "description": "Grupy, własne tagi i tagi zarchiwizowane."
+          },
+          "labs": {
+            "title": "Badania",
+            "description": "Biomarkery i rozpoznawanie tekstu na urządzeniu dla wyników badań."
+          },
+          "arrangementTitle": "Kolejność i widok",
+          "arrangementDescription": "Sortowanie i widok tej listy ustawiasz w Układzie.",
+          "openArrangement": "Otwórz w Układzie",
+          "moduleSettingsTitle": "Ustawienia modułu",
+          "moduleSettingsDescription": "Wszystko poza kolejnością i widokiem jest na stronie modułu w Modułach."
+        }
       },
       "gesundheitsakte": {
         "title": "Dokumentacja zdrowotna",
@@ -6202,7 +6363,7 @@
         "resetConfirmBody": "Łańcuch wraca do Codex → OpenAI → Anthropic → Lokalny → OpenAI administratora. Zapisane dane logowania pozostają nienaruszone."
       },
       "activeProviderHeading": "Aktywny dostawca",
-      "activeProviderLabel": "Główny dostawca",
+      "activeProviderLabel": "Skonfiguruj dostawcę",
       "providerSelect": {
         "codex": "Konto ChatGPT (Codex)",
         "openai": "OpenAI (Twój klucz API)",
@@ -6407,9 +6568,10 @@
           "medium": "Średnie",
           "high": "Wysokie"
         },
-        "coachNote": "W Coachu obowiązuje głębokość myślenia z ustawień Coacha."
+        "coachNote": "W Coachu obowiązuje głębokość myślenia z ustawień Coacha.",
+        "backgroundNote": "Praca w tle, taka jak codzienne podsumowanie, nie korzysta z tego ustawienia: myśli najwyżej na poziomie Średnie, niżej, gdy operator ustawi niższy limit, a na poziomie Oszczędny wcale."
       },
-      "providerCardDescription": "Dostawca, którego HealthLog pyta najpierw, wraz z kluczem i modelem.",
+      "providerCardDescription": "Skonfiguruj klucz i model każdego dostawcy; kolejność poniżej decyduje, którego HealthLog pyta najpierw.",
       "runtimeTitle": "Sprawdź i odśwież",
       "usage": {
         "title": "Użycie AI",
@@ -6436,6 +6598,14 @@
         "followsDefault": "Korzystasz z ustawienia domyślnego serwera ({level}).",
         "useDefault": "Użyj ustawienia domyślnego serwera ({level})",
         "saveError": "Nie udało się zapisać poziomu. Spróbuj ponownie."
+      },
+      "removeKey": {
+        "label": "Usuń klucz API",
+        "title": "Usunąć zapisany klucz API?",
+        "body": "HealthLog usuwa zapisany klucz i nie może go odzyskać. Wpisz go ponownie, aby dalej z niego korzystać.",
+        "confirm": "Usuń klucz API",
+        "done": "Usunięto klucz API.",
+        "failed": "Nie udało się usunąć klucza API."
       }
     },
     "dashboard": {
@@ -6487,7 +6657,8 @@
       "nocode": "Withings nie zwrócił kodu autoryzacji. Spróbuj ponownie i zezwól na dostęp w oknie Withings.",
       "nocreds": "Brak zapisanych danych dostępowych API Withings. Najpierw zapisz Client ID i Client Secret, potem połącz ponownie.",
       "token": "Wymiana tokenów z Withings nie powiodła się. Sprawdź Client ID i Client Secret i spróbuj ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto Withings jest już połączone z innym profilem HealthLog. Zaloguj się do Withings kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "withingsSynchronize": "Synchronizuj",
     "withingsDisconnect": "Rozłącz",
@@ -6526,7 +6697,8 @@
       "nocode": "WHOOP nie zwrócił kodu autoryzacji. Spróbuj ponownie i zezwól na dostęp w oknie WHOOP.",
       "nocreds": "WHOOP nie jest skonfigurowany. Dodaj powyżej swoje dane OAuth WHOOP i spróbuj ponownie.",
       "token": "Wymiana tokena z WHOOP nie powiodła się. Rozpocznij połączenie ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto WHOOP jest już połączone z innym profilem HealthLog. Zaloguj się do WHOOP kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "fitbit": "Fitbit",
     "fitbitTag": "Fitbit i Pixel",
@@ -6605,7 +6777,8 @@
       "nocode": "Google nie zwrócił kodu autoryzacji. Spróbuj ponownie i zezwól na dostęp w oknie Google.",
       "nocreds": "Google Health nie jest skonfigurowany. Dodaj powyżej swoje dane OAuth Google i spróbuj ponownie.",
       "token": "Wymiana tokenu z Google nie powiodła się. Rozpocznij połączenie ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto Google jest już połączone z innym profilem HealthLog. Zaloguj się do Google kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "fitbitOauthError": {
       "csrf1": "Kontrola bezpieczeństwa nie powiodła się, ponieważ brakowało pliku cookie przeglądarki. Rozpocznij połączenie ponownie w tej samej przeglądarce.",
@@ -6615,7 +6788,9 @@
       "nocode": "Fitbit nie zwrócił kodu autoryzacji. Spróbuj ponownie i zezwól na dostęp w oknie Fitbit.",
       "nocreds": "Fitbit nie jest skonfigurowany. Dodaj powyżej swoje dane OAuth Fitbit i spróbuj ponownie.",
       "token": "Wymiana tokena z Fitbit nie powiodła się. Rozpocznij połączenie ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "retired": "Google wyłączył Fitbit Web API, więc nie można już utworzyć nowego połączenia Fitbit. Połącz zamiast tego Google Health, które odczytuje dane z tych samych urządzeń.",
+      "already_linked": "To konto Fitbit jest już połączone z innym profilem HealthLog. Zaloguj się do Fitbit kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "integrations": {
       "withings": {
@@ -6652,27 +6827,20 @@
           "items": {
             "vo2max": "VO2 max",
             "cardio_age": "wiek sercowo-naczyniowy",
-            "resilience": "odporność"
+            "resilience": "odporność",
+            "workout": "treningi",
+            "heartrate": "tętno"
           }
         }
       }
     },
     "integrationPill": {
-      "connected": "Połączono",
-      "errorReconnect": "Błąd: połącz ponownie",
-      "warningServerError": "Synchronizacja nie działa",
-      "failureCount": "{count}/{threshold}",
-      "parkedReconnect": "Wstrzymane: połącz ponownie",
-      "notConnected": "Nie połączono",
       "justNow": "przed chwilą",
       "minutesAgo": "{count} min temu",
       "hoursAgo": "{count} godz. temu",
       "daysAgo": "{count} dni temu",
       "resumeSuccess": "Integracja wznowiona",
-      "resumeError": "Ponowne połączenie nieudane",
-      "stale": "Połączono, brak nowych danych",
-      "stalled": "Synchronizacja zatrzymana",
-      "pendingSetup": "Czekam na pierwsze dane"
+      "resumeError": "Ponowne połączenie nieudane"
     },
     "integrationFreshness": {
       "title": "Odebrane dane",
@@ -6696,7 +6864,14 @@
       "detail": "Token pokazujemy tylko raz.",
       "scopeNote": "Może wyłącznie dodawać nowe pomiary do Twojej dokumentacji: nie odczyta danych, niczego nie zmieni ani nie usunie i nie utworzy kolejnego tokenu. Pomiary są oznaczane jako pochodzące z urządzenia zewnętrznego, dzięki czemu później je rozpoznasz, i nadal możesz je poprawić.",
       "createFailed": "Nie udało się utworzyć tokenu. Spróbuj ponownie.",
-      "namePlaceholder": "Nazwa, np. Home Assistant"
+      "namePlaceholder": "Nazwa, np. Home Assistant",
+      "appleHealth": {
+        "label": "Zapisuj pomiary w Apple Health",
+        "createHint": "Aplikacja HealthLog na Twoim iPhonie doda wtedy pomiary z tego tokenu do Apple Health. Możesz to później zmienić na liście tokenów poniżej.",
+        "toggleAria": "Zapisuj pomiary z {name} w Apple Health",
+        "updateFailed": "Nie udało się zmienić ustawienia Apple Health. Spróbuj ponownie.",
+        "unattributed": "Pomiarów wysłanych, zanim pojawiło się to ustawienie, nie da się przypisać do żadnego tokenu, więc nie trafiają do Apple Health."
+      }
     },
     "workoutsToken": {
       "title": "Tokeny treningów",
@@ -6753,10 +6928,12 @@
     "deleteAccountCardDescription": "Usuwa Twoje konto wraz z kluczami dostępu, dziennikiem audytu i sesjami.",
     "deleteAccountCta": "Usuń konto",
     "deleteAccountConfirmTitle": "Trwale usunąć konto?",
-    "deleteAccountConfirmDescription": "Twoje konto, wszystkie dane zdrowotne, klucze dostępu, sesje i wpisy audytu zostaną trwale usunięte. Zostaniesz wylogowany natychmiast po tym.",
+    "deleteAccountConfirmTitleGrace": "Usunąć konto?",
+    "deleteAccountConfirmDescription": "Twoje konto, wszystkie dane zdrowotne, klucze dostępu, sesje i wpisy audytu zostaną trwale usunięte. Zostaniesz wylogowany natychmiast po tym. Kopie w kopiach zapasowych tego serwera wygasają po upływie okresu przechowywania.",
     "deleteAccountSuccess": "Konto usunięte, trwa wylogowywanie.",
     "deleteAccountFailed": "Nie udało się usunąć konta",
     "deleteAccountFinal": "Usuń trwale",
+    "deleteAccountFinalGrace": "Usuń konto",
     "saved": "Zapisano",
     "savingError": "Błąd podczas zapisywania",
     "about": {
@@ -6856,7 +7033,7 @@
       "errorRateLimit": "Osiągnięto limit eksportów w tej godzinie.",
       "errorModuleDisabled": "Eksport dokumentacji jest wyłączony dla tego konta.",
       "visitOffer": "{when} zaplanowano wizytę: {what}.",
-      "visitOfferApply": "Raport do tego dnia"
+      "visitOfferApplyWindow": "Użyj tego okresu"
     },
     "globalExcludedInjectionSitesLabel": "Globalnie wykluczone miejsca iniekcji",
     "globalExcludedInjectionSitesHint": "Nigdy nieproponowane i odrzucane przy rejestracji, nawet jeśli lek je preferuje.",
@@ -6914,7 +7091,9 @@
       "reselectReason": "Ten link udostępniał zakres, którego nikt nie wybrał, więc został zamknięty. Utwórz nowy i wybierz jego zawartość.",
       "reselectAction": "Utwórz zamiennik",
       "createDetail": "Token jest pokazywany tylko raz przy tworzeniu. Zapisz go wtedy; nie można go odzyskać.",
-      "activeDescription": "Udostępnione linki, termin ich wygaśnięcia i liczba otwarć."
+      "activeDescription": "Udostępnione linki, termin ich wygaśnięcia i liczba otwarć.",
+      "revokedToast": "Unieważniono link.",
+      "revokeFailed": "Nie udało się unieważnić linku."
     },
     "genderOther": "Inna",
     "nightscout": "Nightscout",
@@ -6966,7 +7145,8 @@
       "nocreds": "Polar nie jest skonfigurowany na tym serwerze. Poproś administratora o dodanie danych OAuth Polar.",
       "token": "Wymiana tokena z Polar nie powiodła się. Rozpocznij połączenie ponownie.",
       "rate_limited": "Zbyt wiele prób połączenia. Poczekaj chwilę i spróbuj ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto Polar jest już połączone z innym profilem HealthLog. Zaloguj się do Polar kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "oura": "Oura",
     "ouraDescription": "Połącz konto Oura, aby synchronizować gotowość, fazy snu, zmienność rytmu serca i dzienną aktywność.",
@@ -6996,25 +7176,24 @@
       "token": "Wymiana tokena z Oura nie powiodła się. Rozpocznij połączenie ponownie.",
       "rate_limited": "Zbyt wiele prób połączenia. Poczekaj chwilę i spróbuj ponownie.",
       "issuer": "Odpowiedź logowania nie pochodziła z serwera autoryzacji Oura, więc połączenie zostało przerwane dla Twojego bezpieczeństwa. Rozpocznij połączenie ponownie. Jeśli to się powtarza, powiadom administratora.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto Oura jest już połączone z innym profilem HealthLog. Zaloguj się do Oura kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "integrationSetupGuide": "Przewodnik konfiguracji",
     "coach": {
-      "activate": {
-        "title": "Włącz Coacha",
-        "description": "Pokazuje przycisk i panel Coacha.",
-        "toggleAria": "Włącz przycisk i panel Coacha",
-        "savedOn": "Coach włączony.",
-        "savedOff": "Coach ukryty.",
-        "saveError": "Nie udało się zapisać zmiany. Spróbuj ponownie."
-      },
       "memory": {
         "edit": "Edytuj",
         "source": {
           "user": "od ciebie",
           "coach": "od Coacha"
         }
-      }
+      },
+      "state": {
+        "title": "Coach",
+        "description": "Czy przycisk i panel Coacha są widoczne. Przełącznik jest w Modułach."
+      },
+      "nudgesMoved": "Ustawiasz je razem z innymi przypomnieniami w Powiadomieniach.",
+      "openNudges": "Otwórz w Powiadomieniach"
     },
     "integrationRedirectGuide": {
       "intro": "To połączenie działa przez Twoją własną aplikację deweloperską {provider}, około 5 minut konfiguracji:",
@@ -7101,7 +7280,9 @@
         "lastUsed": "Ostatnio użyty {date}",
         "neverUsed": "Nigdy nieużywany",
         "added": "dodany {date}",
-        "nameLabel": "Nazwa klucza bezpieczeństwa"
+        "nameLabel": "Nazwa klucza bezpieczeństwa",
+        "addedToast": "Dodano klucz bezpieczeństwa.",
+        "removedToast": "Usunięto klucz bezpieczeństwa."
       },
       "passkeyNudge": {
         "title": "Dodaj klucz dostępu, aby logować się szybciej",
@@ -7147,36 +7328,43 @@
         "profile": "Twój profil, wywiad medyczny i dane dokumentacji zdrowotnej",
         "modules": "Wpisy poszczególnych modułów: {list}"
       },
+      "workoutRoutes": {
+        "title": "Trasy treningów",
+        "description": "Zapisuj ślad GPS nowych treningów z aplikacji na iPhone’a i z eksportu Apple Zdrowie.",
+        "detail": "Wyłączone dla nowych kont. Trasa pokazuje, gdzie mieszkasz, pracujesz i trenujesz, więc zapisujemy ją dopiero po włączeniu. Treningi są zapisywane zawsze, a żadna funkcja AI nigdy nie odczytuje trasy. Wyłączenie zatrzymuje nowe trasy; już zapisane zostają do usunięcia treningu.",
+        "loadError": "Nie udało się wczytać ustawienia tras."
+      },
       "retention": {
         "title": "Retencja",
         "description": "Jak długo rekordy ograniczone czasowo są przechowywane przed automatycznym czyszczeniem.",
         "coach": "Rozmowy z asystentem: {days} dni",
         "audit": "Dziennik zabezpieczeń: {days} dni",
         "delivery": "Dziennik wysyłki powiadomień: {days} dni",
-        "unavailable": "Szczegóły przechowywania są obecnie niedostępne."
-      },
-      "export": {
-        "title": "Pobierz moje dane",
-        "description": "Twoje rekordy jako CSV lub JSON albo pełna dokumentacja dla lekarza.",
-        "openExport": "Eksport i kopia zapasowa",
-        "openHealthRecord": "Dokumentacja medyczna"
+        "unavailable": "Szczegóły przechowywania są obecnie niedostępne.",
+        "accountDeletion": "Usunięcie konta, profilu zarządzanego lub wszystkich danych: kończy się po {days} dniach",
+        "accountDeletionImmediate": "Usunięcie konta, profilu zarządzanego lub wszystkich danych: kończy się od razu"
       },
       "delete": {
         "title": "Usuń lub zresetuj",
         "description": "Usuń całe konto albo wyczyść dane zdrowotne, zachowując konto.",
-        "backupLag": "Usunięcie natychmiast usuwa Twoje dane. Jeśli ten serwer przechowuje zaszyfrowane kopie zapasowe poza serwerem, kopie Twoich danych są usuwane z tego magazynu zaraz potem, a jeśli jest niedostępny, przy następnym nocnym przebiegu.",
-        "openAdvanced": "Usuń lub zresetuj"
+        "openAdvanced": "Usuń lub zresetuj",
+        "immediateNotice": "Usunięcie natychmiast usuwa Twoje dane. Jeśli ten serwer przechowuje zaszyfrowane kopie zapasowe poza serwerem, kopie Twoich danych są usuwane z tego magazynu zaraz potem, a jeśli jest niedostępny, przy następnym nocnym przebiegu. Kopie w kopiach zapasowych tego serwera wygasają po upływie okresu przechowywania.",
+        "graceNotice": "Gdy usuwasz konto, zostaje ono od razu zablokowane i usunięte po {days} dniach, razem z każdą kopią, którą przechowuje ten serwer, także zaszyfrowanymi kopiami poza serwerem. Do tego czasu administrator tego serwera może cofnąć usunięcie. Usunięcie wszystkich danych działa tak samo: kopia dokumentacji jest przechowywana przez {days} dni, więc administrator może ją przywrócić. Kopie w kopiach zapasowych tego serwera wygasają po upływie okresu przechowywania."
       },
       "posture": {
         "title": "Ustawienia prywatności",
         "description": "Kontroluj, ile Twoich danych jest udostępnianych funkcjom AI.",
         "openAi": "Tryb prywatności AI"
+      },
+      "sessions": {
+        "title": "Sesje i urządzenia",
+        "description": "Gdzie jesteś zalogowany, które urządzenia pomijają drugi składnik i aktywność zabezpieczeń twojego konta.",
+        "open": "Otwórz zabezpieczenia"
       }
     },
     "mcp": {
       "enableTitle": "Zdalny punkt końcowy MCP",
       "enableDescription": "Zezwól asystentowi obsługującemu MCP (Claude.ai, ChatGPT) na odczyt danych zdrowotnych za pomocą ograniczonego tokenu.",
-      "enableToggleLabel": "Włącz punkt końcowy MCP",
       "endpointLabel": "Adres URL łącznika",
       "connectDescription": "Wklej ten adres URL w konfiguracji własnego łącznika asystenta, a następnie autoryzuj za pomocą poniższego tokenu lub zaloguj się po wyświetleniu monitu.",
       "tokensTitle": "Tokeny łącznika",
@@ -7195,7 +7383,8 @@
       "connectionRevokeFailed": "Nie udało się rozłączyć asystenta.",
       "tokensDetail": "Token jest wyświetlany tylko raz.",
       "connectionsDetail": "Cofnięcie połączenia natychmiast kończy dostęp, w tym możliwość odnawiania.",
-      "tokenNamePlaceholder": "Nazwa, np. Claude Desktop"
+      "tokenNamePlaceholder": "Nazwa, np. Claude Desktop",
+      "offKeepsTokens": "Wyłączenie wstrzymuje punkt końcowy. Tokeny i połączenia zostają i działają ponownie po włączeniu."
     },
     "strava": "Strava",
     "stravaDescription": "Połącz konto Strava, aby synchronizować aktywności z historią treningów.",
@@ -7224,7 +7413,8 @@
       "nocreds": "Strava nie jest skonfigurowana na tym serwerze. Poproś administratora o dodanie danych API Strava.",
       "token": "Wymiana tokenu ze Strava nie powiodła się. Rozpocznij połączenie ponownie.",
       "rate_limited": "Zbyt wiele prób połączenia. Poczekaj chwilę i spróbuj ponownie.",
-      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie."
+      "generic": "Nieznany błąd podczas łączenia. Rozpocznij połączenie ponownie.",
+      "already_linked": "To konto Strava jest już połączone z innym profilem HealthLog. Zaloguj się do Strava kontem należącym do tego profilu albo najpierw odłącz je od tamtego profilu."
     },
     "appleHealth": {
       "title": "Apple Health",
@@ -7263,8 +7453,10 @@
         "lastReceived": "Ostatnio odebrano {relative}",
         "lastNewValue": "Ostatnia nowa wartość {relative}",
         "lastBackground": "Ostatnio w tle {relative}",
+        "lastDuplicate": "Ostatnio wysłano ponownie bez nowych wartości {relative}",
         "never": "Jeszcze nie odebrano",
-        "lastBackfill": "Historia uzupełniona {relative}"
+        "lastBackfill": "Historia uzupełniona {relative}",
+        "lastEnteredHere": "Ostatni wpis tutaj {relative}"
       }
     },
     "garminInfo": {
@@ -7323,6 +7515,7 @@
     "emailChangePassword": "Obecne hasło (potrzebne do zmiany adresu e-mail)",
     "reproof": {
       "description": "Ta czynność udostępnia lub eksportuje Twoje dane zdrowotne. Potwierdź, że to Ty, aby kontynuować.",
+      "descriptionChange": "To zmienia coś, co tylko Ty powinieneś móc zmienić. Potwierdź, że to Ty, aby kontynuować.",
       "signInAgain": "Zaloguj się ponownie, a potem spróbuj jeszcze raz. Twoje konto nie ma hasła ani klucza dostępu do potwierdzenia tutaj.",
       "failed": "To się nie udało. Sprawdź wprowadzone dane i spróbuj ponownie."
     },
@@ -7397,6 +7590,10 @@
         "causePermission": "uprawnienie",
         "failureStreak": "Seria błędów: {count} z {threshold}",
         "copyFailed": "Nie udało się skopiować. Zaznacz tekst i skopiuj go ręcznie."
+      },
+      "historyEnds": {
+        "horizon": "{type}: zaimportowano wstecz do {date}. Starsze odczyty wykraczają poza limit importu.",
+        "noProgress": "{type}: zaimportowano wstecz do {date}. Google przestał zwracać starsze odczyty, więc import kończy się w tym miejscu."
       }
     },
     "dawarich": "Dawarich",
@@ -7438,7 +7635,33 @@
       "homePlaceUnknown": "Instancja Dawarich nie zna już tego miejsca.",
       "notConnected": "Dawarich nie jest połączony.",
       "generic": "Nie udało się. Spróbuj ponownie."
-    }
+    },
+    "fitbitRetirement": {
+      "ending": "Google wyłączy Fitbit Web API dnia {date}. Od tego dnia to połączenie przestanie się synchronizować.",
+      "ended": "Google wyłączył Fitbit Web API dnia {date}. To połączenie już się nie synchronizuje.",
+      "move": "Google Health odczytuje dane z tych samych urządzeń Fitbit i Pixel. Połącz je poniżej, aby dane nadal napływały. Google poprosi o zgodę jeszcze raz, ponieważ połączenia Fitbit nie da się przenieść. Wszystko, co już zaimportowano, zostaje.",
+      "toCard": "Przejdź do Google Health",
+      "guide": "Jak połączyć Google Health",
+      "badgeEnding": "Wkrótce wyłączone",
+      "badgeEnded": "Wyłączone"
+    },
+    "passkeyAddedToast": "Dodano passkey.",
+    "passkeyRemovedToast": "Usunięto passkey.",
+    "integrationDisconnected": "Rozłączono {provider}.",
+    "integrationDisconnectFailed": "Nie udało się rozłączyć {provider}.",
+    "timezoneSaved": "Strefa czasowa zapisana.",
+    "moduleState": {
+      "on": "Włączone",
+      "off": "Wyłączone",
+      "change": "Zmień w Modułach"
+    },
+    "timezoneUseDevice": "Użyj strefy czasowej tego urządzenia ({zone})",
+    "dangerZoneConfirmDescriptionGrace": "Ta czynność usuwa wszystko z Twojej dokumentacji: pomiary, leki, wpisy nastroju, wyniki badań, wpisy cyklu, dokumenty, rozmowy z SI oraz wszystkie połączenia integracji, a wraz z nimi wszystko, co z nich wyliczono, i wszystko, co usunięto wcześniej. Linki udostępnione poradni natychmiast przestają działać. Konto zostaje, razem z danymi logowania i ustawieniami wyświetlania, takimi jak język, strefa czasowa i jednostki. Kopia twojej dokumentacji jest przechowywana przez {days} dni, więc do tego czasu administrator tego serwera może ją przywrócić. Potem usunięcie jest ostateczne.",
+    "deleteAccountCardDetailGrace": "Twoje konto zostaje od razu zablokowane i usunięte po {days} dniach. Do tego czasu administrator tego serwera może cofnąć usunięcie.",
+    "deleteAccountConfirmDescriptionGrace": "Zostaniesz wylogowany, a twoje konto od razu zablokowane. Po {days} dniach zostanie trwale usunięte, razem ze wszystkimi danymi zdrowotnymi, kluczami dostępu, sesjami i wpisami audytu. Do tego czasu administrator tego serwera może cofnąć usunięcie. Kopie w kopiach zapasowych tego serwera wygasają po upływie okresu przechowywania.",
+    "deleteAccountScheduled": "Twoje konto jest zablokowane i zostanie usunięte {date}. Trwa wylogowywanie.",
+    "dangerZoneSuccessGrace": "Twoja dokumentacja zdrowotna została usunięta. Administrator tego serwera może ją przywrócić do {date}.",
+    "dangerZoneRestoreLimits": "Kończy się też dostęp: to, co udostępniasz innym, to, co inni udostępniają tobie, i każda rola osoby opiekującej się. Przywrócenie odtwarza dokumentację taką, jaka jest teraz. To, co dojdzie po usunięciu, zostaje zastąpione, a połączenia integracji, udostępnienia, role opiekunów i linki udostępniania nie wracają; trzeba je skonfigurować od nowa."
   },
   "admin": {
     "title": "Administracja",
@@ -7570,6 +7793,10 @@
     "offlineGeoLabel": "Dane geograficzne",
     "offlineGeoEnabled": "Offline (GeoLite2)",
     "offlineGeoFallback": "Online ({host}): podłącz bazy GeoLite2 i ustaw GEOLITE2_DIR",
+    "heapLimitLabel": "Limit sterty",
+    "heapLimitValue": "{mb} MB",
+    "heapLimitLow": "{mb} MB, za mało: ustaw APP_MEMORY_LIMIT=1536m w .env",
+    "memoryBelowFloor": "Kontener {mb} MB, poniżej obsługiwanego minimum {floor} MB: ustaw APP_MEMORY_LIMIT={floor}m w .env",
     "offlineGeoOff": "Wyłączone",
     "offlineGeoChosen": "Online ({host})",
     "apiGlobal": "Zezwól na punkty końcowe API i tokeny API.",
@@ -7732,6 +7959,7 @@
     "tokensEmptyTitle": "Brak tokenów API",
     "tokensEmptyDescription": "Tokeny są wydawane, gdy klient natywny się loguje, lub przez Ustawienia → Konto.",
     "loginOverviewDescription": "Zdarzenia logowania i uwierzytelniania wszystkich kont, z filtrowaniem i eksportem CSV.",
+    "loginOverviewFilterLabel": "Filtruj zdarzenia",
     "allAuthEvents": "Wszystkie zdarzenia uwierzytelniania",
     "failedOnly": "Tylko nieudane",
     "loginEmptyDescription": "Tutaj pojawią się logowania, wylogowania i zmiany kluczy passkey.",
@@ -7860,6 +8088,7 @@
           "admin": "Administratorzy",
           "user": "Użytkownicy"
         },
+        "filterLabel": "Filtruj użytkowników",
         "forceLogout": "Wymuś wylogowanie",
         "forceLogoutConfirmTitle": "Wymusić wylogowanie {name}?",
         "forceLogoutConfirmBody": "Wszystkie aktywne sesje tego użytkownika zostaną unieważnione. Będzie musiał zalogować się ponownie na każdym urządzeniu.",
@@ -7868,7 +8097,15 @@
         "cannotLogoutSelf": "Nie można wymusić wylogowania samego siebie",
         "emptyTitle": "Brak użytkowników w tym widoku",
         "emptyDescription": "Brak użytkowników pasujących do bieżącego filtra.",
-        "emptyResetFilter": "Pokaż wszystkich użytkowników"
+        "emptyResetFilter": "Pokaż wszystkich użytkowników",
+        "deletionPending": "Usunięcie {date}",
+        "deletionPendingNoDate": "Usunięcie zaplanowane",
+        "undoDeletion": "Cofnij usunięcie",
+        "undoDeletionTitle": "Cofnąć usunięcie {name}?",
+        "undoDeletionBody": "{name} poprosił o usunięcie tego konta; zostanie ono usunięte po upływie okresu karencji. Cofnięcie zachowuje konto i całą jego zawartość bez zmian. {name} może znów się zalogować, ale tokeny API, linki udostępniania i zaufane urządzenia pozostają unieważnione i trzeba je skonfigurować od nowa.",
+        "undoDeletionBodyGuardian": "Osoba opiekująca się profilem usunęła profil zarządzany {name}; zostanie on usunięty po upływie okresu karencji. Cofnięcie zachowuje profil i całą jego zawartość bez zmian, a osoby opiekujące się nim znów mają do niego dostęp. Jego linki udostępniania i tokeny pozostają unieważnione i trzeba je skonfigurować od nowa.",
+        "undoDeletionDone": "Cofnięto usunięcie {name}",
+        "undoDeletionFailed": "Nie udało się cofnąć usunięcia"
       },
       "invites": {
         "title": "Zaproszenia",
@@ -7930,8 +8167,8 @@
       },
       "backups": {
         "title": "Kopie zapasowe",
-        "subtitle": "Cotygodniowe migawki danych dla każdego użytkownika przechowywane w PostgreSQL.",
-        "description": "Każdy użytkownik ma jedną przesuwaną migawkę na typ kopii. Rozmiary pokazują zaszyfrowany blob. Pobieranie odszyfrowuje migawkę dla proszącego administratora; szyfrogram zostaje w bazie danych.",
+        "subtitle": "Kopie kont w bazie danych tego serwera, do przywrócenia jednego konta na tym serwerze.",
+        "description": "Każde konto ma jedną cotygodniową kopię, zastępowaną w każdą niedzielę, a do tego kopie przesłane tutaj i kopię wykonaną przed „Usuń wszystkie dane”. Kopia przywraca istniejące konto na tym serwerze. Nie odtworzy utraconego serwera: do tego potrzebny jest zrzut bazy danych i klucze szyfrowania. Rozmiary dotyczą zaszyfrowanej kopii. Pobieranie odszyfrowuje ją dla administratora, który o nią prosi; szyfrogram zostaje w bazie danych.",
         "runNow": "Utwórz kopię teraz",
         "runEnqueued": "Zadanie kopii zapasowej dodano do kolejki",
         "runFailed": "Nie udało się dodać kopii do kolejki",
@@ -7941,12 +8178,11 @@
         "emptyDescription": "Kopie zapasowe wykonują się automatycznie w każdą niedzielę o 03:00. Możesz też uruchomić jedną teraz, aby utworzyć pierwszą migawkę.",
         "colUser": "Użytkownik",
         "colType": "Typ",
-        "typeWeeklyAuto": "Cotygodniowo (auto)",
+        "typeWeeklyAuto": "Cotygodniowa kopia konta",
         "typeManual": "Ręcznie",
         "colSize": "Rozmiar",
         "colCreatedAt": "Ostatnia migawka",
         "colActions": "Akcje",
-        "retentionLabel": "Przechowywanie: {days} dni",
         "scheduleStaleTitle": "Cotygodniowa kopia zapasowa przestała powstawać",
         "scheduleStaleDescription": "Najnowsza zaplanowana kopia ma {days} dni. Działające cotygodniowe uruchomienie nigdy nie zostawia kopii starszej niż {threshold} dni.",
         "scheduleFailedTitle": "Ostatnie zaplanowane uruchomienie kopii zapasowej nie powiodło się",
@@ -7964,7 +8200,7 @@
         "downloadFailed": "Pobieranie nie powiodło się",
         "downloadStarted": "Rozpoczęto pobieranie",
         "uploadTitle": "Prześlij kopię zapasową",
-        "uploadDescription": "Sprawdź plik kopii zapasowej i zapisz go jako ręczną migawkę. Przywracanie to osobny krok.",
+        "uploadDescription": "Sprawdza kopię konta i zapisuje ją obok kopii tego serwera. Konto, do którego należy, musi istnieć na tym serwerze. Przywracanie to osobny krok.",
         "uploadButton": "Prześlij plik",
         "uploadHelp": "Kopia zapasowa HealthLog w formacie .json lub .json.gz. Plik jest kompresowany przed wysłaniem; po kompresji może mieć do 512 MB.",
         "uploadSuccess": "Przesłano kopię zapasową ({count} rekordów)",
@@ -8024,7 +8260,7 @@
         "restoreSkippedAccountSetting": "Ustawienie konta",
         "restoreMissingTitle": "Przywracanie odrzucone: plik jest niekompletny",
         "restoreMissingDescription": "Manifest pliku mówi, że zawiera on poniższą sekcję, a jej nie zawiera. Nic nie zostało zmienione: przywracanie zastępuje całą klasę rekordów, więc brakująca sekcja by ją opróżniła.",
-        "restoreMissingRemedy": "Użyj kopii do odtwarzania po awarii albo wyeksportuj konto ponownie i wgraj nowy plik. Sekcja, którą manifest jawnie deklaruje jako pominiętą, to co innego i przywraca się normalnie.",
+        "restoreMissingRemedy": "Użyj jednej z kopii konta z tego serwera lub kopii spoza serwera albo wyeksportuj konto ponownie i prześlij nowy plik. Sekcja, którą manifest deklaruje jako pominiętą, to co innego i przywraca się normalnie.",
         "restoreMissingDocuments": "Dokumenty",
         "restoreMissingWorkouts": "Treningi",
         "restoreMissingMentalHealth": "Kwestionariusze zdrowia psychicznego",
@@ -8054,6 +8290,9 @@
         "restoreActive": "Dla tego konta trwa już przywracanie. Poczekaj, aż się skończy.",
         "restoreJobQueuedTitle": "Przywracanie {username} czeka na start",
         "restoreJobQueuedNote": "Zacznie się, gdy tylko proces w tle je przejmie.",
+        "restoreJobWaitingBackupNote": "Czeka na kopię zapasową, która właśnie działa na serwerze. Przywracanie nigdy nie działa równolegle z kopią i zaczyna się mniej więcej minutę po jej zakończeniu.",
+        "restoreJobWaitingBusyNote": "Czeka na zakończenie dużego zadania na serwerze, na przykład importu albo nocnego przebiegu. Zacznie się mniej więcej minutę później.",
+        "restoreJobQueuedSince": "W kolejce od {when}.",
         "restoreJobRunningTitle": "Przywracanie {username}",
         "restoreJobRunningNote": "Konto pokazuje dotychczasowe dane, dopóki przywracanie się nie zakończy. Możesz opuścić tę stronę; przywracanie trwa dalej na serwerze.",
         "restoreJobResumed": "Uruchomione ponownie po restarcie serwera.",
@@ -8074,7 +8313,7 @@
         "restoreFailureOwnerMismatch": "Plik w kopii należy do innego konta niż wiersz kopii.",
         "restoreFailureOwnerMissing": "Konto, do którego należy ta kopia, już nie istnieje.",
         "restoreFailureSectionMissing": "Plik jest niekompletny: jego manifest wymienia sekcję, której nie zawiera.",
-        "restoreFailureDocument": "Plik zawiera dokumenty bez ich treści, jak eksport przenośny. Użyj kopii do odtwarzania po awarii.",
+        "restoreFailureDocument": "Plik zawiera dokumenty bez ich treści, jak przenośny eksport. Użyj zamiast tego jednej z kopii konta z tego serwera lub kopii spoza serwera.",
         "restoreFailureTimeBudget": "Ta kopia jest za duża, by przywrócić ją w limicie czasu procesu w tle.",
         "restoreFailureTransaction": "Baza danych odrzuciła przywracanie w trakcie, więc wszystko wycofano. Dziennik serwera podaje błąd.",
         "restoreFailureCauseTimeout": "Przywracanie trwało dłużej, niż pozwala baza danych, więc wszystko wycofano. Jeśli serwer bazy był obciążony, uruchom je ponownie, gdy będzie spokojniej. Dziennik serwera podaje krok.",
@@ -8095,7 +8334,32 @@
         "restoreSkippedMoodLabelCiphertext": "Nazwa tagu lub grupy nastroju zaszyfrowana kluczem, którego ten serwer nie ma (zachowana bez nazwy)",
         "restoreSkippedVisitCiphertext": "Tekst wizyty lub lekarza zaszyfrowany kluczem, którego ten serwer nie ma (zachowany bez niego)",
         "restoreSkippedVaccinationCiphertext": "Notatka szczepienia zaszyfrowana kluczem, którego ten serwer nie ma (dawka zachowana bez niej)",
-        "restoreSkippedEnvironmentLocationCiphertext": "Lokalizacja okresu lub dnia środowiskowego zaszyfrowana kluczem, którego ten serwer nie ma (zachowana w postaci zaszyfrowanej, te dni nie są odświeżane)"
+        "restoreSkippedEnvironmentLocationCiphertext": "Lokalizacja okresu lub dnia środowiskowego zaszyfrowana kluczem, którego ten serwer nie ma (zachowana w postaci zaszyfrowanej, te dni nie są odświeżane)",
+        "typePreWipe": "Przed usunięciem wszystkich danych",
+        "retentionNote": "Cotygodniowa kopia jest zastępowana w każdą niedzielę. Kopia wykonana przed „Usuń wszystkie dane” jest usuwana po {days} dniach. Przesłane kopie zostają, dopóki ich konto nie zostanie usunięte.",
+        "retentionNoteNoGrace": "Cotygodniowa kopia jest zastępowana w każdą niedzielę. Przesłane kopie zostają, dopóki ich konto nie zostanie usunięte.",
+        "database": {
+          "title": "Zrzut bazy danych",
+          "lastGood": "Ostatni poprawny zrzut {when}, {size}, {where}.",
+          "whereBoth": "przechowywany na tym serwerze i poza nim",
+          "whereLocal": "przechowywany na tym serwerze",
+          "whereOffhost": "tylko poza serwerem",
+          "none": "Nie ma jeszcze zrzutu bazy danych. Pierwszy powstanie tej nocy.",
+          "failedTitle": "Ostatni zrzut bazy danych się nie powiódł",
+          "failedDescription": "{when}: {reason}",
+          "disabled": "Zrzuty bazy danych są wyłączone (DB_BACKUP_ENABLED=false). Zrób kopię bazy danych w inny sposób.",
+          "noDirectoryOffhost": "Ten serwer nie może zapisywać w {dir}, więc zrzuty trafiają tylko poza serwer i żaden nie zostaje tutaj. Podłącz wolumin kopii.",
+          "noDirectory": "Ten serwer nie może zapisywać w {dir} i nie ustawiono magazynu zewnętrznego, więc nie da się wykonać zrzutu bazy. Podłącz wolumin kopii.",
+          "retentionLocal": "Usunięte konta pozostają w zrzutach, dopóki te nie wygasną: na tym serwerze zostaje {nights} najnowszych zrzutów nocnych, a zrzut sprzed ostatniej aktualizacji zostaje do następnej.",
+          "retentionOffhost": "Reguła cyklu życia bucketu usuwa kopie zewnętrzne po {days} dniach.",
+          "retentionOffhostMissing": "Żadna reguła cyklu życia bucketu nie obejmuje database/, więc zrzuty tam, wraz z usuniętymi kontami w nich, nigdy nie są usuwane. Dodaj regułę dla tego prefiksu.",
+          "notPersistentOffhost": "{dir} nie leży na trwałym nośniku (jest wewnątrz kontenera zamiast na podłączonym woluminie albo w pamięci), więc zapisany tam zrzut przepadnie przy następnej aktualizacji. Zrzuty trafiają tylko poza serwer: żaden nie zostaje tutaj i żaden nie powstaje przed migracją. Podłącz wolumin kopii.",
+          "notPersistent": "{dir} nie leży na trwałym nośniku (jest wewnątrz kontenera zamiast na podłączonym woluminie albo w pamięci), a zewnętrzny bucket nie jest ustawiony, więc żaden zrzut bazy nie jest nigdzie przechowywany. Podłącz wolumin kopii.",
+          "offhostFailedTitle": "Najnowszy zrzut bazy danych nie trafił do zewnętrznego bucketu",
+          "offhostLastUpload": "Najnowszy zrzut w buckecie pochodzi z {when}.",
+          "offhostNeverUploaded": "Do bucketu nie trafił jeszcze żaden zrzut bazy danych."
+        },
+        "restorePreWipeLimits": "Tę kopię wykonano przed usunięciem danych konta, a jej przywrócenie cofa to usunięcie na tyle, na ile pozwala kopia: to, co konto dodało od tego czasu, zostaje zastąpione, a połączenia integracji, udostępnienia, dostęp opiekunów i linki udostępniania nie wracają."
       },
       "danger-zone": {
         "title": "Strefa zagrożenia",
@@ -8161,7 +8425,10 @@
         "columnsHide": "Ukryj tabelę",
         "columnsShowAll": "Pokaż wszystkie kolumny ({count})",
         "columnsShowWithRows": "Tylko kolumny z wierszami",
-        "columnsNoneWithRows": "Żadna zaszyfrowana kolumna nie zawiera jeszcze wierszy."
+        "columnsNoneWithRows": "Żadna zaszyfrowana kolumna nie zawiera jeszcze wierszy.",
+        "backupsDumpLocalLine": "Klucz {key}: {count} zrzutów bazy danych na tym serwerze zapisano pod nim; jest potrzebny, dopóki retencja ich nie usunie.",
+        "backupsDumpOffhostLine": "Klucz {key}: najnowszy zrzut bazy danych zapisany pod nim trafił do bucketu {when}; potrzebny tam do {until}",
+        "backupsDumpOffhostLineUnknown": "Klucz {key}: najnowszy zrzut bazy danych zapisany pod nim trafił do bucketu {when}. Nie wiadomo, jak długo bucket przechowuje database/, więc zachowaj klucz, dopóki nie masz pewności, że tego zrzutu już nie ma."
       },
       "maintenance": {
         "title": "Konserwacja tabeli pomiarów",
@@ -8291,47 +8558,6 @@
       "title": "Nie udało się wyświetlić tej części strony",
       "description": "Reszta strony działa; spróbuj ponownie lub odśwież, jeśli błąd się powtarza."
     },
-    "keyBackup": {
-      "title": "Zrób kopię klucza szyfrowania",
-      "description": "Bez kopii tego klucza Twoich zaszyfrowanych danych i kopii zapasowych z tego serwera nie da się już odczytać.",
-      "loading": "Wczytywanie stanu kopii klucza…",
-      "loadError": "Nie udało się wczytać stanu kopii klucza.",
-      "badgeDue": "Do zrobienia",
-      "badgeDone": "Zapisany",
-      "keyId": "ID aktywnego klucza",
-      "fingerprint": "Odcisk",
-      "whatIsLost": "Przechowuj kopię klucza poza tym serwerem, na przykład w menedżerze haseł. Jeśli serwer zostanie przeinstalowany z innym kluczem, HealthLog nie wznowi działania, dopóki oryginalny klucz nie wróci.",
-      "fingerprintHint": "Odcisk to pierwsze 12 znaków skrótu SHA-256 klucza. Rozpoznaje klucz, nie ujawniając go, więc możesz porównać go ze swoją kopią.",
-      "checkLabel": "Sprawdź moją kopię",
-      "checkButton": "Sprawdź",
-      "checkNote": "Wklejony klucz jest porównywany z aktywnym kluczem, a potem odrzucany. Nigdy nie jest zapisywany ani logowany.",
-      "checkInsecureNote": "Ta strona nie jest serwowana przez https://, więc wklejony klucz przechodzi przez sieć bez szyfrowania, tak jak Twoje hasło. Jest porównywany i odrzucany, nigdy nie jest zapisywany ani logowany.",
-      "checkMatches": "Twoja kopia pasuje do aktywnego klucza.",
-      "checkNoMatch": "Twoja kopia nie pasuje do aktywnego klucza. Sprawdź, czy skopiowano całą wartość.",
-      "checkFailed": "Sprawdzenie nie powiodło się.",
-      "confirmButton": "Mam kopię tego klucza",
-      "confirmed": "Kopia klucza potwierdzona.",
-      "confirmFailed": "Nie udało się zapisać potwierdzenia.",
-      "stale": "Klucz serwera zmienił się od wczytania tej strony. Sprawdź nowe ID i odcisk, a potem potwierdź ponownie.",
-      "confirmedAt": "Potwierdzono {date}.",
-      "confirmedAtBy": "Potwierdzono {date}, potwierdził(a): {who}.",
-      "dueAgain": "Potwierdzono kopię klucza {keyId}, ale serwer używa teraz innego klucza. Zrób kopię obecnego.",
-      "tileLabel": "Kopia klucza szyfrowania",
-      "tileDue": "Niepotwierdzona",
-      "tileDone": "Potwierdzona",
-      "platform": {
-        "composeLabel": "Compose",
-        "composeWhere": "Klucz to ENCRYPTION_KEY (lub ENCRYPTION_KEYS) w pliku .env obok docker-compose.yml.",
-        "truenasLabel": "TrueNAS",
-        "truenasWhere": "Otwórz Apps, wybierz HealthLog, kliknij Edytuj i skopiuj ENCRYPTION_KEY ze zmiennych środowiskowych.",
-        "coolifyLabel": "Coolify",
-        "coolifyWhere": "Otwórz aplikację w Coolify i skopiuj ENCRYPTION_KEY z jej Environment Variables.",
-        "unraidLabel": "Unraid",
-        "unraidWhere": "Na karcie Docker edytuj kontener HealthLog i skopiuj ENCRYPTION_KEY z szablonu albo z pliku .env stosu Compose Manager.",
-        "portainerLabel": "Portainer",
-        "portainerWhere": "Otwórz stos HealthLog w Portainerze i skopiuj ENCRYPTION_KEY z jego zmiennych środowiskowych."
-      }
-    },
     "keyMismatch": {
       "title": "HealthLog nie może otworzyć swoich danych",
       "body": "Klucz szyfrowania, z którym uruchomiono ten serwer, nie jest kluczem, którym zapisano jego bazę danych. Aby chronić Twoje dane, HealthLog niczego nie udostępnia, dopóki to nie zostanie naprawione.",
@@ -8362,6 +8588,185 @@
       "defaultAboveCeiling": "Poziom domyślny nie może być wyższy niż najwyższy poziom.",
       "gapLabel": "Godziny między odświeżeniami kart po synchronizacji (Standardowy)",
       "gapHint": "Pełne godziny od 1 do 48. Zostaw puste, aby użyć AI_SYNC_REGEN_GAP_HOURS, w przeciwnym razie 6. Obecnie obowiązuje: {hours} h."
+    },
+    "recoveryKit": {
+      "title": "Zestaw odzyskiwania",
+      "description": "Każdy klucz potrzebny do przywrócenia tego serwera, z ID i odciskiem.",
+      "intro": "Przechowuj kopię każdego z poniższych kluczy poza tym serwerem, na przykład w menedżerze haseł. Bez nich nie da się ponownie odczytać ani zrzutu bazy danych, ani kopii zapasowej, a HealthLog nie uruchomi się, jeśli brakuje potrzebnego mu klucza.",
+      "loading": "Wczytywanie zestawu odzyskiwania…",
+      "loadError": "Nie udało się wczytać zestawu odzyskiwania.",
+      "badgeDue": "Do zrobienia",
+      "badgeDone": "Zapisany",
+      "keyId": "ID",
+      "fingerprint": "Odcisk",
+      "noFingerprint": "Brak na tym serwerze",
+      "kind": {
+        "application": "Klucz aplikacji {id}",
+        "backup": "Klucz kopii poza hostem",
+        "backupPrevious": "Poprzedni klucz kopii poza hostem",
+        "token": "Klucz tokenów"
+      },
+      "need": {
+        "active": "Szyfruje nowe dane.",
+        "configured": "Znajduje się na tym serwerze.",
+        "storedCopies": "Potrzebny zapisanym kopiom: {count}.",
+        "offhostUntil": "Potrzebny kopiom poza hostem do {date}.",
+        "offhostUnknown": "Potrzebny kopiom poza hostem, dopóki bucket je przechowuje.",
+        "backupActive": "Pieczętuje każdą nową kopię poza hostem.",
+        "backupPrevious": "Otwiera kopie poza hostem zapisane przed ostatnią zmianą klucza.",
+        "token": "Podpisuje sesje, tokeny i linki udostępniania. Bez niego wszyscy zostaną wylogowani, ale żadne dane nie przepadną.",
+        "localDumps": "Potrzebny zrzutom bazy danych na tym serwerze: {count}.",
+        "offhostDumpsUntil": "Potrzebny zrzutom bazy danych poza hostem do {date}.",
+        "offhostDumpsUnknown": "Potrzebny zrzutom bazy danych poza hostem, dopóki bucket je przechowuje."
+      },
+      "source": "Ustawiony w {variable}.",
+      "status": {
+        "confirmed": "Zapisany",
+        "new": "Jeszcze niezapisany",
+        "notConfigured": "Brak na tym serwerze",
+        "unreadable": "Nieprawidłowy klucz"
+      },
+      "notConfiguredHint": "Kopia zapasowa nadal potrzebuje tego klucza, a ten serwer go nie ma. Te kopie zapasowe może odczytać tylko kopia klucza, którą przechowujesz gdzie indziej. Potwierdź zestaw, gdy będziesz mieć tę kopię.",
+      "unreadableHint": "Zmienna jest ustawiona, ale nie zawiera prawidłowego klucza. Popraw ją, zanim zaczniesz polegać na kopiach poza hostem.",
+      "fingerprintHint": "Odcisk to pierwsze 12 znaków skrótu SHA-256 klucza. Rozpoznaje klucz, nie ujawniając go, więc możesz porównać go ze swoją kopią.",
+      "whereTitle": "Gdzie ustawione są klucze",
+      "platform": {
+        "composeLabel": "Compose",
+        "composeWhere": "Klucze znajdują się w pliku .env obok docker-compose.yml: ENCRYPTION_KEY lub ENCRYPTION_KEYS, API_TOKEN_HMAC_KEY oraz, przy kopiach poza hostem, BACKUP_ENCRYPTION_KEY.",
+        "truenasLabel": "TrueNAS",
+        "truenasWhere": "Otwórz Apps, wybierz HealthLog i kliknij Edit. Klucze są w sekcji HealthLog Configuration; w aplikacji zainstalowanej przez YAML to ENCRYPTION_KEY, API_TOKEN_HMAC_KEY i BACKUP_ENCRYPTION_KEY w ustawieniach środowiska.",
+        "coolifyLabel": "Coolify",
+        "coolifyWhere": "Otwórz aplikację w Coolify i skopiuj ENCRYPTION_KEY, API_TOKEN_HMAC_KEY i BACKUP_ENCRYPTION_KEY z jej Environment Variables.",
+        "unraidLabel": "Unraid",
+        "unraidWhere": "Na karcie Docker edytuj kontener HealthLog i skopiuj ENCRYPTION_KEY, API_TOKEN_HMAC_KEY i BACKUP_ENCRYPTION_KEY z szablonu albo z pliku .env stosu Compose Manager.",
+        "portainerLabel": "Portainer",
+        "portainerWhere": "Otwórz stos HealthLog w Portainerze i skopiuj ENCRYPTION_KEY, API_TOKEN_HMAC_KEY i BACKUP_ENCRYPTION_KEY z jego zmiennych środowiskowych."
+      },
+      "restoreTitle": "Przywracanie tego serwera",
+      "restoreBody": "Zainstaluj HealthLog z tymi samymi kluczami, przywróć najnowszy zrzut bazy danych do pustej bazy, a potem uruchom aplikację. Przewodnik prowadzi przez każdy krok.",
+      "restoreLink": "Przewodnik odzyskiwania po awarii",
+      "checkLabel": "Sprawdź moją kopię",
+      "checkKeyLabel": "Klucz do sprawdzenia",
+      "checkValueLabel": "Twoja kopia klucza",
+      "checkButton": "Sprawdź",
+      "checkNote": "Wklejony klucz jest porównywany z kluczem na tym serwerze, a potem odrzucany. Nigdy nie jest zapisywany ani logowany.",
+      "checkInsecureNote": "Ta strona nie jest serwowana przez https://, więc wklejony klucz przechodzi przez sieć bez szyfrowania, tak jak Twoje hasło. Jest porównywany i odrzucany, nigdy nie jest zapisywany ani logowany.",
+      "checkMatches": "Twoja kopia pasuje do tego klucza.",
+      "checkNoMatch": "Twoja kopia nie pasuje do tego klucza. Sprawdź, czy skopiowano całą wartość.",
+      "checkFailed": "Sprawdzenie nie powiodło się.",
+      "confirmButton": "Mam kopię każdego klucza",
+      "confirmed": "Zestaw odzyskiwania potwierdzony.",
+      "confirmFailed": "Nie udało się zapisać potwierdzenia.",
+      "stale": "Zestaw zmienił się od wczytania tej strony. Sprawdź klucze, które teraz wymienia, a potem potwierdź ponownie.",
+      "confirmedAt": "Potwierdzono {date}.",
+      "confirmedAtBy": "Potwierdzono {date}, potwierdził(a): {who}.",
+      "dueAgain": "Zestaw potwierdzono {date}. Zawiera teraz także {keys}, czego to potwierdzenie nie obejmowało. Zapisz kopię każdego i potwierdź ponownie."
+    },
+    "recoveryReadiness": {
+      "title": "Gotowość do odzyskiwania",
+      "description": "Czy ten serwer dałoby się odtworzyć po utracie, oceniane na podstawie każdej kopii zapasowej, którą tworzy.",
+      "loading": "Sprawdzanie kopii zapasowych…",
+      "loadError": "Nie udało się wczytać gotowości do odzyskiwania.",
+      "state": {
+        "ok": "Gotowe",
+        "attention": "Wymaga uwagi",
+        "failing": "Zagrożone"
+      },
+      "signal": {
+        "database_dump": "Zrzut bazy danych",
+        "weekly_copy": "Cotygodniowe kopie kont",
+        "offhost_copies": "Kopie poza hostem",
+        "restore_drill": "Próba przywracania",
+        "offhost_setup": "Kopia poza hostem",
+        "recovery_kit": "Zestaw odzyskiwania",
+        "dump_retention": "Zrzuty w buckecie"
+      },
+      "at": {
+        "database_dump": "Najnowszy zrzut: {date}",
+        "weekly_copy": "Najstarsza kopia konta: {date}",
+        "offhost_copies": "Najstarsza kopia poza hostem: {date}",
+        "restore_drill": "Ostatnia próba: {date}",
+        "recovery_kit": "Potwierdzono: {date}"
+      },
+      "dueBy": "Termin: {date}",
+      "fix": {
+        "database_dump": "Otwórz kopie zapasowe",
+        "weekly_copy": "Otwórz kopie zapasowe",
+        "offhost_copies": "Otwórz kopie zapasowe",
+        "restore_drill": "Otwórz kopie zapasowe",
+        "offhost_setup": "Otwórz kopie zapasowe",
+        "recovery_kit": "Otwórz zestaw",
+        "dump_retention": "Otwórz kopie zapasowe"
+      },
+      "reason": {
+        "database_dump": {
+          "not_available": "Ta wersja nie planuje zrzutu bazy danych.",
+          "disabled": "Zaplanowany zrzut bazy danych jest wyłączony, więc żadna kopia nie odtworzy tego serwera. Aby go włączyć, usuń DB_BACKUP_ENABLED lub ustaw na true i uruchom HealthLog ponownie.",
+          "unreadable": "Nie udało się odczytać stanu zrzutu bazy danych.",
+          "never_succeeded": "Żaden zrzut bazy danych jeszcze się nie udał, a ostatnia próba zakończyła się błędem.",
+          "never_ran": "Od włączenia zrzutów minęło {hours} h, a nie zapisano żadnego zrzutu bazy danych.",
+          "first_pending": "Pierwszy zrzut bazy danych jeszcze się nie odbył.",
+          "stale": "Najnowszy zrzut bazy danych ma {hours} h.",
+          "last_failed": "Ostatni zrzut bazy danych nie powiódł się. Poprzedni jest jeszcze aktualny.",
+          "fresh": "Najnowszy zrzut bazy danych jest aktualny.",
+          "nowhere_to_write": "Katalog zrzutów {directory} nie jest zapisywalny i nie skonfigurowano zewnętrznego bucketu, więc żaden zrzut nie może zostać zachowany.",
+          "not_persistent": "Katalog zrzutów {directory} nie leży na trwałym nośniku, a zewnętrzny bucket nie jest ustawiony, więc każdy zrzut przepadnie przy następnej aktualizacji. Podłącz wolumin kopii.",
+          "fresh_offhost_only": "Najnowszy zrzut bazy jest aktualny i leży w zewnętrznym buckecie. Na tym serwerze żaden nie zostaje, bo {directory} nie leży na trwałym nośniku, i żaden nie powstaje przed migracją.",
+          "offhost_failed": "Najnowszy zrzut bazy danych jest przechowywany na tym serwerze, ale jego przesłanie do zewnętrznego bucketu się nie powiodło.",
+          "offhost_stale": "Od {hours} godzin do zewnętrznego bucketu nie trafił żaden zrzut bazy danych: przesyłanie wciąż się nie udaje. Jeśli ten serwer przepadnie, nie ma aktualnego zrzutu, z którego można go odbudować.",
+          "offhost_never": "Żaden zrzut bazy danych nigdy nie trafił do zewnętrznego bucketu: przesyłanie się nie udaje. Jeśli ten serwer przepadnie, nie ma zrzutu, z którego można go odbudować."
+        },
+        "weekly_copy": {
+          "no_accounts": "Nie ma jeszcze kont do skopiowania.",
+          "stale": "Najstarsza cotygodniowa kopia ma {days} dni. Zaległe konta: {accounts}.",
+          "never": "Jedno z kont od {days} dni nie ma cotygodniowej kopii. Zaległe konta: {accounts}.",
+          "first_pending": "Pierwsza cotygodniowa kopia powstaje wcześnie rano w niedzielę.",
+          "fresh": "Każde konto ma kopię z ostatniego tygodnia."
+        },
+        "offhost_copies": {
+          "not_configured": "Nie skonfigurowano bucketu poza hostem.",
+          "stale": "Kopie poza hostem są opóźnione o ponad dwie noce. Zaległe konta: {accounts}.",
+          "first_pending": "Nocny przebieg kopii poza hostem nie objął jeszcze żadnego konta.",
+          "fresh": "Każde konto ma aktualną kopię w buckecie poza hostem."
+        },
+        "restore_drill": {
+          "not_configured": "Próba odczytuje bucket poza hostem, który nie jest skonfigurowany.",
+          "not_run_yet": "Comiesięczna próba przywracania jeszcze się nie odbyła.",
+          "failed": "Ostatnia próba przywracania nie powiodła się: nie udało się odczytać {failed} z {checked} kopii.",
+          "failed_run": "Ostatnia próba przywracania nie dobiegła końca.",
+          "passed": "Ostatnia próba przywracania odczytała kopie: {checked}.",
+          "nothing_checked": "Ostatnia próba przywracania zatrzymała się na limicie czasu, zanim odczytała choć jedną kopię, więc niczego nie potwierdziła."
+        },
+        "offhost_setup": {
+          "configured": "Kopie opuszczają ten serwer każdej nocy.",
+          "no_admin": "Nie ma jeszcze konta administratora.",
+          "not_configured": "Nie skonfigurowano bucketu poza hostem, więc każda kopia jest tylko na tym serwerze.",
+          "not_configured_grace": "Nie skonfigurowano jeszcze bucketu poza hostem, więc każda kopia jest tylko na tym serwerze."
+        },
+        "recovery_kit": {
+          "confirmed": "Istnieje kopia każdego klucza potrzebnego do przywrócenia.",
+          "out_of_date": "Zestaw odzyskiwania zawiera teraz także {keys}, czego ostatnie potwierdzenie nie obejmowało. Nic się nie zepsuło: zapisz kopię i potwierdź zestaw ponownie.",
+          "no_admin": "Nie ma jeszcze konta administratora.",
+          "not_confirmed": "Nikt nie potwierdził kopii kluczy potrzebnych do przywrócenia: {keys}.",
+          "not_confirmed_grace": "Zapisz kopię kluczy potrzebnych do przywrócenia: {keys}."
+        },
+        "dump_retention": {
+          "not_configured": "Zewnętrzny bucket nie jest ustawiony.",
+          "no_offhost_dumps": "Żaden zrzut bazy nie trafia do bucketu.",
+          "missing": "Żadna reguła cyklu życia bucketu nie obejmuje database/, więc zrzuty tam, wraz z usuniętymi kontami w nich, nigdy nie są usuwane. Dodaj regułę dla tego prefiksu.",
+          "configured": "Bucket usuwa zrzuty po {days} dniach.",
+          "unknown": "Bucket nie podaje, czy jakaś reguła usuwa stare zrzuty. Sprawdź, czy reguła cyklu życia obejmuje database/."
+        }
+      },
+      "recovered": {
+        "database_dump": "Zrzut bazy danych znów jest aktualny.",
+        "weekly_copy": "Każde konto znów ma aktualną cotygodniową kopię.",
+        "offhost_copies": "Każde konto znów ma aktualną kopię poza hostem.",
+        "restore_drill": "Próba przywracania znów się powiodła.",
+        "offhost_setup": "Kopie poza hostem są już skonfigurowane.",
+        "recovery_kit": "Zestaw odzyskiwania jest znów potwierdzony.",
+        "dump_retention": "Reguła cyklu życia w buckecie obejmuje teraz zrzuty bazy."
+      }
     }
   },
   "achievements": {
@@ -8675,7 +9080,10 @@
       "offlineGeoUnavailableTitle": "Bazy geolokalizacji offline nie zostały załadowane",
       "offlineGeoUnavailableBody": "HealthLog rozwiązuje lokalizacje logowania przez zapytanie online do {host}, więc każdy adres IP logowania opuszcza ten serwer. Aby rozwiązywać je lokalnie, pobierz bazy GeoLite2-City i GeoLite2-ASN na bezpłatnym koncie MaxMind, podłącz katalog do kontenera i ustaw na niego GEOLITE2_DIR. Kroki: {docsUrl}",
       "tlsPinChangedTitle": "Zmieniono certyfikat liścia TLS: {host}",
-      "tlsPinChangedBody": "Liść TLS serwowany przez {host} ma teraz pin SPKI {servedPin}, którego nie ma w znanym zestawie pinów. Klienci z przypiętym pinem (aplikacja natywna) nie połączą się po usunięciu starego pinu. Ponownie wyodrębnij nowy pin liścia, dodaj go do TLS_LEAF_SPKI_PINS oraz do zestawu pinów klienta natywnego i opublikuj kompilację, zanim ten certyfikat wygaśnie {validTo}. Zobacz docs/ops/tls-cert-pin.md."
+      "tlsPinChangedBody": "Liść TLS serwowany przez {host} ma teraz pin SPKI {servedPin}, którego nie ma w znanym zestawie pinów. Klienci z przypiętym pinem (aplikacja natywna) nie połączą się po usunięciu starego pinu. Ponownie wyodrębnij nowy pin liścia, dodaj go do TLS_LEAF_SPKI_PINS oraz do zestawu pinów klienta natywnego i opublikuj kompilację, zanim ten certyfikat wygaśnie {validTo}. Zobacz docs/ops/tls-cert-pin.md.",
+      "accountErasureRefusedTitle": "Nie udało się usunąć konta: {username}",
+      "accountErasureRefusedBody": "Okres usuwania konta {username} minął, ale to konto jest ostatnią aktywną osobą opiekującą się profilem zarządzanym, więc nie zostało usunięte. Pozostaje zablokowane. Dodaj do profilu kolejną osobę opiekującą się, usuń profil albo cofnij usunięcie w Administracja, Użytkownicy.",
+      "accountErasureFailedBody": "Okres usuwania konta {username} minął, ale usunięcie konta się nie powiodło. Konto pozostaje zablokowane, a próba jest ponawiana co godzinę, po innych kontach do usunięcia. Błąd widać na karcie nieudanych zadań w Administracja."
     },
     "user": {
       "telegramTestBody": "HealthLog: połączenie udane. Powiadomienia Telegram są aktywne."
@@ -8823,6 +9231,18 @@
       "detailedToast": "Powiadomienia zawierają teraz wartości zdrowotne.",
       "genericToast": "Powiadomienia nie zawierają już wartości zdrowotnych.",
       "saveError": "Nie udało się zapisać. Spróbuj ponownie później."
+    },
+    "checkupReminders": {
+      "title": "Przypomnienia o badaniach kontrolnych",
+      "description": "Włączaj lub wyłączaj pojedyncze przypomnienia o badaniach."
+    },
+    "eventBackupHealth": "Stan kopii zapasowych",
+    "eventBackupHealthDesc": "Gdy kopia zapasowa przestaje powstawać, zostaje w tyle lub wraca do normy. Wysyłane tylko do administratorów.",
+    "recoveryReadiness": {
+      "titleAttention": "Kopie zapasowe wymagają uwagi",
+      "titleFailing": "Kopie zapasowe są zagrożone",
+      "titleReminder": "Kopie zapasowe są nadal zagrożone",
+      "titleRecovered": "Kopie zapasowe znów działają normalnie"
     }
   },
   "i18n": {
@@ -8885,6 +9305,7 @@
     "inTarget": "W zakresie docelowym",
     "aboveTarget": "{delta} {unit} powyżej zakresu",
     "belowTarget": "{delta} {unit} poniżej zakresu",
+    "systolic": "Skurczowe",
     "diastolic": "Rozkurczowe",
     "glucoseFasting": "Glikemia: na czczo",
     "glucosePostprandial": "Glikemia: po posiłku",
@@ -9141,9 +9562,9 @@
     "insights": {
       "headline": {
         "title": "Twój cykl i Twoje ciało",
-        "restingHeartRate": "Twoje tętno spoczynkowe jest o około {delta} {unit} {dir} w fazie lutealnej niż w fazie folikularnej.",
-        "heartRateVariability": "Twoja zmienność rytmu serca jest o około {delta} {unit} {dir} w fazie lutealnej niż w fazie folikularnej.",
-        "generic": "Twoje {metric} jest o około {delta} {unit} {dir} w fazie lutealnej niż w fazie folikularnej.",
+        "restingHeartRate": "Twoje tętno spoczynkowe jest o około {delta} {dir} w fazie lutealnej niż w fazie folikularnej.",
+        "heartRateVariability": "Twoja zmienność rytmu serca jest o około {delta} {dir} w fazie lutealnej niż w fazie folikularnej.",
+        "generic": "Twoje {metric} jest o około {delta} {dir} w fazie lutealnej niż w fazie folikularnej.",
         "dirHigher": "wyższe",
         "dirLower": "niższe",
         "empty": "Za mało cykli i pomiarów, aby pokazać wzorzec fazy. Rejestruj dalej, a uzupełni się to wraz z historią."
@@ -9151,7 +9572,7 @@
       "crosstab": {
         "description": "Jak każdy pomiar wypada między fazą lutealną a folikularną, na Twoich danych.",
         "pairLabel": "{metric}: faza lutealna vs folikularna",
-        "detail": "Lutealna {lutealAvg} {unit} ({lutealDays} dni) vs folikularna {follicularAvg} {unit} ({follicularDays} dni).",
+        "detail": "Lutealna {lutealAvg} ({lutealDays} dni) vs folikularna {follicularAvg} ({follicularDays} dni).",
         "metricRestingHeartRate": "Tętno spoczynkowe",
         "metricHrv": "Zmienność rytmu serca",
         "metricSleepDuration": "Czas snu",
@@ -9161,15 +9582,7 @@
         "metricWristTemperature": "Nocna temperatura nadgarstka",
         "metricSkinTemperature": "Temperatura skóry",
         "metricBloodGlucose": "Glukoza we krwi",
-        "metricMood": "Nastrój",
-        "unitHours": "godz.",
-        "unitSteps": "kroki",
-        "unitBpm": "ud./min",
-        "unitMs": "ms",
-        "unitMood": "pkt",
-        "confidenceLow": "Niska pewność",
-        "confidenceMedium": "Średnia pewność",
-        "confidenceHigh": "Wysoka pewność"
+        "metricMood": "Nastrój"
       },
       "title": "Analizy cyklu",
       "symptomPatternsTitle": "Wzorce objawów wg fazy",
@@ -9200,7 +9613,8 @@
       "viewDetails": "Zobacz analizy cyklu"
     },
     "wellnessRing": {
-      "label": "Cykl"
+      "label": "Cykl",
+      "loadError": "Nie udało się załadować twojego cyklu."
     },
     "disclaimer": "Te prognozy to opisowe szacunki na podstawie zapisanych danych, a nie metoda antykoncepcji ani porada medyczna. Nigdy nie oznaczają, że współżycie bez zabezpieczenia jest bezpieczne. W sprawach antykoncepcji lub decyzji medycznych skonsultuj się z pracownikiem ochrony zdrowia.",
     "title": "Twój cykl",
@@ -9605,8 +10019,6 @@
       "description": "Wpisz wartość; przypomnienie zostanie oznaczone jako wykonane."
     },
     "manage": {
-      "title": "Zarządzaj przypomnieniami",
-      "description": "Włącz lub wyłącz poszczególne przypomnienia.",
       "empty": "Brak przypomnień do dostosowania."
     },
     "dashboard": {
@@ -9878,6 +10290,17 @@
       "reviewHint": "Sprawdź każdy wynik, a następnie zapisz te, które chcesz zachować.",
       "foundCount": "Znaleziono {count} wyników",
       "pagesCapped": "Odczytano tylko pierwsze {read} z {total} stron. Wartości z dalszych stron nie ma na tej liście.",
+      "stoppedBudget": "Dzisiejszy budżet AI wyczerpał się w trakcie odczytu wyniku, więc pozostałe strony nie zostały odczytane.",
+      "stoppedUnavailable": "AI zostało wyłączone podczas odczytu wyniku, więc pozostałe strony nie zostały odczytane.",
+      "stoppedError": "Skan nie mógł być kontynuowany z powodu błędu serwera, więc pozostałe strony nie zostały odczytane. Spróbuj ponownie później.",
+      "tooLarge": "Ten tekst jest za długi na jeden skan. Zeskanuj wynik strona po stronie.",
+      "truncated": "Dostawca AI osiągnął limit odpowiedzi przed końcem wyniku. Wartości po tym miejscu mogą być pominięte, więc porównaj listę z wynikiem.",
+      "truncatedPages": "Dostawca AI osiągnął limit odpowiedzi na tych stronach: {pages}. Wartości niżej na tych stronach mogą być pominięte, więc porównaj je z wynikiem.",
+      "unreadPages": "Tych stron nie udało się odczytać, a ich wartości nie ma na tej liście: {pages}.",
+      "unreadParts": "Części wyniku nie udało się odczytać, a jej wartości nie ma na tej liście.",
+      "rowsCapped": "Wynik zawiera {found} wartości. Jeden skan obejmuje {kept}, więc widać tylko pierwsze {kept}.",
+      "outputLimit": "Dostawca AI osiągnął limit odpowiedzi, zanim zwrócił choć jedną wartość. Spróbuj zdjęcia jednej strony albo modelu, który pozwala na dłuższe odpowiedzi.",
+      "errorTooLong": "Skróć do {max} znaków.",
       "confirmRow": "Uwzględnij ten wynik",
       "analyteLabel": "Nazwa badania",
       "resultLabel": "Wynik",
@@ -9979,6 +10402,27 @@
       "doneToastFew": "Scalono w {name}, przeniesiono {count} pomiary",
       "doneToastOther": "Scalono w {name}, przeniesiono {count} pomiarów",
       "error": "Nie udało się scalić biomarkerów. Spróbuj ponownie."
+    },
+    "trend": {
+      "title": "Trend",
+      "slope": {
+        "rising": "Rośnie o około {amount} {unit} rocznie na podstawie {n} wyników od {since}.",
+        "falling": "Spada o około {amount} {unit} rocznie na podstawie {n} wyników od {since}.",
+        "flat": "Brak zmian na podstawie {n} wyników od {since}."
+      },
+      "projection": {
+        "exits": {
+          "high": "Gdyby ta prosta biegła dalej, osiągnęłaby górną granicę twojego zakresu referencyjnego około {date}. To ekstrapolacja, nie prognoza.",
+          "low": "Gdyby ta prosta biegła dalej, osiągnęłaby dolną granicę twojego zakresu referencyjnego około {date}. To ekstrapolacja, nie prognoza."
+        },
+        "beyond_horizon": "W tym tempie prosta pozostaje w twoim zakresie referencyjnym dłużej niż {years} lat, czyli okres objęty twoimi wynikami.",
+        "beyond_horizon_capped": "W tym tempie prosta pozostaje w twoim zakresie referencyjnym dłużej niż {years} lat, czyli tak daleko, jak sięga ekstrapolacja.",
+        "no_exit": "Prosta oddala się od granic twojego zakresu referencyjnego.",
+        "already_outside": "Prosta jest już poza twoim zakresem referencyjnym.",
+        "no_clear_trend": "Na podstawie tych wyników zmiana nie różni się wyraźnie od braku zmiany, więc nie jest wyznaczana ekstrapolacja.",
+        "stale": "Najnowszy wynik pochodzi z {date}, sprzed ponad roku. Prosta jest pokazana na ten dzień, bez projekcji."
+      },
+      "interval": "95% przedział rocznej zmiany: od {lo} do {hi} {unit}."
     }
   },
   "modules": {
@@ -10199,6 +10643,8 @@
       "yellow-fever": "Żółta gorączka",
       "japanese-encephalitis": "Japońskie zapalenie mózgu",
       "cholera": "Cholera",
+      "dengue": "Denga",
+      "tuberculosis": "Gruźlica",
       "td": "Td (tężec, błonica)",
       "tdap": "Tdap (tężec, błonica, krztusiec)",
       "tdap-ipv": "Tdap-IPV (poczwórna)",
@@ -10392,6 +10838,7 @@
     "vital": {
       "RESTING_HEART_RATE": "Spoczynkowe tętno",
       "HEART_RATE_VARIABILITY": "Zmienność rytmu serca",
+      "HRV_RMSSD": "HRV (RMSSD)",
       "RECOVERY_SCORE": "Recovery",
       "OXYGEN_SATURATION": "Saturacja tlenem",
       "BODY_TEMPERATURE": "Temperatura ciała",
@@ -10715,25 +11162,15 @@
       "who5": "Test samopoczucia, 5 pytań",
       "sci": "Test snu, 8 pytań"
     },
-    "options": {
-      "0": "Wcale",
-      "1": "Kilka dni",
-      "2": "Więcej niż połowę dni",
-      "3": "Niemal codziennie"
-    },
-    "functionalTitle": "Jeśli zaznaczyłeś(-aś) jakiekolwiek problemy, na ile utrudniły Ci one pracę, prowadzenie domu lub kontakty z innymi ludźmi?",
-    "functional": {
-      "0": "Wcale nie utrudniły",
-      "1": "Trochę utrudniły",
-      "2": "Bardzo utrudniły",
-      "3": "Skrajnie utrudniły"
-    },
     "functionalOptionalHint": "Opcjonalne: możesz wysłać bez odpowiedzi na to pytanie.",
     "result": {
       "title": "Twój wynik",
       "totalLabel": "Wynik łączny",
       "bandLabel": "Zakres dla tego przesiewu",
-      "takeAnother": "Wykonaj kolejne sprawdzenie"
+      "takeAnother": "Wykonaj kolejne sprawdzenie",
+      "scoreOf": "z {max}",
+      "firstCheckIn": "To Twój pierwszy wynik w tym kwestionariuszu. Od następnego zobaczysz tu zmianę.",
+      "nextStep": "Możesz powtórzyć ten kwestionariusz za dwa tygodnie lub później, aby śledzić zmianę. Jeśli coś Cię niepokoi, porozmawiaj w każdej chwili z profesjonalistą."
     },
     "band": {
       "PHQ9": {
@@ -10774,45 +11211,6 @@
       "ifDanger": "Jeśli grozi Ci bezpośrednie niebezpieczeństwo, zadzwoń teraz pod {emergency}.",
       "resourcesTitle": "Osoby, które mogą pomóc"
     },
-    "items": {
-      "phq9": {
-        "1": "Niewielkie zainteresowanie lub odczuwanie przyjemności z wykonywania czynności",
-        "2": "Uczucie przygnębienia, depresji lub beznadziejności",
-        "3": "Kłopoty z zaśnięciem lub utrzymaniem snu albo zbyt długi sen",
-        "4": "Uczucie zmęczenia lub brak energii",
-        "5": "Brak apetytu lub przejadanie się",
-        "6": "Złe myślenie o sobie — poczucie, że jest się nieudacznikiem lub że zawiodło się siebie albo rodzinę",
-        "7": "Trudności ze skupieniem się, na przykład podczas czytania gazety lub oglądania telewizji",
-        "8": "Poruszanie się lub mówienie tak wolno, że inni mogli to zauważyć? Albo przeciwnie — niepokój lub pobudzenie powodujące, że poruszasz się znacznie więcej niż zwykle",
-        "9": "Myśli, że lepiej byłoby umrzeć albo chęć zrobienia sobie w jakiś sposób krzywdy"
-      },
-      "gad7": {
-        "1": "Odczuwanie zdenerwowania, lęku lub napięcia",
-        "2": "Niemożność przerwania lub kontrolowania zamartwiania się",
-        "3": "Zbytnie zamartwianie się różnymi sprawami",
-        "4": "Trudności z odprężeniem się",
-        "5": "Niepokój tak duży, że trudno usiedzieć w miejscu",
-        "6": "Łatwe wpadanie w rozdrażnienie lub irytację",
-        "7": "Odczuwanie lęku, jakby miało się zdarzyć coś strasznego"
-      },
-      "who5": {
-        "1": "Czułam się wesoła/Czułem się wesoły i w dobrym nastroju",
-        "2": "Czułam się spokojna i odprężona/Czułem się spokojny i odprężony",
-        "3": "Czułam się aktywna i energiczna/Czułem się aktywny i energiczny",
-        "4": "Budziłam się z uczuciem świeżości i wypoczęta/Budziłem się z uczuciem świeżości i wypoczęty",
-        "5": "Moje życie codzienne było wypełnione interesującymi mnie sprawami"
-      },
-      "sci": {
-        "1": "… how long does it take you to fall asleep?",
-        "2": "… if you then wake up during the night … how long are you awake for in total? (add all the wakenings up)",
-        "3": "… how many nights a week do you have a problem with your sleep?",
-        "4": "… how would you rate your sleep quality?",
-        "5": "… affected your mood, energy, or relationships?",
-        "6": "… affected your concentration, productivity, or ability to stay awake?",
-        "7": "… troubled you in general?",
-        "8": "… how long have you had a problem with your sleep?"
-      }
-    },
     "crisisResource": {
       "telefonSeelsorge": {
         "name": "TelefonSeelsorge (całodobowo, bezpłatnie i poufnie)"
@@ -10840,6 +11238,18 @@
       },
       "crisisTextLine": {
         "name": "Crisis Text Line"
+      },
+      "cvv": {
+        "name": "CVV, Centro de Valorização da Vida (Brazylia, całodobowo, bezpłatnie i poufnie)"
+      },
+      "samu": {
+        "name": "SAMU, pogotowie ratunkowe (Brazylia)"
+      },
+      "sns24": {
+        "name": "SNS 24, wsparcie psychologiczne (Portugalia, całodobowo, opcja 4)"
+      },
+      "sosVozAmiga": {
+        "name": "SOS Voz Amiga (Portugalia, codziennie od 15:30 do 0:30)"
       }
     },
     "instrumentDescription": {
@@ -10848,7 +11258,6 @@
       "who5": "Test samopoczucia, 5 pytań. Odpowiadaj, myśląc o ostatnich dwóch tygodniach; wyższe cyfry oznaczają lepsze samopoczucie.",
       "sci": "Test snu, 8 pytań. Większość pytań dotyczy ostatniego miesiąca; wyższe wyniki oznaczają lepszy sen."
     },
-    "progress": "{current} / {total}",
     "next": "Dalej",
     "lastResult": "Ostatni test",
     "lastScore": "Ostatni wynik",
@@ -10860,66 +11269,63 @@
       "who5": "Wynik samopoczucia 50 lub niższy może być wart bliższego spojrzenia. Jeśli chcesz, PHQ-9 na tej stronie przygląda się nastrojowi dokładniej. To życzliwa sugestia, a nie diagnoza.",
       "sci": "W badaniu tego kwestionariusza wyniki 16 lub niższe wiązały się z prawdopodobną bezsennością. Jeśli zły sen nadal Ci doskwiera, rozmowa ze specjalistą może pomóc. To nie jest diagnoza."
     },
-    "validatedInEnglishNote": "Ten kwestionariusz jest zwalidowany w języku angielskim; pytania są wyświetlane w angielskim oryginale.",
-    "who5Options": {
-      "0": "Nigdy",
-      "1": "Od czasu do czasu",
-      "2": "Mniej niż połowę czasu",
-      "3": "Więcej niż połowę czasu",
-      "4": "Prawie cały czas",
-      "5": "Cały czas"
-    },
-    "sciOptions": {
-      "duration": {
-        "0": "≥ 61 min",
-        "1": "46–60 min",
-        "2": "31–45 min",
-        "3": "16–30 min",
-        "4": "0–15 min"
-      },
-      "nights": {
-        "0": "5–7",
-        "1": "4",
-        "2": "3",
-        "3": "2",
-        "4": "0–1"
-      },
-      "quality": {
-        "0": "Very poor",
-        "1": "Poor",
-        "2": "Average",
-        "3": "Good",
-        "4": "Very good"
-      },
-      "impact": {
-        "0": "Very much",
-        "1": "Much",
-        "2": "Somewhat",
-        "3": "A little",
-        "4": "Not at all"
-      },
-      "problemDuration": {
-        "0": "> 1 year",
-        "1": "7–12 months",
-        "2": "3–6 months",
-        "3": "1–2 months",
-        "4": "I don't have a problem / < 1 month"
-      }
-    },
-    "stems": {
-      "who5": {
-        "period": "W ciągu ostatnich dwóch tygodni"
-      },
-      "sci": {
-        "night": "Thinking about a typical night in the last month …",
-        "impact": "Thinking about the past month, to what extent has poor sleep …",
-        "finally": "Finally …"
-      }
-    },
     "openDetail": "Pokaż szczegóły",
     "historyLoadError": "Nie udało się wczytać historii testów",
     "historyLoadErrorHint": "To nie znaczy, że nie masz wyników; nie udało się pobrać listy. Spróbuj ponownie.",
-    "privacyNote": "Twoje odpowiedzi są przechowywane w postaci zaszyfrowanej i nigdy nie trafiają do Coacha AI."
+    "privacyNote": "Twoje odpowiedzi są przechowywane w postaci zaszyfrowanej i nigdy nie trafiają do Coacha AI.",
+    "trend": {
+      "sincePrevious": "Od poprzedniego sprawdzenia {date}: {change} pkt.",
+      "sinceFirst": "Od pierwszego sprawdzenia {date}: {change} pkt.",
+      "verdict": {
+        "improved": "To osiąga zmianę o {threshold} pkt, którą badania uznają za istotną, w lepszym kierunku.",
+        "worsened": "To osiąga zmianę o {threshold} pkt, którą badania uznają za istotną, w mniej korzystnym kierunku.",
+        "within_threshold": "To mniej niż zmiana o {threshold} pkt, którą badania uznają za istotną."
+      }
+    },
+    "wizard": {
+      "progressLabel": "Pytanie {current} z {total}",
+      "followUpLabel": "Pytanie dodatkowe (nieobowiązkowe)",
+      "keyboardHint": "Klawisze od 1 do {count} wybierają odpowiedź.",
+      "allAnswered": "Odpowiedziano na wszystkie pytania ({total})"
+    },
+    "review": {
+      "title": "Sprawdź odpowiedzi",
+      "description": "Nic nie zostanie zapisane przed wysłaniem, a każdą odpowiedź można jeszcze zmienić.",
+      "change": "Zmień",
+      "changeLabel": "Zmień odpowiedź na pytanie {number}",
+      "notAnswered": "Bez odpowiedzi",
+      "open": "Sprawdź odpowiedzi"
+    },
+    "bandMeaning": {
+      "PHQ9": {
+        "minimal": "Twoje odpowiedzi wskazują na brak lub niewiele objawów depresji w ostatnich dwóch tygodniach.",
+        "mild": "Twoje odpowiedzi wskazują na łagodne objawy depresji w ostatnich dwóch tygodniach.",
+        "moderate": "Twoje odpowiedzi wskazują na umiarkowane objawy depresji w ostatnich dwóch tygodniach.",
+        "modSevere": "Twoje odpowiedzi wskazują na umiarkowanie ciężkie objawy depresji w ostatnich dwóch tygodniach.",
+        "severe": "Twoje odpowiedzi wskazują na ciężkie objawy depresji w ostatnich dwóch tygodniach."
+      },
+      "GAD7": {
+        "minimal": "Twoje odpowiedzi wskazują na brak lub niewiele objawów lęku w ostatnich dwóch tygodniach.",
+        "mild": "Twoje odpowiedzi wskazują na łagodne objawy lęku w ostatnich dwóch tygodniach.",
+        "moderate": "Twoje odpowiedzi wskazują na umiarkowane objawy lęku w ostatnich dwóch tygodniach.",
+        "severe": "Twoje odpowiedzi wskazują na ciężkie objawy lęku w ostatnich dwóch tygodniach."
+      },
+      "WHO5": {
+        "low": "Twoje samopoczucie w ostatnich dwóch tygodniach było poniżej zakresu, który WHO-5 uznaje za dobry.",
+        "good": "Twoje samopoczucie w ostatnich dwóch tygodniach mieściło się w zakresie, który WHO-5 uznaje za dobry."
+      },
+      "SCI": {
+        "belowThreshold": "Twój sen w ostatnim miesiącu mieścił się w zakresie, w którym badanie stojące za tym kwestionariuszem uznało bezsenność za prawdopodobną.",
+        "aboveThreshold": "Twój sen w ostatnim miesiącu był poza zakresem, który to badanie wiąże z bezsennością."
+      }
+    },
+    "wording": {
+      "unvalidatedNote": "To tłumaczenie nie zostało zwalidowane naukowo; traktuj wynik jako orientacyjny.",
+      "showOriginal": "Pokaż oryginalny tekst angielski",
+      "showTranslation": "Pokaż tłumaczenie",
+      "resultUnvalidated": "Odpowiedzi udzielone w tłumaczeniu, które nie zostało zwalidowane naukowo; traktuj wynik jako orientacyjny.",
+      "historyUnvalidated": "Odpowiedzi w tłumaczeniu niezwalidowanym naukowo"
+    }
   },
   "records": {
     "aiInclusion": {
@@ -11446,7 +11852,8 @@
     "toast": {
       "duplicate": "Już zapisano. Istniejący dokument został wyróżniony.",
       "deleted": "Dokument usunięty",
-      "restoreFailed": "Nie udało się przywrócić dokumentu."
+      "restoreFailed": "Nie udało się przywrócić dokumentu.",
+      "deletedHint": "Usunięte dokumenty zostają w sekcji Ostatnio usunięte przez {days} dni."
     },
     "timeline": {
       "loadingMore": "Wczytywanie…",
@@ -11491,7 +11898,8 @@
           "raster-failed": "Nie udało się przetworzyć stron PDF do odczytu. Znaną przyczyną są skany w faksowych formatach kompresji.",
           "provider-error": "Dostawca AI nie zdołał odczytać tego dokumentu przy ostatniej próbie.",
           "pdf-needs-anthropic": "Skonfigurowany dostawca AI nie odczytuje plików PDF. Poradzi sobie z tym dostawca Claude lub lokalny OCR.",
-          "empty-transcription": "Dostawca AI nie zwrócił tekstu dla tego dokumentu."
+          "empty-transcription": "Dostawca AI nie zwrócił tekstu dla tego dokumentu.",
+          "resource-limit": "Ten PDF jest zbyt duży lub zbyt złożony, żeby odczytać go tutaj. Sam plik jest w porządku i nadal się otwiera."
         }
       },
       "loadError": "Nie udało się wczytać tego dokumentu.",
@@ -11563,7 +11971,7 @@
       "dismiss": "Odrzuć",
       "empty": "Nie udało się nic odczytać z tego dokumentu.",
       "unavailableBody": "Skonfiguruj dostawcę AI, aby zaproponować tytuł, typ i datę.",
-      "unavailableLocalOcr": "Włącz lokalne OCR w ustawieniach AI, aby odczytywać obrazy na tym urządzeniu.",
+      "unavailableLocalOcr": "Włącz „Odczytuj skany na tym urządzeniu” w Ustawienia → Moduły → Badania, aby odczytywać obrazy na tym urządzeniu.",
       "unavailableAction": "Otwórz ustawienia AI",
       "errorGeneric": "Nie udało się odczytać dokumentu. Spróbuj ponownie.",
       "errorOcr": "Nie udało się odczytać tekstu z tego obrazu.",
@@ -11575,11 +11983,13 @@
       "errorPdfNeedsVision": "Skanowanie plików PDF wymaga dostawcy wizji Claude.",
       "errorFileType": "Tego typu pliku nie można odczytać.",
       "errorNotIndexed": "Najpierw odczytaj dokument, potem wyodrębnij.",
-      "errorLocalOcrDisabled": "Najpierw włącz lokalne OCR w ustawieniach AI.",
+      "errorOutputLimit": "Dostawca AI osiągnął limit odpowiedzi, zanim zwrócił choć jedną wartość. Spróbuj modelu, który pozwala na dłuższe odpowiedzi.",
+      "errorLocalOcrDisabled": "Najpierw włącz „Odczytuj skany na tym urządzeniu” w Ustawienia → Moduły → Badania.",
       "errorProvider": "Nie skonfigurowano dostawcy AI do tego celu.",
       "errorTextImageOnly": "Lokalne OCR odczytuje tylko obrazy, nie ten plik.",
       "errorConsent": "Odczyt dokumentów przez AI wymaga najpierw Twojej zgody.",
-      "errorUnavailable": "Odczyt dokumentów przez AI jest tu teraz niedostępny."
+      "errorUnavailable": "Odczyt dokumentów przez AI jest tu teraz niedostępny.",
+      "unavailableLocalOcrAction": "Otwórz ustawienia badań"
     },
     "summary": {
       "summarise": "Podsumuj",
@@ -11635,6 +12045,7 @@
       "extracting": "Odczytywanie…",
       "extractHint": "Korzysta z tekstu już odczytanego z tego dokumentu. Odczytane wartości czekają na Twoją weryfikację; nic nie zapisuje się automatycznie.",
       "extractEmpty": "Z tego dokumentu nie udało się odczytać żadnych wartości.",
+      "extractIncomplete": "Części dokumentu nie udało się odczytać w całości, więc może brakować niektórych wartości. Porównaj listę z dokumentem.",
       "failUnitRequired": "Wartość liczbowa potrzebuje jednostki, zanim będzie można ją zapisać.",
       "failUnitMismatch": "Podana jednostka nie zgadza się z zapisaną jednostką tego wskaźnika. Popraw ją i zakończ przegląd ponownie.",
       "failGeneric": "Nie udało się zapisać tej wartości.",
@@ -11656,7 +12067,6 @@
     },
     "chat": {
       "title": "Porozmawiaj o tym dokumencie",
-      "openAria": "Zapytaj Coacha o ten dokument",
       "openButton": "Zapytaj Coacha"
     },
     "readingConsent": {
@@ -11683,6 +12093,7 @@
       "loadMore": "Wczytaj więcej",
       "stateImported": "W HealthLog",
       "stateDeleted": "Usunięty w HealthLog",
+      "stateInTrash": "W sekcji Ostatnio usunięte",
       "selectedCount": "Wybrano {count} z maksymalnie {max}",
       "importAction": "Importuj ({count})",
       "importing": "Importowanie, dokument po dokumencie…",
@@ -11696,7 +12107,9 @@
         "importedLinked": "Zaimportowano i powiązano",
         "duplicate": "Już jest w HealthLog",
         "duplicateLinked": "Już jest w HealthLog, teraz powiązany",
-        "deleted": "Usunięty w HealthLog, pozostaje usunięty"
+        "deleted": "Usunięty w HealthLog, pozostaje usunięty",
+        "restored": "Przywrócono z sekcji Ostatnio usunięte",
+        "restoredLinked": "Przywrócono z sekcji Ostatnio usunięte i powiązano"
       },
       "errors": {
         "unavailable": "Archiwa dokumentów nie są włączone na tym serwerze.",
@@ -11740,8 +12153,32 @@
     "deleteConfirm": {
       "titleOne": "Usunąć ten dokument?",
       "titleMany": "Usunąć dokumenty ({count})?",
-      "body": "Zaraz potem możesz to cofnąć. Po 30 dniach zostanie usunięte na stałe.",
+      "body": "Usunięte dokumenty zostają w sekcji Ostatnio usunięte przez {days} dni, a potem są usuwane na stałe.",
       "action": "Usuń"
+    },
+    "trash": {
+      "title": "Ostatnio usunięte",
+      "subtitle": "Usunięte dokumenty zostają tu przez {days} dni, a potem są usuwane na stałe.",
+      "back": "Dokumenty",
+      "entryLabel": "Ostatnio usunięte ({count})",
+      "loadError": "Nie udało się wczytać sekcji Ostatnio usunięte.",
+      "emptyTitle": "Brak elementów w sekcji Ostatnio usunięte",
+      "emptyDescription": "To, co usuniesz, czeka tu {days} dni, zanim zostanie usunięte na stałe.",
+      "count": "Usunięte dokumenty ({count})",
+      "restoreAll": "Przywróć wszystkie",
+      "restore": "Przywróć",
+      "purge": "Usuń teraz",
+      "deletedOn": "Usunięto {date}.",
+      "removesIn": "Zostanie usunięty na stałe za {days} dni.",
+      "removesSoon": "Zostanie usunięty na stałe w ciągu doby.",
+      "restored": "Przywrócono dokument",
+      "openRestored": "Otwórz",
+      "restoreDuplicate": "Identyczny dokument jest już zapisany, więc tej kopii nie można przywrócić.",
+      "restorePartial": "Nie udało się przywrócić {failed} z {total}",
+      "purged": "Dokument usunięty na stałe",
+      "purgeFailed": "Nie udało się usunąć dokumentu.",
+      "purgeConfirmTitle": "Usunąć ten dokument na stałe?",
+      "purgeConfirmBody": "Zostanie usunięty teraz zamiast po okresie oczekiwania i nie będzie można go przywrócić."
     }
   },
   "selfDescription": {
@@ -11883,10 +12320,12 @@
       }
     },
     "hydration": {
-      "referenceMeta": "Zalecane spożycie {value} {unit}/dzień (EFSA)"
+      "referenceMeta": "Zalecane spożycie {value} {unit}/dzień (EFSA)",
+      "loadError": "Nie udało się załadować wody."
     },
     "caffeine": {
-      "ceilingMeta": "Bezpieczny limit {value} {unit}/dzień (EFSA)"
+      "ceilingMeta": "Bezpieczny limit {value} {unit}/dzień (EFSA)",
+      "loadError": "Nie udało się załadować kofeiny."
     },
     "micronutrients": {
       "title": "Witaminy i minerały",
@@ -11995,6 +12434,8 @@
       "logDose": "Zapisz dawkę",
       "reconnect": "Połącz ponownie",
       "viewCheckups": "Zobacz badania",
+      "viewAppointment": "Zobacz wizytę",
+      "viewAppointments": "Zobacz wizyty",
       "checkinKeep": "Zachowaj",
       "checkinAdjust": "Dostosuj",
       "checkinLetGo": "Odpuść",
@@ -12174,7 +12615,10 @@
     "leafVisits": "Wizyty lekarskie",
     "leafSurgicalHistory": "Historia operacji",
     "leafImmunizations": "Szczepienia",
-    "leafEmergency": "Informacje na wypadek nagły (grupa krwi, kontakty, oświadczenia)"
+    "leafEmergency": "Informacje na wypadek nagły (grupa krwi, kontakty, oświadczenia)",
+    "leafMedicationEffect": "Zmiana wokół rozpoczęcia każdego leku (wymaga listy leków)",
+    "leafWorkouts": "Treningi (podsumowanie według dyscypliny)",
+    "leafHrvSdnn": "HRV (SDNN)"
   },
   "recordSharing": {
     "banner": {
@@ -12260,7 +12704,7 @@
       "errorFailed": "Nie udało się wysłać zaproszenia. Spróbuj ponownie.",
       "errorScope": "Tych sekcji nie da się udostępnić w ten sposób. Wybierz co najmniej jedną sekcję albo udostępnij całą kartotekę.",
       "errorManageBrowserOnly": "Dostęp zarządzający można przyznać tylko w przeglądarce.",
-      "errorStepUp": "Potwierdź drugi składnik logowania i spróbuj ponownie.",
+      "errorStepUp": "Potwierdź drugi składnik logowania albo klucz dostępu i spróbuj ponownie.",
       "errorOffline": "To nie dotarło do serwera. Twoje zaproszenie nadal tu jest. Sprawdź połączenie i spróbuj ponownie."
     },
     "given": {
@@ -12303,8 +12747,7 @@
       "loadError": "Nie udało się wczytać aktywności.",
       "opened": "{name} otworzył twoją kartę {count}×",
       "acted": "{name} wprowadził zmianę w twojej karcie",
-      "deletedAccount": "Usunięte konto",
-      "truncated": "Ta lista pokazuje najnowszą aktywność, a nie całą."
+      "deletedAccount": "Usunięte konto"
     },
     "delegate": {
       "addOnlyNote": "Możesz dodawać wpisy do tej karty. Zmieniać je i usuwać może tylko {name}."
@@ -12337,7 +12780,7 @@
       "create": "Utwórz profil",
       "creating": "Tworzenie…",
       "created": "{name} jest gotowy. Do tej karty przejdziesz z menu konta.",
-      "errorStepUp": "Potwierdź drugi składnik logowania i spróbuj ponownie.",
+      "errorStepUp": "Potwierdź drugi składnik logowania albo klucz dostępu i spróbuj ponownie.",
       "errorOffline": "To nie dotarło do serwera. Nic się nie zmieniło. Sprawdź połączenie i spróbuj ponownie.",
       "errorInvalid": "Serwer odrzucił te dane. Sprawdź nazwę, datę i strefę czasową.",
       "errorFailed": "Nie udało się utworzyć profilu.",
@@ -12376,7 +12819,7 @@
       "guardianErrorNoAccount": "W tej instancji nie ma konta o takiej nazwie ani takim adresie e-mail.",
       "guardianErrorRateLimit": "Zbyt wiele zaproszeń w ostatniej godzinie. Odczekaj chwilę i spróbuj ponownie.",
       "guardianErrorFailed": "Nie udało się wysłać zaproszenia.",
-      "errorMfaRequired": "To wymaga drugiego składnika logowania, a Twoje konto jeszcze go nie ma. Skonfiguruj go w Ustawieniach → Bezpieczeństwo i spróbuj ponownie.",
+      "errorMfaRequired": "To wymaga drugiego składnika logowania albo klucza dostępu, a Twoje konto nie ma jeszcze żadnego z nich. Skonfiguruj jeden w Ustawieniach → Bezpieczeństwo i spróbuj ponownie.",
       "rosterLoadError": "Nie udało się wczytać, kto opiekuje się tą kartą.",
       "errorRateLimit": "Zbyt wiele profili utworzonych w ostatniej godzinie. Odczekaj chwilę i spróbuj ponownie.",
       "handover": {
@@ -12420,7 +12863,8 @@
         "entryHint": "Gdy {name} chce samodzielnie prowadzić tę kartę.",
         "methodSso": "{name} loguje się przez logowanie jednokrotne (SSO), gdy użyje linku.",
         "methodBoth": "{name} może ustawić hasło albo zalogować się przez logowanie jednokrotne (SSO)."
-      }
+      },
+      "deleteBodyGrace": "Wszystko, co zapisano dla {name}, znika razem z profilem: pomiary, leki, dokumenty i notatki. Profil zostaje od razu zablokowany i usunięty po {days} dniach. Do tego czasu administrator tego serwera może cofnąć usunięcie."
     },
     "toast": {
       "savedTo": "Zapisano w karcie użytkownika {name}"
@@ -12475,6 +12919,7 @@
       "practitionerContactRestore": "{name} przywrócił wpis w książce adresowej",
       "illnessDayLogUpsert": "{name} zapisał dzień choroby",
       "medicationUpdate": "{name} zmienił lek",
+      "medicationCourseEnd": "{name} zakończył kurację",
       "medicationDelete": "{name} usunął lek",
       "medicationGlp1Update": "{name} zmienił terapię GLP-1",
       "medicationScheduleCreate": "{name} dodał schemat dawkowania",
@@ -12522,6 +12967,9 @@
       "rejectedDoseUpdate": "{name} próbował zmienić przyjęcie dawki i został odrzucony",
       "rejectedDoseImport": "{name} próbował zaimportować przyjęcia dawek i został odrzucony",
       "rejectedTrackedValue": "{name} próbował zapisać własny pomiar i został odrzucony",
+      "rejectedTrackedValueTypeCreate": "{name} próbował dodać własny typ pomiaru i został odrzucony",
+      "rejectedTrackedValueTypeUpdate": "{name} próbował zmienić własny typ pomiaru i został odrzucony",
+      "rejectedMedicationLayout": "{name} próbował zmienić kolejność listy leków i został odrzucony",
       "deniedDoseImport": "Import przyjęć rozpoczęty przez {name} nie mógł zostać zakolejkowany",
       "anamnesisFactCreate": "{name} dodał fakt z wywiadu zdrowotnego",
       "customMetricCreate": "{name} dodał własny typ pomiaru",
@@ -12720,6 +13168,13 @@
       "noMatchTitle": "Nic nie pasuje do tego filtra",
       "clearFilter": "Wyczyść filtr",
       "loadError": "Nie udało się wczytać zabiegów."
+    },
+    "preparation": {
+      "practitioner": "Od ostatniej wizyty ({name}) {date}",
+      "specialty": "Od ostatniej wizyty ({specialty}) {date}",
+      "kind": "Od ostatniej wizyty tego samego rodzaju ({kind}) {date}",
+      "default": "Ostatnie {days} dni",
+      "defaultReason": "Brak wcześniejszej wizyty w tym samym gabinecie, tej samej specjalizacji lub tego samego rodzaju."
     }
   },
   "checkups": {
@@ -12824,7 +13279,8 @@
     "backgroundScan": "Odczyt w tle. Przy wolnym modelu może to potrwać kilka minut.",
     "waitingForWorker": "Oczekiwanie na proces w tle. Jeśli nic się nie zmienia, worker na serwerze może nie działać.",
     "errorWorkerUnavailable": "Proces w tle jest teraz niedostępny. Spróbuj ponownie za chwilę albo poproś administratora serwera o sprawdzenie go.",
-    "errorTimedOut": "Odczyt trwał dłużej, niż pozwala ustawiony czas odpowiedzi AI. Spróbuj ponownie albo wydłuż czas odpowiedzi w ustawieniach AI."
+    "errorTimedOut": "Odczyt trwał dłużej, niż pozwala ustawiony czas odpowiedzi AI. Spróbuj ponownie albo wydłuż czas odpowiedzi w ustawieniach AI.",
+    "errorReaderBusy": "Czytnik dokumentów jest zajęty innymi zadaniami. Spróbuj ponownie za minutę."
   },
   "symptoms": {
     "add": "Nowy objaw",
@@ -12905,7 +13361,7 @@
     },
     "episode": {
       "title": "Zapisane objawy",
-      "filed": "zapisano przy tej chorobie"
+      "during": "podczas: {illness}"
     }
   },
   "day": {
@@ -12969,7 +13425,6 @@
     "meanOfReadingsFew": "Średnia z {count} pomiarów",
     "meanOfReadingsOther": "Średnia z {count} pomiarów",
     "sinceLastVisit": {
-      "title": "Od ostatniej wizyty {date}",
       "countOne": "1 wpis",
       "countFew": "{count} wpisy",
       "countOther": "{count} wpisów",
@@ -12978,7 +13433,8 @@
       "allOther": "Pokaż wszystkie {count}",
       "fewer": "Pokaż mniej",
       "note": "Zestawione z Twoich wpisów, bez oceny. Każda data otwiera cały dzień.",
-      "report": "Raport lekarski od {date} do dziś"
+      "report": "Raport lekarski od {date} do dziś",
+      "loadError": "Nie udało się załadować tego, co wydarzyło się od ostatniej wizyty."
     },
     "travel": "W podróży",
     "event": {
@@ -13347,6 +13803,219 @@
       "targetLower": "Twój cel, dolna granica",
       "clinicalUpper": "Kliniczna górna granica",
       "clinicalLower": "Kliniczna dolna granica"
+    }
+  },
+  "activityCalendar": {
+    "title": "Kalendarz aktywności",
+    "periodLabel": "Zakres kalendarza",
+    "period": {
+      "week": "Tydzień",
+      "month": "Miesiąc"
+    },
+    "weekRange": "od {start} do {end}",
+    "previous": "Poprzedni okres",
+    "next": "Następny okres",
+    "metricLabel": "Koloruj dni według",
+    "metric": {
+      "steps": "Kroki",
+      "activeMinutes": "Aktywne minuty",
+      "load": "Obciążenie treningowe"
+    },
+    "empty": "W tym okresie nie ma jeszcze kroków, aktywnych minut ani treningów.",
+    "loadError": "Nie udało się wczytać kalendarza aktywności.",
+    "weekGoalsColumn": "Cele tygodniowe",
+    "weekGoalsMet": "Wszystkie cele tygodniowe osiągnięte",
+    "weekGoalsNotMet": "Nie wszystkie cele tygodniowe osiągnięte",
+    "cell": {
+      "steps": "Kroki: {value}",
+      "activeMinutes": "Aktywne minuty: {value}",
+      "workouts": "Treningi: {value} ({sports})"
+    },
+    "level": {
+      "none": "Brak danych",
+      "unrated": "Za mało historii",
+      "low": "Znacznie poniżej twojej normy",
+      "below": "Poniżej twojej normy",
+      "usual": "Mniej więcej jak zwykle",
+      "above": "Powyżej twojej normy",
+      "high": "Znacznie powyżej twojej normy",
+      "in_progress": "Dziś, jeszcze trwa"
+    },
+    "legend": "W porównaniu z twoimi 12 wcześniejszymi tygodniami:",
+    "noBaseline": "Twój zwykły zakres pojawi się po 14 dniach z danymi.",
+    "summary": {
+      "steps": "Kroki: {value}",
+      "activeMinutes": "Aktywne minuty: {value}",
+      "workouts": "Treningi: {value}",
+      "load": "Średnie obciążenie treningowe {value}",
+      "usual": "Twoja norma do tego momentu: {value}",
+      "noUsual": "Za mało wcześniejszych tygodni lub miesięcy do porównania.",
+      "usualThroughYesterday": "Do wczoraj {value}, twoja zwykła wartość do tego dnia {usual}",
+      "firstDay": "Porównanie ze zwykłą wartością pojawi się po zakończeniu pierwszego dnia."
+    },
+    "sportCount": "{sport}: {count}",
+    "goal": {
+      "workoutsPerWeek": "Treningi w tygodniu",
+      "activeMinutesPerWeek": "Aktywne minuty w tygodniu",
+      "stepsPerWeek": "Kroki w tygodniu",
+      "stepsPerMonth": "Kroki w miesiącu"
+    },
+    "goalOf": "{value} z {target}",
+    "setGoals": "Ustaw cele",
+    "editGoals": "Zmień cele",
+    "goalsSheet": {
+      "title": "Cele aktywności",
+      "description": "Zostaw pole puste, jeśli nie chcesz celu.",
+      "none": "Brak celu",
+      "invalid": "Liczba całkowita od {min} do {max}.",
+      "saveError": "Nie udało się zapisać celów."
+    },
+    "crossLink": {
+      "title": "Kalendarz aktywności",
+      "body": "Twoje kroki w tygodniu lub miesiącu na tle twojej normy.",
+      "cta": "Otwórz kalendarz"
+    }
+  },
+  "sourceProvenance": {
+    "title": "Skąd pochodzą wartości",
+    "description": "Które źródło dostarczyło wartość każdego dnia i którego używa twój priorytet źródeł.",
+    "metric": "Pomiar",
+    "day": "Dzień",
+    "dayTitle": "Źródła tego dnia",
+    "loadError": "Nie udało się wczytać źródeł.",
+    "dayEmpty": "Brak wartości tego pomiaru w tym dniu.",
+    "reason": {
+      "only_source": "{source} to jedyne źródło tego dnia.",
+      "highest_on_ladder": "Używane jest {source}: spośród źródeł tego dnia stoi najwyżej w twoim priorytecie źródeł.",
+      "name_tiebreak": "Używane jest {source}: żadnego ze źródeł tego dnia nie ma w twoim priorytecie, więc zdecydowała nazwa.",
+      "not_ranked": "Ten pomiar nie ma priorytetu źródeł: liczą się wartości ze wszystkich źródeł."
+    },
+    "pass": {
+      "lower_on_ladder": "Niżej w twoim priorytecie źródeł.",
+      "not_on_ladder": "Nie ma go w twoim priorytecie źródeł dla tego pomiaru.",
+      "name_tiebreak": "Ta sama pozycja co użyte źródło; zdecydowała nazwa."
+    },
+    "used": "Używane",
+    "readings": "Pomiary: {count}, urządzenia: {devices}",
+    "ladder": "Twoja kolejność dla tego pomiaru: {ladder}",
+    "utcNote": "Źródło jest wybierane na dzień, od północy do północy UTC, tak samo jak na wykresach.",
+    "openSettings": "Zmień kolejność w priorytecie źródeł",
+    "compareTitle": "Porównaj dwa źródła",
+    "range": "Okres",
+    "rangeDays": "{days} dni",
+    "compareNeedsTwo": "W tym okresie tylko jedno źródło ma wartości tego pomiaru.",
+    "side": {
+      "a": "Pierwsze źródło",
+      "b": "Drugie źródło"
+    },
+    "daysBoth": "Dni z oboma",
+    "meanOf": "Średnia z {source}",
+    "meanAbsDiff": "Średnia różnica",
+    "pickedDays": "Użyte dni (pierwsze / drugie)",
+    "pickedSplit": "{a} / {b}",
+    "compareNote": "Średnie liczą tylko dni, w których oba źródła mają wartości, aby porównywać podobne dni. Pogrubiona jest wartość używana na wykresach.",
+    "settingsHint": "Aby zobaczyć, co ta kolejność rozstrzyga dzień po dniu:",
+    "settingsHintLink": "Skąd pochodzą wartości",
+    "metricLink": "Skąd pochodzą te wartości"
+  },
+  "recordImport": {
+    "title": "Wyniki badań i leki z arkusza kalkulacyjnego",
+    "description": "Zaimportuj wyniki badań z wielu lat lub listę leków z pliku CSV.",
+    "detail": "Ty wybierasz, która kolumna zawiera co; HealthLog najpierw sprawdza każdy wiersz i niczego nie importuje bez twojego potwierdzenia. Wiersze, które już są, zostaną pominięte.",
+    "kind": {
+      "labs": "Wyniki badań",
+      "medications": "Leki"
+    },
+    "sheetTitle": {
+      "labs": "Importuj wyniki badań",
+      "medications": "Importuj leki"
+    },
+    "sheetDescription": {
+      "labs": "Markery są przypisywane do twoich, jednostki przeliczane, gdy przeliczenie jest znane.",
+      "medications": "Nazwa, dawka, codzienne godziny, w razie potrzeby, początek i koniec. Inne rytmy ustawisz potem w aplikacji."
+    },
+    "file": "Plik CSV",
+    "template": "Pobierz szablon",
+    "mapping": "Która kolumna zawiera co",
+    "required": "(wymagane)",
+    "notInFile": "Brak w pliku",
+    "column": "Kolumna {n}",
+    "delimiter": "Separator",
+    "delimiterOption": {
+      "comma": "Przecinek",
+      "semicolon": "Średnik",
+      "tab": "Tabulator"
+    },
+    "decimal": "Separator dziesiętny",
+    "decimalOption": {
+      "dot": "Kropka (5.4)",
+      "comma": "Przecinek (5,4)"
+    },
+    "dateOrder": "Format daty",
+    "dateOrderOption": {
+      "iso": "2025-03-01",
+      "dmy": "01.03.2025 (najpierw dzień)",
+      "mdy": "03/01/2025 (najpierw miesiąc)"
+    },
+    "header": "Pierwszy wiersz zawiera nazwy kolumn",
+    "reminders": "Włącz przypomnienia dla zaimportowanych leków",
+    "timezoneNote": "Godziny bez strefy czasowej są czytane w strefie twojego konta. Data bez godziny pozostaje tym dniem kalendarza.",
+    "missing": "Do wyboru: {fields}",
+    "check": "Sprawdź plik",
+    "runIdle": "Importuj",
+    "run": "Importuj wiersze: {count}",
+    "close": "Zamknij",
+    "summaryCheck": "Odczytane wiersze: {rows}. Do zaimportowania: {inserted}, już są: {duplicates}, z problemem: {failed}.",
+    "summaryDone": "Zaimportowane wiersze: {inserted}. Pominięte: {duplicates}, które już były, i {failed} z problemem.",
+    "markersMatched": "Przypisane do twoich markerów:",
+    "markersCreated": "Nowe markery:",
+    "line": "Wiersz {line}",
+    "errorsTruncated": "Wymieniono tylko pierwsze 500 problemów.",
+    "error": {
+      "tooLarge": "Plik jest większy niż 16 MB.",
+      "rateLimited": "Za dużo importów w ostatniej godzinie. Spróbuj później.",
+      "invalid": "Nie udało się odczytać pliku lub wyboru kolumn.",
+      "failed": "Import się nie powiódł. Spróbuj ponownie."
+    },
+    "reason": {
+      "missing_value": "Wymagana komórka jest pusta",
+      "invalid_number": "To nie jest liczba",
+      "ambiguous_number": "Liczbę można odczytać na dwa sposoby; sprawdź separator dziesiętny",
+      "missing_unit": "Liczba wymaga jednostki",
+      "invalid_date": "To nie jest data w wybranym formacie",
+      "invalid_time": "To nie jest godzina",
+      "ambiguous_date": "Datę można odczytać na dwa sposoby; użyj czterocyfrowego roku i wybranego formatu",
+      "future_date": "Data jest w przyszłości",
+      "text_too_long": "Tekst jest za długi",
+      "unit_mismatch": "Tej jednostki nie da się przeliczyć na jednostkę markera",
+      "invalid_reference_range": "Nie można odczytać zakresu referencyjnego",
+      "invalid_times": "Nie można odczytać godzin (np. 08:00 20:00)",
+      "missing_times": "Dodaj godziny przyjmowania albo oznacz lek jako w razie potrzeby",
+      "invalid_yes_no": "Użyj tak lub nie",
+      "as_needed_with_times": "Lek w razie potrzeby nie ma stałych godzin",
+      "end_before_start": "Koniec jest przed początkiem",
+      "invalid_medication": "Nie można tak zapisać leku",
+      "oversized_row": "Wiersz jest za długi lub za szeroki",
+      "row_limit": "Ponad limit wierszy dla jednego importu",
+      "duplicate": "Już jest, pominięto"
+    },
+    "field": {
+      "analyte": "Marker",
+      "value": "Wynik",
+      "unit": "Jednostka",
+      "date": "Data",
+      "time": "Godzina",
+      "referenceRange": "Zakres referencyjny",
+      "referenceLow": "Dolna granica",
+      "referenceHigh": "Górna granica",
+      "panel": "Grupa",
+      "note": "Notatka",
+      "name": "Nazwa",
+      "dose": "Dawka",
+      "times": "Godziny",
+      "asNeeded": "W razie potrzeby",
+      "startsOn": "Początek",
+      "endsOn": "Koniec"
     }
   }
 }

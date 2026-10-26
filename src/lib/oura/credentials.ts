@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — per-user Oura token accessors.
+ * v1.17.0 — per-user Oura token accessors.
  * v1.17.1 — per-user BYO client id/secret resolver (DB-first then env).
  *
  * Like WHOOP / Fitbit, Oura is now a per-user BYO-key integration: each user may
@@ -13,8 +13,7 @@
 import { prisma } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { decrypt, encrypt } from "@/lib/crypto";
-import { persistRotatedToken } from "@/lib/integrations/oauth-refresh";
-import { getOuraCredentials, type OuraCredentials } from "./client";
+import { getOuraCredentials, type OuraCredentials } from "./oauth";
 
 /**
  * Resolve the user's Oura OAuth client id/secret, DB-first then env.
@@ -78,11 +77,10 @@ export async function clearOuraClientCredentials(
 
 export interface OuraConnection {
   accessToken: string;
-  refreshToken: string;
   /**
-   * The exact stored refresh-token ciphertext (NOT the decrypted value). The
-   * rotating-refresh compare-and-swap in `storeOuraTokens` matches on this so a
-   * concurrent sync that already rotated the token is not clobbered.
+   * The exact stored refresh-token ciphertext (NOT the decrypted value).
+   * `refreshOuraAfterRefusal` compares against it under the refresh lock to
+   * tell whether a peer already rotated the token this sync started with.
    */
   refreshTokenCiphertext: string;
   /** Collections the grant was last seen not to cover (`ouraScopeDenied`). */
@@ -105,53 +103,9 @@ export async function getOuraConnection(
   }
   return {
     accessToken: decrypt(user.ouraAccessTokenEncrypted),
-    refreshToken: decrypt(user.ouraRefreshTokenEncrypted),
     refreshTokenCiphertext: user.ouraRefreshTokenEncrypted,
     scopeDenied: readOuraScopeDenied(user.ouraScopeDenied),
   };
-}
-
-/**
- * Persist a rotated Oura token pair with compare-and-swap on the stored refresh
- * ciphertext (the inverse of Fitbit / WHOOP, which key by connection id). Oura's
- * tokens live on `User` and the refresh is REACTIVE on a 401, so two overlapping
- * syncs can race the same one-time-use refresh token. The CAS guard writes only
- * when the stored ciphertext still equals the one this caller spent; on a lost
- * race (0 rows) it re-reads and returns the peer's freshly rotated access token.
- *
- * Returns the access token the caller should use for the current sync (its own
- * on a win, the peer's on a loss), or null if the connection vanished.
- */
-export async function storeOuraTokens(
-  userId: string,
-  accessToken: string,
-  refreshToken: string,
-  expectedRefreshCiphertext: string,
-): Promise<string | null> {
-  return persistRotatedToken(accessToken, {
-    conditionalUpdate: async () => {
-      const { count } = await prisma.user.updateMany({
-        where: {
-          id: userId,
-          ouraRefreshTokenEncrypted: expectedRefreshCiphertext,
-        },
-        data: {
-          ouraAccessTokenEncrypted: encrypt(accessToken),
-          ouraRefreshTokenEncrypted: encrypt(refreshToken),
-        },
-      });
-      return count;
-    },
-    readPeerAccessToken: async () => {
-      const fresh = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { ouraAccessTokenEncrypted: true },
-      });
-      return fresh?.ouraAccessTokenEncrypted
-        ? decrypt(fresh.ouraAccessTokenEncrypted)
-        : null;
-    },
-  });
 }
 
 /**

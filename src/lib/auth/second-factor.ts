@@ -1,4 +1,3 @@
-import type { User } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 
 /**
@@ -19,8 +18,15 @@ import { prisma } from "@/lib/db";
  * a step-up at all. Counting a passkey here would silently pull every
  * passkey-holding account into a gate those routes have never applied to them —
  * a behaviour change to five destructive actions, made in passing, for the
- * benefit of a sixth. `canProveFreshFactor` in `api-handler.ts` is where the wider question
+ * benefit of a sixth. `canProveFreshFactor` in `auth/guards/fresh-factor.ts` is where the wider question
  * lives.
+ *
+ * Since v1.43.3 a passkey DOES count as a second factor where the gate is
+ * unconditional: `requireFreshMfa` defaults to `any-possession`, so a
+ * passkey-only account clears the managed-profile acts with a passkey
+ * re-proof instead of being told to enrol something. That decision was made
+ * there and not here, on purpose; the note beside `FreshFactorProofSource`
+ * lists what it does and does not change.
  */
 export async function hasSecondFactorEnrolled(user: {
   id: string;
@@ -46,19 +52,25 @@ export type RecentProofMethod = "password" | "totp" | "webauthn" | "passkey";
  * endpoint cannot disagree.
  */
 export async function recentProofMethods(
-  user: Pick<User, "id" | "totpConfirmedAt" | "passwordHash">,
+  user: { id: string; totpConfirmedAt: Date | null },
   enrolled?: boolean,
 ): Promise<RecentProofMethod[]> {
   const hasSecond = enrolled ?? (await hasSecondFactorEnrolled(user));
-  const [keys, passkeys] = await Promise.all([
+  // Whether a password exists is read here rather than off the caller's row:
+  // the hash is not part of the per-request user (`SESSION_USER_SELECT`).
+  const [keys, passkeys, credential] = await Promise.all([
     prisma.webauthnMfaCredential.count({ where: { userId: user.id } }),
     prisma.passkey.count({ where: { userId: user.id } }),
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: { passwordHash: true },
+    }),
   ]);
   const methods: RecentProofMethod[] = [];
   if (hasSecond) {
     if (user.totpConfirmedAt) methods.push("totp");
     if (keys > 0) methods.push("webauthn");
-  } else if (user.passwordHash) {
+  } else if (credential?.passwordHash) {
     methods.push("password");
   }
   if (passkeys > 0) methods.push("passkey");

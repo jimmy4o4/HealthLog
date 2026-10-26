@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toastWrittenOutcome } from "@/components/outcome/outcome-toast";
 import {
   AlertTriangle,
   Check,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Input } from "@/components/ui/input";
 import { SettingsCard } from "@/components/settings/settings-card";
 import { SettingsCardHeader } from "@/components/settings/_card-header";
@@ -43,6 +45,7 @@ import {
 } from "@/lib/api/api-fetch";
 import { describePasskeyError } from "@/lib/passkey-errors";
 import { describeStepUp } from "./security-keys-card";
+import { ReproofCancelledError, useRecentProof } from "./use-recent-proof";
 
 interface PasskeyInfo {
   id: string;
@@ -141,6 +144,7 @@ export function PasskeyListSection({
       setReauthSecret("");
       setReauthMethod("password");
       queryClient.invalidateQueries({ queryKey: queryKeys.passkeys() });
+      toastWrittenOutcome("success", t("settings.passkeyAddedToast"));
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -164,22 +168,31 @@ export function PasskeyListSection({
     onError: (err: Error) => setMsg(err.message),
   });
 
+  // Removal is step-up gated: a second factor, or on a passkey-only account a
+  // passkey, proved within five minutes. The server names what clears it and
+  // the shared dialog collects that, then the removal runs again.
+  const recentProof = useRecentProof({
+    description: t("settings.reproof.descriptionChange"),
+  });
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      await apiDelete(`/api/auth/passkeys/${id}`);
+      await recentProof.run(() => apiDelete(`/api/auth/passkeys/${id}`));
     },
     onSuccess: () => {
       setMsg(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.passkeys() });
+      toastWrittenOutcome("success", t("settings.passkeyRemovedToast"));
     },
-    // Removal is step-up gated. The server's own prose says "second-factor",
-    // which is wrong for the passkey-only account this card mostly serves — the
-    // credential to re-prove is the passkey — so the refusal gets its own
-    // sentence naming the recovery that exists on the web: sign in again.
-    onError: (err: Error) =>
+    // A refusal the dialog could not take up keeps its own sentence. The
+    // server's prose says "second-factor", which is wrong for the passkey-only
+    // account this card mostly serves, so it names the recovery that always
+    // exists on the web: sign in again.
+    onError: (err: Error) => {
+      if (err instanceof ReproofCancelledError) return;
       setMsg(
         describeStepUp(err, err.message, t("settings.passkeyStepUpRequired")),
-      ),
+      );
+    },
   });
 
   const DEVICE_TYPE_LABELS: Record<string, string> = {
@@ -189,6 +202,7 @@ export function PasskeyListSection({
 
   return (
     <SettingsCard>
+      {recentProof.dialog}
       <SettingsCardHeader
         anchor="passkeys"
         icon={Fingerprint}
@@ -298,46 +312,21 @@ export function PasskeyListSection({
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground hover:text-foreground min-h-11 min-w-11 sm:h-8 sm:min-h-0 sm:w-8 sm:min-w-0"
-                            disabled={remove.isPending}
-                            aria-label={t("settings.deletePasskey")}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              {t("settings.deletePasskey")}
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {t("settings.deletePasskeyDescription")}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>
-                              {t("common.cancel")}
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              variant="destructive"
-                              disabled={remove.isPending}
-                              aria-busy={remove.isPending || undefined}
-                              onClick={() => remove.mutate(pk.id)}
-                            >
-                              {remove.isPending && (
-                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-                              )}
-                              {t("common.delete")}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <ConfirmButton
+                        label=""
+                        ariaLabel={t("settings.deletePasskey")}
+                        title={t("settings.deletePasskey")}
+                        body={t("settings.deletePasskeyDescription")}
+                        confirmLabel={t("common.delete")}
+                        onConfirm={() => remove.mutate(pk.id)}
+                        pending={remove.isPending && remove.variables === pk.id}
+                        disabled={remove.isPending}
+                        size="icon"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-foreground min-h-11 min-w-11 sm:h-8 sm:min-h-0 sm:w-8 sm:min-w-0"
+                        icon={<Trash2 className="h-4 w-4" />}
+                        destructive
+                      />
                     </div>
                   )}
                 </div>

@@ -1,5 +1,5 @@
 /**
- * v1.30.3 (QA F2/F3) — `buildPeriodNarrativeContext` (the DB wrapper) must:
+ * v1.30.3 — `buildPeriodNarrativeContext` (the DB wrapper) must:
  *   - order its measurement read DESC + cap, resorting ASC before folding,
  *     so a dense account's cap falls on the OLDEST rows and never drops
  *     the CURRENT period (F2 — the asc+take(20000) cap used to drop the
@@ -38,6 +38,11 @@ vi.mock("@/lib/modules/gate", () => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    // v1.44 — the extended channel families (intake, training, room climate).
+    nutrientIntakeDay: { findMany: async () => [] },
+    workout: { findMany: async () => [] },
+    strainTrimpCache: { findMany: async () => [] },
+    $queryRaw: async () => [],
     user: { findUnique: (a: unknown) => userFindUnique(a) },
     measurement: { findMany: (a: unknown) => measurementFindMany(a) },
     moodEntry: { findMany: (a: unknown) => moodFindMany(a) },

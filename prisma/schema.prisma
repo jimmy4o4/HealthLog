@@ -77,6 +77,25 @@ model User {
   /// delivery fanout after it defines consent and preference semantics.
   managedProfileAt DateTime? @map("managed_profile_at")
 
+  /// When deletion of this account was asked for. Non-null means the
+  /// account is pending deletion: it is locked (every session, refresh token
+  /// and API token was revoked in the same transaction, and sign-in is
+  /// refused), every background pass skips it (`ACTIVE_ACCOUNT`,
+  /// `src/lib/account-deletion/active-account.ts`), and its data, stored
+  /// copies and off-host objects stay untouched until `deletionPurgeAt`. An
+  /// admin can undo it until then. Null on every account nobody asked to
+  /// delete. Readers: the session and Bearer resolvers, the sign-in refusal,
+  /// the admin users list and the undo route.
+  deletionRequestedAt   DateTime? @map("deletion_requested_at")
+  /// When the account-deletion purge job erases the account for good:
+  /// `deletionRequestedAt` plus `ACCOUNT_DELETION_GRACE_DAYS`. The sign-in
+  /// refusal names this date. Reader: `processDueAccountDeletions`.
+  deletionPurgeAt       DateTime? @map("deletion_purge_at")
+  /// Who asked: the account itself, or the Guardian who deleted a
+  /// managed profile. A plain id, not a relation: the requester's own
+  /// deletion must not touch this row. Reader: the admin users list.
+  deletionRequestedById String?   @map("deletion_requested_by_id")
+
   // Profile
   heightCm    Float?    @map("height_cm")
   dateOfBirth DateTime? @map("date_of_birth")
@@ -118,50 +137,54 @@ model User {
   environmentAqHistoryJson     Json?     @map("environment_aq_history_json")
 
   // Codex OAuth (ChatGPT subscription)
-  codexAccessTokenEncrypted  String?   @map("codex_access_token_encrypted")
-  codexRefreshTokenEncrypted String?   @map("codex_refresh_token_encrypted")
+  codexAccessTokenEncrypted   String?   @map("codex_access_token_encrypted")
+  codexRefreshTokenEncrypted  String?   @map("codex_refresh_token_encrypted")
   /// @internal: dead mirror of the expiry inside the encrypted Codex creds —
   /// the refresh path reads the decrypted blob's own `expiresAt`
   /// (`src/lib/ai/provider.ts`), never this column. Kept (and kept written)
   /// for wire/backup compatibility rather than dropped.
-  codexTokenExpiresAt        DateTime? @map("codex_token_expires_at")
-  codexConnectedAt           DateTime? @map("codex_connected_at")
-  codexConnectionStatus      String    @default("disconnected") @map("codex_connection_status")
+  codexTokenExpiresAt         DateTime? @map("codex_token_expires_at")
+  codexConnectedAt            DateTime? @map("codex_connected_at")
+  codexConnectionStatus       String    @default("disconnected") @map("codex_connection_status")
   // Per-user opt-in to the operator's shared central Codex (ChatGPT
   // subscription) connection stored on `AppSettings.adminCodex*`. OFF by
   // default; only takes effect when the operator has actually connected the
   // central Codex. Routing through it is external egress on a shared,
   // train-by-default account bound by the operator's rate limits — consent-gated
   // exactly like any other server-managed egress.
-  useCentralCodex            Boolean   @default(false) @map("use_central_codex")
-  insightsPrivacyMode        String    @default("aggregated") @map("insights_privacy_mode") // "aggregated" | "raw"
-  insightsCachedAt           DateTime? @map("insights_cached_at")
-  insightsCachedText         String?   @map("insights_cached_text") // cached JSON output
+  useCentralCodex             Boolean   @default(false) @map("use_central_codex")
+  insightsPrivacyMode         String    @default("aggregated") @map("insights_privacy_mode") // "aggregated" | "raw"
+  insightsCachedAt            DateTime? @map("insights_cached_at")
+  /// v1.43.7 — the cached AI insights payload (briefing, per-domain readings,
+  /// recommendations; JSON), AES-256-GCM binary layout under
+  /// `INSIGHTS_CACHED_TEXT_AAD`. Read and written only through
+  /// `src/lib/insights/cached-text-cipher.ts`.
+  insightsCachedTextEncrypted Bytes?    @map("insights_cached_text_encrypted")
   // Language the cached text was generated in. The cache is one slot per
   // user, so a reader in another language must not be served it: the
   // snapshot briefing lift and the advisor read treat a tag that differs
   // from the reader's locale as an empty cache and re-warm in the reader's.
   // NULL on rows written before the tag existed (treated as matching; the
   // next write tags it).
-  insightsCachedLocale       String?   @map("insights_cached_locale")
+  insightsCachedLocale        String?   @map("insights_cached_locale")
   // v1.16.8 — SHA-256 fingerprint of the compacted feature snapshot the
   // cached comprehensive text was generated from. Nightly / forced / lazy
   // regenerations compare the fresh snapshot's hash against this and skip
   // the provider call (refreshing only `insightsCachedAt`) when nothing
   // the prompt sees has changed.
-  insightsSnapshotHash       String?   @map("insights_snapshot_hash")
+  insightsSnapshotHash        String?   @map("insights_snapshot_hash")
   // v1.16.8 — last time a forced full warm's comprehensive step failed or
   // timed out. The forced warm path backs off for an hour after a failure
   // so a persistently broken provider chain cannot be re-driven into a
   // full generation attempt by every page-open.
-  insightsWarmFailedAt       DateTime? @map("insights_warm_failed_at")
+  insightsWarmFailedAt        DateTime? @map("insights_warm_failed_at")
   // v1.18.7 — UTC YYYY-MM-DD of the last daily-briefing phrasing re-roll.
   // The content-hash gate keeps the FINDINGS byte-stable on unchanged data,
   // but the daily-briefing PARAGRAPH is re-rolled once per calendar day at a
   // higher, seedless temperature so the prose reads fresh day-over-day
   // without re-paying for the findings. This stamps the day a re-roll ran so
   // the gate stays at most one extra call per day.
-  insightsBriefingRerollDate String?   @map("insights_briefing_reroll_date")
+  insightsBriefingRerollDate  String?   @map("insights_briefing_reroll_date")
   // Morning-freshness marker: the user-local YYYY-MM-DD (their profile
   // timezone) for which the event-driven morning refresh has run — i.e. last
   // night's sleep has arrived AND the sleep-dependent insight/score cache was
@@ -170,13 +193,13 @@ model User {
   // `morning-digest-refresh` job the sleep-arrival trigger enqueues; the
   // string form makes the "same local morning" comparison timezone-honest
   // without a second timestamp read.
-  morningDigestRefreshedOn   String?   @map("morning_digest_refreshed_on")
+  morningDigestRefreshedOn    String?   @map("morning_digest_refreshed_on")
   // v1.4.36 W3 T3 — per-user AI Insights exclude-metrics list, mirrors
   // `coachPrefsJson.excludeMetrics`. The /api/insights/generate route
   // filters matching keys off `features` before JSON.stringify so the
   // model never sees data the user opted out of. Default `[]` = legacy
   // behaviour for every existing row.
-  insightsExcludeMetrics     String[]  @default([]) @map("insights_exclude_metrics")
+  insightsExcludeMetrics      String[]  @default([]) @map("insights_exclude_metrics")
 
   // v1.8.5 — user-level injection-site deny-list. Sites listed here are
   // never offered for ANY medication's injection-site picker and the
@@ -266,22 +289,44 @@ model User {
   // v1.17.0 — Oura OAuth credentials (F4, per-user, encrypted at app level).
   // Mirrors the WHOOP credential columns; OAuth access/refresh tokens stored
   // encrypted.
-  ouraAccessTokenEncrypted  String? @map("oura_access_token_encrypted")
-  ouraRefreshTokenEncrypted String? @map("oura_refresh_token_encrypted")
+  ouraAccessTokenEncrypted  String?   @map("oura_access_token_encrypted")
+  ouraRefreshTokenEncrypted String?   @map("oura_refresh_token_encrypted")
   // v1.17.1 — Oura BYO-app client credentials (W1c, per-user, encrypted at app
   // level). Mirrors the WHOOP/Fitbit `clientId`/`clientSecret` columns 1:1 so a
   // self-hoster pastes their own Oura Cloud app's client id/secret into Settings
   // before the OAuth connect flow runs. Stored encrypted as a string via
   // `src/lib/crypto.ts`, matching every other `*Encrypted` column.
-  ouraClientIdEncrypted     String? @map("oura_client_id_encrypted")
-  ouraClientSecretEncrypted String? @map("oura_client_secret_encrypted")
+  ouraClientIdEncrypted     String?   @map("oura_client_id_encrypted")
+  ouraClientSecretEncrypted String?   @map("oura_client_secret_encrypted")
   /// v1.42.3 — Oura collections the current grant does not cover, as a JSON
   /// string array of collection names (`spo2`, `vo2max`, `cardio_age`,
   /// `resilience`). Written by the sync when a collection answers 401/403 while
   /// its siblings succeed with the same token, which is a scope the grant never
   /// carried, not a dead token. The Oura card reads it to ask for one
   /// reconnect. Cleared on connect, disconnect and credential removal.
-  ouraScopeDenied           Json?   @map("oura_scope_denied")
+  ouraScopeDenied           Json?     @map("oura_scope_denied")
+  /// v1.44 — how far the Oura history backfill has got: per collection, the
+  /// day its next window ends on, and whether it is done or refused for a
+  /// scope; plus where the account's history starts once learned. Written
+  /// after every window so a slice resumes where the last one stopped (see
+  /// `src/lib/oura/backfill-progress.ts`); kept after completion so a
+  /// reconnect reads only what the old grant refused.
+  ouraBackfillProgress      Json?     @map("oura_backfill_progress")
+  /// v1.44 — the Oura history backfill finished (self-converging discovery
+  /// predicate `oura_backfill_completed_at IS NULL`). Cleared on connect.
+  ouraBackfillCompletedAt   DateTime? @map("oura_backfill_completed_at")
+  /// v1.44 — the Oura account id (`personal_info.id`) of the current grant,
+  /// read at connect when the `personal` scope is granted. A connect whose
+  /// account another record already holds is refused
+  /// (`src/lib/integrations/oauth-kit/account-link.ts`). Cleared on disconnect.
+  ouraUserId                String?   @map("oura_user_id")
+  /// v1.44 — which provider apps on this record were copied from a
+  /// guardian at connect, and from whom: `{ "<provider>": "<guardianUserId>" }`.
+  /// A managed profile has no settings page for its own app, so a guardian's is
+  /// borrowed (`shareGuardianClientApp`). The copy is removed again when the
+  /// provider is disconnected or that guardian no longer holds a live MANAGE
+  /// grant on the record (`src/lib/integrations/oauth-kit/connect-target.ts`).
+  clientAppSharedBy         Json?     @map("client_app_shared_by")
 
   // v1.28.x — Strava OAuth credentials (per-user BYO-app, encrypted at app
   // level). Strava caps every newly-created API app at single-player mode
@@ -305,6 +350,11 @@ model User {
   // First-connect full-history backfill marker (self-converging discovery
   // predicate `strava_backfill_completed_at IS NULL`), mirroring WHOOP/Fitbit.
   stravaBackfillCompletedAt   DateTime? @map("strava_backfill_completed_at")
+  // Where an unfinished backfill picks up: the start of the oldest activity
+  // the last run read. A history longer than one run's page ceiling is read
+  // in runs that each walk further back from here, instead of every run
+  // starting again at the newest page. Cleared when the backfill completes.
+  stravaBackfillResumeBefore  DateTime? @map("strava_backfill_resume_before")
 
   // Locale (null = use system/admin default)
   locale String? @map("locale") // "de" | "en" | null
@@ -348,6 +398,20 @@ model User {
   // Shape: { "groupOrder": ["<categoryKey>", ...],
   //          "placements": { "<categoryKey>": ["<tagKey>", ...] } }
   moodTagLayoutJson        Json?                @map("mood_tag_layout_json")
+  // Per-user list presentation for the labs, illness and checkups lists:
+  // card/list view, manual order, and (labs only) the sort. One blob keyed by
+  // list, resolved field by field on read (`src/lib/settings/module-list-layout.ts`),
+  // preserve-when-absent PUT on `/api/settings/module-list-layout`. Null = the
+  // defaults. Earlier releases kept the same choices in the browser; the client
+  // copies a stored browser value up once when the server has none for that list.
+  // Shape: { "version": 1, "labs": { "view": "list", "order": ["<id>"], "sortDir": "manual" }, ... }
+  moduleListLayoutJson     Json?                @map("module_list_layout_json")
+  /// Optional activity goals the person set for themselves: workouts, active
+  /// minutes and steps per week, steps per month. Null or an absent key = no
+  /// goal. Parsed by `src/lib/validations/activity-goals.ts`, written through
+  /// `/api/activity/goals`, read by the activity calendar
+  /// (`/api/activity/calendar`), which reports progress against each goal set.
+  activityGoalsJson        Json?                @map("activity_goals_json")
   // Blood-glucose display unit preference. Canonical storage is mg/dL.
   glucoseUnit              String?              @map("glucose_unit") // "mg/dL" | "mmol/L" | null = default "mg/dL"
   // v1.18.6 — explicit "I have diabetes / clinician glucose targets" opt-in.
@@ -365,6 +429,12 @@ model User {
   // review screen remains the safety backstop. Default `false`; vision-capable
   // users keep the higher-accuracy native path and never pay the WASM download.
   labsLocalOcrEnabled      Boolean              @default(false) @map("labs_local_ocr_enabled")
+  /// v1.44 — keep the GPS track of a workout. OFF by default: a route is
+  /// where a person lives, works and runs, so it is stored only after they
+  /// opt in. Read by the workout batch route and the export.zip import, which
+  /// drop the track while it is off (the workout itself is always kept).
+  /// Never read by any AI path; the AI egress guard freezes the route readers.
+  storeWorkoutRoutes       Boolean              @default(false) @map("store_workout_routes")
   // v1.7.0 unit pref — global metric/imperial display preference.
   // Canonical storage stays SI; this only selects the display-time
   // transform branch (km/h vs mph, km vs mi). Null = default "metric".
@@ -881,11 +951,6 @@ model User {
   // read serves from this table instead of the unbounded
   // MoodEntry.findMany walk.
   moodEntryRollups                          MoodEntryRollup[]
-  // v1.4.39 W-MED — per-(user, medication, day) compliance rollup.
-  // Per-write hook on MedicationIntakeEvent mutations + the scheduler
-  // keep the row in sync so `/api/medications/intake?scope=compliance`
-  // and `computeUserHealthScoreFastPath` skip the per-event findMany.
-  medicationComplianceRollups               MedicationComplianceRollup[]
   // v1.4.40 SB-10 — AI consent receipts the iOS app POSTs when the user
   // grants AI processing during onboarding. Persisted audit trail
   // covers App-Store Guideline 5.1.2(i) ("data-collection consent must
@@ -1108,6 +1173,7 @@ model User {
   // OIDC key (both NULL on accounts that never signed in via SSO; Postgres
   // unique indexes ignore NULL pairs).
   @@unique([oidcIssuer, oidcSub])
+  @@index([deletionPurgeAt], map: "users_deletion_purge_at_idx")
   @@map("users")
 }
 
@@ -1237,7 +1303,6 @@ model EnvironmentContext {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([userId, date])
-  @@index([userId, date])
   // `environment_contexts_aq_gap_idx` (user_id, date) WHERE aq_fetched_at IS
   // NULL is a partial index from migration 0381 (raw SQL only).
   @@map("environment_contexts")
@@ -1289,6 +1354,8 @@ model Passkey {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("passkeys")
 }
 
@@ -1473,7 +1540,6 @@ model UserKnownDevice {
   // twice for one account, so the "first sighting → alert" decision is a
   // single unique-constrained upsert.
   @@unique([userId, deviceHash])
-  @@index([userId])
   @@map("user_known_devices")
 }
 
@@ -1699,6 +1765,24 @@ enum MeasurementType {
   // Note the inverted direction versus PHQ-9 / GAD-7: HIGHER is better for both.
   WHO5_SCORE // score (0–100) — WHO-5 well-being percentage (raw 0–25 × 4). Opt-in. See MentalHealthAssessment.
   SCI_SCORE // score (0–32) — Sleep Condition Indicator total; higher = better sleep. Opt-in. See MentalHealthAssessment.
+  // ── v1.44 — Apple Health activity rings, mindfulness, mood and AFib burden ──
+  // All five arrive over POST /api/measurements/batch and the export.zip import.
+  // The minute and hour types are cumulative (daily SUM); AFib burden and the
+  // State of Mind valence are spot readings.
+  EXERCISE_MINUTES // minutes — HealthKit `appleExerciseTime`. The activity ring's exercise minutes; cumulative, daily SUM.
+  STAND_MINUTES // minutes — HealthKit `appleStandTime`. Minutes spent standing; cumulative, daily SUM.
+  STAND_HOURS // count — HealthKit `HKCategoryTypeIdentifierAppleStandHour`. One row per hour in which the person stood (`stood` = 1; an `idle` hour is not stored); cumulative, daily SUM gives the stand-ring hours.
+  MINDFUL_MINUTES // minutes — HealthKit `HKCategoryTypeIdentifierMindfulSession`. Session length from the sample's own dates; cumulative, daily SUM.
+  STATE_OF_MIND_VALENCE // valence (−1..1) — HealthKit `HKStateOfMind.valence` (iOS 18+). How pleasant the logged emotion or mood felt, from very unpleasant (−1) to very pleasant (1). A self-report, not a measurement.
+  // ── v1.44 — room climate from a home automation system ──
+  // Pushed through the ingest token (`measurements:write`, source EXTERNAL),
+  // e.g. by a Home Assistant automation. Spot readings: the daily rollup
+  // carries mean, min and max. Indoor, so never mixed with the outdoor
+  // environment channels.
+  INDOOR_CO2 // ppm — indoor carbon dioxide concentration.
+  INDOOR_TEMPERATURE // celsius — indoor air temperature. Distinct from every body temperature type.
+  INDOOR_HUMIDITY // percent (0–100) — indoor relative humidity.
+  AFIB_BURDEN // percent (0–100, scaled ×100 from Apple's 0..1 fraction) — HealthKit `atrialFibrillationBurden` (iOS 16+, AFib History). The share of time the watch estimated in AFib over a week. AWARENESS ONLY — never a HealthLog diagnosis.
 
   @@map("measurement_type")
 }
@@ -1739,9 +1823,16 @@ model MentalHealthAssessment {
   id                 String               @id @default(cuid())
   userId             String               @map("user_id")
   instrument         AssessmentInstrument
-  /// The validated translation actually presented (officially-validated wording
-  /// per locale, English fallback otherwise — recorded for the audit trail).
+  /// The reader's app language when the administration was taken. It selects
+  /// the crisis-resource copy; with `wording` it says which text was shown.
   locale             String
+  /// Which text the answers were given in: "validated" (the published
+  /// validated version for `locale`, the original for English),
+  /// "unvalidated_translation" (the app's own translation, shown with a note)
+  /// or "original_en" (the English original, chosen by a reader of another
+  /// language). Null on rows recorded before it was stored. Closed set:
+  /// ASSESSMENT_WORDINGS in src/lib/mental-health/instrument-wording.ts.
+  wording            String?
   /// Instrument variant identifier (e.g. "standard"); future-proofs revisions.
   version            String               @default("standard")
   /// Encrypted JSON blob: { items: number[], functionalDifficulty?: 0..3, schema: 1 }.
@@ -2042,8 +2133,15 @@ model Measurement {
   deletedAt             DateTime?                         @map("deleted_at")
   createdAt             DateTime                          @default(now()) @map("created_at")
   updatedAt             DateTime                          @updatedAt @map("updated_at")
+  /// The `measurements:write` token that carried this reading, set on every
+  /// `EXTERNAL` row (#1272). Read through to the token's `mirrorToAppleHealth`
+  /// when the row is answered; never on the wire itself. SET NULL if the token
+  /// row is ever removed (a revoke keeps it), and the row then stops being
+  /// mirrored.
+  ingestTokenId         String?                           @map("ingest_token_id")
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ingestToken   ApiToken?      @relation(fields: [ingestTokenId], references: [id], onDelete: SetNull)
   // v1.19.0 — optional back-relation to the full ECG waveform recording(s)
   // paired with this EVENT row. SET NULL on the FK side keeps the trace if
   // the EVENT row is re-keyed / removed.
@@ -2077,7 +2175,6 @@ model Measurement {
   // v1.4.23 — Apple Health batch dedup key. NULL externalId is distinct
   // (Postgres semantics) so manual entries don't collide here.
   @@unique([userId, type, source, externalId])
-  @@index([userId, type, measuredAt])
   // v1.25 — type-less `(userId, measuredAt)` range scan. The bulk feature read
   // (`extractFeatures`) and consolidation scans walk a user's measurements by
   // time with no `type` predicate; `(userId, type, measuredAt)` can't serve
@@ -2094,7 +2191,15 @@ model Measurement {
   // limit+1`. Without this index Postgres filters by `userId` then sorts
   // the user's entire measurement set per page; the delta drain allows
   // 120 pulls/min/user. See migration 0096.
+  // Because `updatedAt` is indexed here, an update that moves it can never
+  // be heap-only. The trigger `measurements_noop_update_keeps_stamps`
+  // (migration 0412) keeps `updatedAt` and `syncVersion` on an update that
+  // changes nothing else, so those stay HOT; the table also carries
+  // `fillfactor = 85` and a 5 % autovacuum threshold from the same migration.
   @@index([userId, updatedAt, id])
+  // The rows a token carried, walked by the `measurementMirror` feed domain
+  // in id order and by the FK's SET NULL (migration 0477).
+  @@index([ingestTokenId, id])
   // `measurements_legacy_step_consolidation_idx` is a partial index
   // over `type = 'ACTIVITY_STEPS' AND deleted_at IS NULL` — see
   // migration 0087. It accelerates the v1.5.6 legacy step-consolidation
@@ -2238,31 +2343,31 @@ enum RollupGranularity {
 }
 
 model MeasurementRollup {
-  userId      String            @map("user_id")
-  type        MeasurementType
-  granularity RollupGranularity
-  bucketStart DateTime          @map("bucket_start") @db.Timestamptz(3)
+  userId          String            @map("user_id")
+  type            MeasurementType
+  granularity     RollupGranularity
+  bucketStart     DateTime          @map("bucket_start") @db.Timestamptz(3)
   /// v1.11.1 — source-aware grain. Rollup rows are minted per source so the
   /// read path can collapse overlapping sources (e.g. WHOOP + Apple Watch
   /// resting heart rate) to the ladder-canonical reading, while cumulative
   /// metrics (steps, energy) sum per source. Always non-null; migration 0115
   /// purged the legacy source-blind aggregates and the boot backfill re-mints
   /// per-source rows.
-  source      MeasurementSource
-  count       Int
-  mean        Float
-  minValue    Float             @map("min_value")
-  maxValue    Float             @map("max_value")
-  sd          Float?
-  slope       Float?
-  r2          Float?
+  source          MeasurementSource
+  count           Int
+  mean            Float
+  minValue        Float             @map("min_value")
+  maxValue        Float             @map("max_value")
+  sd              Float?
+  slope           Float?
+  r2              Float?
   /// v1.4.39 W-SUM — cumulative-metric sum for the bucket. Populated
   /// alongside `mean / count` for every type; cumulative read paths
   /// (steps, flights, distance, daylight, active-energy) consume this
   /// directly instead of re-deriving from raw measurements. Nullable
   /// to keep the migration additive — the boot backfill fills NULLs
   /// for existing rows; new rows always carry the sum.
-  sumValue    Float?            @map("sum_value")
+  sumValue        Float?            @map("sum_value")
   /// v1.20.0 F6 — per-bucket OLS regression accumulators over the same
   /// canonical-source raw rows the live REGR_* query reads. With
   /// `n = count` and `Σy = mean·count` these close the additive set so a
@@ -2276,11 +2381,21 @@ model MeasurementRollup {
   /// parity-matches the cross-bucket compose. Nullable to keep migration 0190
   /// additive — the boot backfill fills NULLs for pre-migration rows; new
   /// rows always carry them (they ride the same aggregate as mean / sum).
-  sumX        Float?            @map("sum_x")
-  sumXy       Float?            @map("sum_xy")
-  sumXx       Float?            @map("sum_xx")
-  sumYy       Float?            @map("sum_yy")
-  computedAt  DateTime          @default(now()) @map("computed_at") @db.Timestamptz(3)
+  sumX            Float?            @map("sum_x")
+  sumXy           Float?            @map("sum_xy")
+  sumXx           Float?            @map("sum_xx")
+  sumYy           Float?            @map("sum_yy")
+  /// The lowest and highest reading `value` of the bucket. `minValue` /
+  /// `maxValue` widen to a row's own range (`Measurement.valueMin` /
+  /// `valueMax`, the intra-hour range an hourly heart-rate statistic
+  /// carries); these do not, so a reader whose figure is over the readings
+  /// themselves (the full-history extremes in `feature-blocks.ts`) can fold
+  /// the DAY tier instead of the raw rows. Nullable to keep migration 0417
+  /// additive: the boot re-fold fills existing rows, new rows always carry
+  /// them, and a reader treats a type with a NULL in its range as uncovered.
+  readingMinValue Float?            @map("reading_min_value")
+  readingMaxValue Float?            @map("reading_max_value")
+  computedAt      DateTime          @default(now()) @map("computed_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -2803,6 +2918,12 @@ model Medication {
   /// minting slots past this date. NULL = no end date (chronic).
   /// When `oneShot` is true, `endsOn` always equals `startsOn`.
   endsOn                        DateTime?              @map("ends_on") @db.Date
+  /// #1280 — the instant the latest course was ended with "End course", the
+  /// projection of `MedicationCourse.endedAt` written next to `startsOn` /
+  /// `endsOn` by `src/lib/medications/courses.ts` only. On the `endsOn` day;
+  /// no dose slot at or after it is due, reminded or expected, and the course
+  /// reads as ended from it on. NULL = the course runs to the end of `endsOn`.
+  endedAt                       DateTime?              @map("ended_at") @db.Timestamptz(6)
   /// v1.5 — single-administration medication (flu shot, vaccine,
   /// post-op single dose, etc.). When true the medication has at
   /// most one MedicationIntakeEvent and `active` flips to false once
@@ -2951,10 +3072,6 @@ model Medication {
   /// roll-up (GI / METABOLIC / INJECTION_SITE / COGNITIVE /
   /// GLP1_SPECIFIC) and 1-5 Likert severity per entry.
   sideEffects        MedicationSideEffect[]
-  /// v1.4.39 W-MED — per-(medication, day) compliance rollup. Mutations
-  /// on the linked MedicationIntakeEvent rows refresh the row inline;
-  /// the read paths consume this instead of the per-event findMany.
-  complianceRollups  MedicationComplianceRollup[]
   /// v1.16.3 — archived schedule eras (effective dating). Superseded
   /// schedule states land here when a wholesale schedule replace changes
   /// cadence-relevant fields; the band minter segments historical minting
@@ -2991,7 +3108,6 @@ model Medication {
   /// re-mirror of the same concept id returns the existing row (the
   /// create route pre-queries the triple and catches the P2002 race).
   @@unique([userId, externalSource, externalId])
-  @@index([userId])
   @@index([treatmentClass])
   @@map("medications")
 }
@@ -3062,6 +3178,13 @@ model MedicationCourse {
   startsOn      DateTime  @map("starts_on") @db.Date
   /// Last day, inclusive. NULL = open (only the latest course may be open).
   endsOn        DateTime? @map("ends_on") @db.Date
+  /// #1280 — set by "End course": the instant the course ended, on the
+  /// `endsOn` day. A dose slot at or after it is not part of the course (not
+  /// due, not reminded, not expected by compliance), so the course ends when
+  /// the person ends it rather than at local midnight. NULL = the whole
+  /// `endsOn` day counts, the reading of an end date set in the editor. Any
+  /// later write that moves `endsOn` clears it.
+  endedAt       DateTime? @map("ended_at") @db.Timestamptz(6)
   /// Why this course, in the person's words. AES-256-GCM at rest.
   noteEncrypted Bytes?    @map("note_encrypted")
   createdAt     DateTime  @default(now()) @map("created_at")
@@ -3201,6 +3324,8 @@ model MedicationSchedule {
   medication       Medication                @relation(fields: [medicationId], references: [id], onDelete: Cascade)
   telegramMessages TelegramReminderMessage[]
 
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([medicationId])
   @@map("medication_schedules")
 }
 
@@ -3479,6 +3604,8 @@ model MedicationIntakeEvent {
   // without this one the purge planned a sequential scan and could not finish
   // inside statement_timeout. Raw SQL only (partial predicate not expressible
   // in Prisma).
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([medicationId])
   @@map("medication_intake_events")
 }
 
@@ -3643,6 +3770,8 @@ model MedicationInventoryItem {
   // `(user_id) WHERE notes IS NOT NULL AND notes_encrypted IS NULL` — see
   // migration 0243 (v1.28.46 H4) for the med-notes boot-discovery scan. Raw
   // SQL only (partial predicate not expressible in Prisma).
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([medicationId])
   @@map("medication_inventory_items")
 }
 
@@ -3706,6 +3835,8 @@ model MedicationSideEffect {
   // `(user_id) WHERE notes IS NOT NULL AND notes_encrypted IS NULL` — see
   // migration 0243 (v1.28.46 H4) for the med-notes boot-discovery scan. Raw
   // SQL only (partial predicate not expressible in Prisma).
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([medicationId])
   @@map("medication_side_effects")
 }
 
@@ -3797,6 +3928,8 @@ model TelegramReminderMessage {
 
   @@unique([recipientUserId, medicationId, scheduleId, date, phase, timeOfDay], map: "telegram_reminder_messages_recipient_slot_key")
   @@index([medicationId, date])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([scheduleId])
   @@map("telegram_reminder_messages")
 }
 
@@ -3841,26 +3974,37 @@ model TelegramPromptContext {
 // ─── API Tokens (for external ingest) ──────────────────────
 
 model ApiToken {
-  id              String    @id @default(cuid())
-  userId          String    @map("user_id")
-  name            String
-  tokenHash       String    @unique @map("token_hash") // SHA-256 of the token
-  permissions     String[]  @default(["medication:ingest"])
-  lastUsedAt      DateTime? @map("last_used_at")
-  expiresAt       DateTime? @map("expires_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  revoked         Boolean   @default(false)
+  id                  String    @id @default(cuid())
+  userId              String    @map("user_id")
+  name                String
+  tokenHash           String    @unique @map("token_hash") // SHA-256 of the token
+  permissions         String[]  @default(["medication:ingest"])
+  lastUsedAt          DateTime? @map("last_used_at")
+  expiresAt           DateTime? @map("expires_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  revoked             Boolean   @default(false)
   // The MCP OAuth connection this access token belongs to, when it was minted
   // through the `/api/mcp/oauth` bridge. Null for manually-minted tokens and
   // native-client tokens. Lets a connection revoke kill every access row it
   // ever issued (H2), and lets the connector token list exclude the transient
   // 60-minute access rows so it does not flood (M2).
-  mcpConnectionId String?   @map("mcp_connection_id")
+  mcpConnectionId     String?   @map("mcp_connection_id")
+  /// Whether the HealthLog app writes the readings this `measurements:write`
+  /// token carried into Apple Health (#1272). The person decides per token;
+  /// the server resolves it onto every row as `appleHealthMirror`
+  /// (`src/lib/measurements/apple-health-mirror.ts`). False for every other
+  /// kind of token, which `PATCH /api/tokens/{id}` refuses to set.
+  mirrorToAppleHealth Boolean   @default(false) @map("mirror_to_apple_health")
+  /// When `mirrorToAppleHealth` last changed. The keyset of the
+  /// `measurementMirror` domain of `/api/sync/changes`, which re-delivers the
+  /// token's rows with their new value without touching the rows themselves.
+  mirrorChangedAt     DateTime? @map("mirror_changed_at")
 
-  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mcpConnection    McpOAuthConnection? @relation(fields: [mcpConnectionId], references: [id], onDelete: SetNull)
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mcpConnection        McpOAuthConnection? @relation(fields: [mcpConnectionId], references: [id], onDelete: SetNull)
+  ingestedMeasurements Measurement[]
   // v1.30.34 — step-up elevations bound to this token. Cascade-deleted with it.
-  stepUpElevations StepUpElevation[]
+  stepUpElevations     StepUpElevation[]
 
   @@index([userId])
   @@index([mcpConnectionId])
@@ -3992,6 +4136,9 @@ model InviteToken {
   redemptions InviteRedemption[]
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([createdBy])
+  @@index([usedBy])
   @@map("invite_tokens")
 }
 
@@ -4035,6 +4182,8 @@ model ManagedProfileHandover {
   @@index([profileId])
   // `managed_profile_handovers_open_idx` UNIQUE (profile_id) WHERE used_at IS
   // NULL AND revoked_at IS NULL is a partial index from migration 0383.
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([createdById])
   @@map("managed_profile_handovers")
 }
 
@@ -4043,7 +4192,7 @@ model ManagedProfileHandover {
 /// batch route; read by the Apple Health card's per-type freshness list.
 /// Diagnostic state: rebuilt by the next sync, so it is not backed up.
 model HealthKitTypeSync {
-  userId           String    @map("user_id")
+  userId              String    @map("user_id")
   /// A `MeasurementType` name for rows the measurement batch writes, or
   /// `MEDICATION_DOSE` for Apple Health doses the intake bulk route
   /// receives. Text, not the enum, since v1.42.4 (migration 0401) because a
@@ -4052,20 +4201,27 @@ model HealthKitTypeSync {
   /// last carried the type (its `lastReceivedAt`, every other column NULL),
   /// so a catch-up leaves the live row of the type untouched; live readers
   /// skip the prefix (`healthkit-type-sync.ts`).
-  type             String
-  /// Last batch that carried this type.
-  lastReceivedAt   DateTime  @map("last_received_at")
+  type                String
+  /// Last batch that brought a new or changed row of this type. Since #1259
+  /// a batch of duplicates only does not move it (nor the trigger or the
+  /// background stamp); it moves `lastSeenDuplicateAt` instead.
+  lastReceivedAt      DateTime  @map("last_received_at")
   /// `syncTrigger` of that batch
   /// (`foreground` / `background` / `push` / `manual`), NULL when absent.
-  lastTrigger      String?   @map("last_trigger")
+  lastTrigger         String?   @map("last_trigger")
   /// Last batch that inserted or updated a sample of
   /// this type (as opposed to sending only duplicates).
-  lastNewSampleAt  DateTime? @map("last_new_sample_at")
+  lastNewSampleAt     DateTime? @map("last_new_sample_at")
   /// Last batch with `syncTrigger = background` that carried this type. A
   /// later foreground, push or manual arrival leaves it standing; NULL when
   /// none has (or only before v1.42.4, except a row whose latest arrival was
   /// a background one, which migration 0401 seeded).
-  lastBackgroundAt DateTime? @map("last_background_at")
+  lastBackgroundAt    DateTime? @map("last_background_at")
+  /// #1259 — last live batch that carried this type with duplicates only:
+  /// nothing new or changed, so not an arrival. NULL when none has since
+  /// migration 0471. Read by the Apple Health card, served on
+  /// `GET /api/integrations/healthkit` as `lastSeenDuplicateAt`.
+  lastSeenDuplicateAt DateTime? @map("last_seen_duplicate_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -4088,6 +4244,8 @@ model InviteRedemption {
   user   User?       @relation("InviteRedemptions", fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([inviteId])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("invite_redemptions")
 }
 
@@ -4124,7 +4282,6 @@ model RefreshToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   /// Composite index — every reuse-detection / device-scoped lookup filters
   /// on (userId, deviceId), so a single-column device_id index would never
   /// be used while costing writes. Multiple live rows per (userId, deviceId)
@@ -4215,6 +4372,15 @@ model WithingsConnection {
   /// Withings card name what the plan withholds. Versioned and validated on
   /// read (`src/lib/withings/api-plan.ts`); reset on reconnect.
   apiPlanState               Json?     @map("api_plan_state")
+  /// v1.43.11 — what the sleep sync learned reading each night's stage
+  /// timeline: `{ v: 1, nights: { "<start>:<end>": { empty, failed } } }`,
+  /// keyed by the night's unix span. `empty` counts reads that answered with
+  /// no stage, so a night a tracker never stages stops being read after a
+  /// few tries; `failed` marks a night whose read errored, so it is read
+  /// first on the next run. Pruned to the nights of the summary window.
+  /// Validated on read (`src/lib/withings/sleep-stage-reads.ts`); reset on
+  /// reconnect.
+  sleepStageReads            Json?     @map("sleep_stage_reads")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
@@ -4255,6 +4421,8 @@ model WithingsOAuthState {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("withings_oauth_states")
 }
 
@@ -4336,6 +4504,8 @@ model WhoopOAuthState {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("whoop_oauth_states")
 }
 
@@ -4368,6 +4538,8 @@ model WhoopConnectTicket {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("whoop_connect_tickets")
 }
 
@@ -4422,6 +4594,8 @@ model FitbitOAuthState {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("fitbit_oauth_states")
 }
 
@@ -4463,11 +4637,14 @@ model GoogleHealthConnection {
   /// repair pending (or the connection predates the fix).
   sleepRepairedAt     DateTime? @map("sleep_repaired_at")
   /// How far the in-flight history backfill has got
-  /// (`{ done: string[], cursors: { [collection]: { at, order, pages } } }`):
-  /// the collections it walked to the end, and for each collection read page
-  /// by page the edge it has written up to, so the next slice resumes there
-  /// instead of starting over. Null once the backfill completes, and reset
-  /// on every reconnect.
+  /// (`{ done: string[], cursors: { [collection]: { at, order, pages } },
+  /// ended?: { [collection]: { type, at, reason } } }`): the collections it
+  /// walked to the end, for each collection read page by page the edge it has
+  /// written up to, so the next slice resumes there instead of starting over,
+  /// and the collections it ended short of their history's start (the
+  /// horizon, or a walk that stopped getting anywhere). Once the backfill
+  /// completes only `ended` is kept, or null when nothing ended short; the
+  /// status routes publish it as `backfillEnded`. Reset on every reconnect.
   backfillProgress    Json?     @map("backfill_progress")
   /// One bounded, owner-scoped current sync run. This is replaced at the start
   /// of every run and never retains provider payloads or historical runs.
@@ -4497,7 +4674,37 @@ model GoogleHealthOAuthState {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([userId])
   @@map("google_health_oauth_states")
+}
+
+/// One row per OAuth callback the connect flows have begun to act on, keyed on
+/// a hash of the provider and the `state` it returned with. Inserting it is
+/// the claim: a second request carrying the same `state` (a browser that sends
+/// the callback twice, a reload, a retry) finds the row taken and never
+/// exchanges the code again. An authorization code works once, and Oura
+/// revokes the token the first exchange issued when it sees the code reused.
+///
+/// The claiming request records where it sent the browser, so the duplicate
+/// sends it to the same place instead of to an error page. Holds no user id,
+/// token or code: `location` is the app's own result URL (`?oura=connected`,
+/// `?whoop=error&reason=…`). Rows outlive the state they guard by a few
+/// minutes and are swept by expiry when a callback completes and by the daily
+/// OAuth-state cleanup (`src/lib/jobs/oauth-callback-claim-cleanup.ts`).
+model OAuthCallbackClaim {
+  /// sha256(provider + NUL + state), hex.
+  key       String    @id
+  provider  String
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime  @map("expires_at")
+  /// When the claiming request finished, with or without a result URL.
+  settledAt DateTime? @map("settled_at")
+  /// The redirect the claiming request answered with. Null when it threw.
+  location  String?
+
+  @@index([expiresAt])
+  @@map("oauth_callback_claims")
 }
 
 // ─── Mood Entries ─────────────────────────────────────────────
@@ -4627,7 +4834,6 @@ model MoodEntry {
   // that carry a source-stable id upsert on this; native/MANUAL entries
   // (NULL externalId) are distinct here and stay on the legacy key above.
   @@unique([userId, source, externalId])
-  @@index([userId, date])
   // v1.12.1 (P1-3) — mood-insights reads filter `{ userId, deletedAt:
   // null, moodLoggedAt: { gte } }` ordered by `moodLoggedAt desc`; this
   // index turns that into a range scan. See migration 0123.
@@ -5014,39 +5220,6 @@ model MoodEntryRollup {
   @@map("mood_entry_rollups")
 }
 
-// ─── Medication Compliance Rollup (v1.4.39 W-MED) ─────────────
-//
-// Per-(userId, medicationId, day) compliance ledger. Replaces the
-// unbounded MedicationIntakeEvent findMany on
-// `/api/medications/intake?scope=compliance` and the equivalent
-// fan-out inside `computeUserHealthScoreFastPath`.
-//
-// Day-key is anchored to the user's IANA timezone (TEXT, encoded as
-// `YYYY-MM-DD`) so the read path can collapse a date range into a
-// straight WHERE clause without re-deriving the boundary per row.
-//
-// Write path: every MedicationIntakeEvent create / update / delete
-// (and the scheduler that mints fresh `scheduledFor` rows) fires
-// `recomputeMedicationComplianceForDay` which upserts the
-// `(user, medication, day)` row. Worker handles weekly / monthly
-// re-fold off the hot path.
-model MedicationComplianceRollup {
-  userId       String   @map("user_id")
-  medicationId String   @map("medication_id")
-  day          String // YYYY-MM-DD anchored to user.timezone
-  scheduled    Int
-  taken        Int
-  skipped      Int
-  computedAt   DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
-
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  medication Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
-
-  @@id([userId, medicationId, day])
-  @@index([userId, day(sort: Desc)])
-  @@map("medication_compliance_rollups")
-}
-
 // ─── Integration Status (v1.4.15) ─────────────────────────
 //
 // Per-(user, integration) row that captures the most recent sync attempt
@@ -5116,7 +5289,6 @@ model IntegrationStatus {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, integration])
-  @@index([userId])
   @@index([state])
   @@map("integration_statuses")
 }
@@ -5317,21 +5489,6 @@ model AppSettings {
   documentMaxFileBytes Int    @default(26214400) @map("document_max_file_bytes")
   documentQuotaBytes   BigInt @default(1073741824) @map("document_quota_bytes")
 
-  // The operator's confirmation that the encryption key is backed up, bound to
-  // the key it was given for: the active key id and its fingerprint (the first
-  // twelve hex characters of SHA-256 over the raw key bytes). A rotation or a
-  // re-keyed install changes either one, and the step is due again. Never the
-  // key itself. Written by `POST /api/admin/encryption/key-backup/confirm`;
-  // consumer: `readKeyBackupStatus` (the admin step, the overview tile and the
-  // dashboard banner for admins).
-  encryptionKeyBackupConfirmedAt          DateTime? @map("encryption_key_backup_confirmed_at")
-  encryptionKeyBackupConfirmedKeyId       String?   @map("encryption_key_backup_confirmed_key_id")
-  encryptionKeyBackupConfirmedFingerprint String?   @map("encryption_key_backup_confirmed_fingerprint")
-  /// Plain id, not a relation: the instance row must not become user-scoped,
-  /// and a deleted admin leaves the confirmation standing. Consumer: the admin
-  /// step names who confirmed when the account still exists.
-  encryptionKeyBackupConfirmedByUserId    String?   @map("encryption_key_backup_confirmed_by_user_id")
-
   /// When this instance first stored a discovery finding under the seasonally
   /// adjusted correlation engine (v1.42). Stamped once, by the first
   /// `syncAcceptedPatterns` run of a discovery family, before it writes; null
@@ -5347,12 +5504,16 @@ model AppSettings {
   /// Active pulse day-mean method (CHECK in migration 0407). Readers: every
   /// process's mirror (`pulse-day-mean-method.ts`) and the rollup tier
   /// (`storedHourWeightSql`); the admin status route.
-  pulseDayMeanMethod     String    @default("hour_mean_v1") @map("pulse_day_mean_method")
+  pulseDayMeanMethod         String    @default("hour_mean_v1") @map("pulse_day_mean_method")
   /// When the admin applied the current method; shown on the admin card.
-  pulseDayMeanAppliedAt  DateTime? @map("pulse_day_mean_applied_at")
+  pulseDayMeanAppliedAt      DateTime? @map("pulse_day_mean_applied_at")
   /// Last dry-run status and result (account ordinals only, no ids); the apply
   /// step's precondition and the admin card's result.
-  pulseDayMeanDryRunJson Json?     @map("pulse_day_mean_dry_run_json")
+  pulseDayMeanDryRunJson     Json?     @map("pulse_day_mean_dry_run_json")
+  /// @internal: progress marker of the one-time workout climb backfill
+  /// (`src/lib/workouts/climb-backfill.ts`): the last workout id scanned,
+  /// `done` when finished, NULL before it starts. Operational, never shown.
+  workoutClimbBackfillCursor String?   @map("workout_climb_backfill_cursor")
 
   @@map("app_settings")
 }
@@ -5401,18 +5562,26 @@ model AuditLog {
   /// lives.
   actorUserId String? @map("actor_user_id")
 
-  action    String // e.g. "auth.login", "measurement.create", "export.csv"
-  details   String? // JSON string, no sensitive data
-  ipAddress String?  @map("ip_address")
-  location  String? // e.g. "Berlin, DE" — resolved from IP at log time
+  action         String // e.g. "auth.login", "measurement.create", "export.csv"
+  details        String? // JSON string, no sensitive data
+  ipAddress      String?   @map("ip_address")
+  location       String? // e.g. "Berlin, DE" — resolved from IP at log time
   // v1.4.27 B3 — resolved at audit-creation time from the bundled
   // GeoLite2-ASN MMDB. `asn` is the autonomous-system number,
   // `carrier` is the organisation string (e.g. "Deutsche Telekom AG").
   // Both nullable so older rows, private-IP rows, and offline-miss
   // rows stay valid.
-  asn       Int? // autonomous-system number
-  carrier   String? // autonomous-system organisation
-  createdAt DateTime @default(now()) @map("created_at")
+  asn            Int? // autonomous-system number
+  carrier        String? // autonomous-system organisation
+  /// When the geo backfill (`src/lib/jobs/geo-backfill.ts`) last tried this
+  /// row. A row it could not complete waits `GEO_BACKFILL_RETRY_DAYS` before
+  /// the next try, so an address no database will ever place (a private
+  /// range behind a proxy) is not resolved again on every hourly pass. NULL:
+  /// never tried. The backfill reads its candidates through the partial index
+  /// `audit_logs_geo_backfill_idx` (migration 0418, raw SQL only: Prisma
+  /// cannot express its predicate).
+  geoAttemptedAt DateTime? @map("geo_attempted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -5469,7 +5638,6 @@ model NotificationChannel {
   preferences NotificationPreference[]
 
   @@unique([userId, type])
-  @@index([userId])
   @@map("notification_channels")
 }
 
@@ -5497,7 +5665,6 @@ model PushSubscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, endpoint])
-  @@index([userId])
   @@map("push_subscriptions")
 }
 
@@ -5544,7 +5711,6 @@ model DataBackup {
   chunks DataBackupChunk[]
 
   @@unique([userId, type], map: "data_backups_user_id_type_key")
-  @@index([userId])
   @@map("data_backups")
 }
 
@@ -5613,7 +5779,8 @@ model BackupRestoreJob {
   restoreInstanceSettings Boolean   @default(false) @map("restore_instance_settings")
   /// `pg-boss` job id of the latest delivery. Consumer: the boot sweep, which
   /// completes a delivery whose worker is gone so it does not later surface as
-  /// a timed-out job.
+  /// a timed-out job, and the status routes, which read from it whether the
+  /// heavy lane put a queued restore back (`backup-restore-wait.ts`).
   pgBossJobId             String?   @map("pg_boss_job_id")
   /// `queued | running | succeeded | failed`. Consumer: every reader.
   status                  String    @default("queued")
@@ -5717,7 +5884,9 @@ model OffhostBackupState {
 /// `readBackupPassActivity()` behind `GET /api/admin/backups`.
 model BackupPassAttempt {
   userId     String    @map("user_id")
-  /// The pass's queue name: `data-backup` or `data-backup-offhost`.
+  /// The pass's queue name: `data-backup`, `data-backup-offhost`, or
+  /// `account-deletion-purge` (the hourly erasure of accounts whose deletion
+  /// window ended, which takes an account whose erasure failed last).
   pass       String
   /// When the pass last started on this account.
   startedAt  DateTime  @map("started_at")
@@ -5744,6 +5913,70 @@ model OffhostBackupKeyUse {
   @@map("offhost_backup_key_use")
 }
 
+/// The monthly restore drill's last result, one row for the instance. pg-boss
+/// forgets a failed run after seven days and the failing-jobs card looks back
+/// 72 hours, so the drill's verdict lives here for as long as it is the last
+/// one. Written by `recordRestoreDrillOutcome` at the end of every drill that
+/// had something to check; consumer: `readRecoveryReadiness` (the readiness
+/// tile and the hourly evaluation).
+model RestoreDrillOutcome {
+  id                String    @id @default("singleton")
+  /// When the last drill finished. Consumer: the tile's drill row.
+  lastRunAt         DateTime  @map("last_run_at")
+  /// When a drill last passed every object it checked. A failure stays the
+  /// verdict until a later success. Consumer: the readiness model.
+  lastSuccessAt     DateTime? @map("last_success_at")
+  /// When a drill last failed. Consumer: the readiness model.
+  lastFailureAt     DateTime? @map("last_failure_at")
+  /// One line naming why, already redacted. Consumer: the tile's drill row.
+  lastFailureReason String?   @map("last_failure_reason")
+  /// Objects the last drill checked and how many of them failed. Consumer:
+  /// the tile's drill row.
+  accountsChecked   Int       @default(0) @map("accounts_checked")
+  accountsFailed    Int       @default(0) @map("accounts_failed")
+
+  @@map("restore_drill_outcomes")
+}
+
+/// Per readiness signal, the state the admins were last notified about. The
+/// hourly evaluation compares the current state against it: a change to
+/// attention or failing notifies once, a failing signal is reminded at most
+/// once a day, and a return to ok is announced once. The update is a
+/// compare-and-set on both columns, so two workers never send the same
+/// notice. Written and read by `notifyReadinessChanges`.
+model RecoveryReadinessNotice {
+  /// The signal's id (`database_dump`, `weekly_copy`, …).
+  signal        String    @id
+  /// `ok`, `attention` or `failing`; null until anything was announced.
+  notifiedState String?   @map("notified_state")
+  notifiedAt    DateTime? @map("notified_at")
+  /// Since when the evaluation has seen the signal apply (not `inactive`);
+  /// cleared when it stops applying. Consumer: the readiness model, which
+  /// judges a dump that has never been attempted against it.
+  watchedSince  DateTime? @map("watched_since")
+
+  @@map("recovery_readiness_notices")
+}
+
+/// The recovery kit an admin confirmed: every key a restore needs, by kind,
+/// id and fingerprint, never the key itself. The kit is due again as soon as
+/// a key it needs is not in this set (a rotation, a new backup key). Written
+/// by `POST /api/admin/recovery-kit/confirm`; consumer: `readRecoveryKit`
+/// (the kit card, the dashboard banner for admins and the readiness model).
+model RecoveryKitConfirmation {
+  id                String   @id @default("singleton")
+  confirmedAt       DateTime @map("confirmed_at")
+  /// Plain id, not a relation: the instance row must not become user-scoped,
+  /// and a deleted admin leaves the confirmation standing. Consumer: the kit
+  /// card names who confirmed while the account still exists.
+  confirmedByUserId String?  @map("confirmed_by_user_id")
+  /// `[{ kind, id, fingerprint }]`, validated on read
+  /// (`parseKitEntries`). Consumer: `assessRecoveryKit`.
+  entries           Json
+
+  @@map("recovery_kit_confirmations")
+}
+
 /// An account whose off-host copies have to leave the bucket: it was deleted,
 /// or its data was wiped. Written in the same transaction as the deletion, so
 /// the request cannot be lost between the two, and deleted once every object
@@ -5762,9 +5995,51 @@ model OffhostPurgeRequest {
   lastAttemptAt DateTime? @map("last_attempt_at")
   /// The bucket's last refusal, trimmed; shown to the operator.
   lastFailure   String?   @map("last_failure")
+  /// The purge leaves this request alone until then. A data wipe
+  /// writes its request with the end of the deletion grace window here, so
+  /// the off-host copies from before the wipe stay restorable as long as the
+  /// account copy taken before it. Null: due at once (every account deletion,
+  /// which writes its request only when the purge erases the account).
+  notBefore     DateTime? @map("not_before")
 
   @@index([requestedAt])
   @@map("offhost_purge_requests")
+}
+
+/// One run of the nightly whole-database dump (the `database-backup` job):
+/// whether a dump was written on this server and copied off-host, and why not
+/// when it was not. Instance metadata, not an account's data. Written by
+/// `runDatabaseBackup`; read by `getDatabaseBackupHealth`, which feeds the
+/// database row of the admin backups card and the backup alerts. A row left
+/// `running` by a process that died is read as a failed run once the job's
+/// expiry has passed.
+model DatabaseBackupRun {
+  id            String    @id @default(cuid())
+  startedAt     DateTime  @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  /// `running`, `succeeded`, `failed` or `skipped`.
+  status        String
+  /// The dump's file name, once one was written and checked.
+  fileName      String?   @map("file_name")
+  /// Size of the dump in bytes.
+  dumpBytes     BigInt?   @map("dump_bytes")
+  /// `written` (kept in DB_BACKUP_DIR), `no_directory` (no writable
+  /// directory, the dump went off-host only), `not_persistent` (writable but
+  /// in the container's layer or in memory, so nothing was kept there),
+  /// `skipped`, or `failed`.
+  localResult   String    @map("local_result")
+  /// `uploaded`, `not_configured` or `failed`.
+  offhostResult String    @map("offhost_result")
+  /// Why the run failed or was skipped, trimmed. Never key material.
+  error         String?
+  /// The application key id the dump's rows were written under (its
+  /// manifest's active key). A restore refuses without it. Reader:
+  /// `readBackupKeyNeeds`, which keeps the key in the recovery kit while the
+  /// off-host copy of this dump may still be in the bucket.
+  activeKeyId   String?   @map("active_key_id")
+
+  @@index([startedAt])
+  @@map("database_backup_runs")
 }
 
 // ─── Apple Health export.zip import (v1.4.34) ───────────────
@@ -6387,7 +6662,6 @@ model Biomarker {
   mergesInto      BiomarkerMerge[]
 
   @@unique([userId, name])
-  @@index([userId])
   @@map("biomarkers")
 }
 
@@ -6430,7 +6704,6 @@ model CustomMetric {
   entries CustomMetricEntry[]
 
   @@unique([userId, name])
-  @@index([userId])
   @@map("custom_metrics")
 }
 
@@ -6468,6 +6741,8 @@ model CustomMetricEntry {
   // `(user_id) WHERE note IS NOT NULL` — see
   // migration 0357 for the free-text encryption boot-discovery scan. Raw SQL
   // only (partial predicate not expressible in Prisma).
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([customMetricId])
   @@map("custom_metric_entries")
 }
 
@@ -6515,7 +6790,6 @@ model UserAchievement {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, achievementId])
-  @@index([userId])
   @@map("user_achievements")
 }
 
@@ -6646,7 +6920,7 @@ model HostMetric {
 // (no prompt-tuning flow yet — that ratchet is v1.4.17).
 //
 // Privacy: server-side fills providerType + promptVersion from the
-// user's most recent cached payload (User.insightsCachedText) so the
+// user's most recent cached payload (User.insightsCachedTextEncrypted) so the
 // client can't tamper with the attribution.
 //
 // `(userId, recommendationId, recommendationText)` is the dedup key.
@@ -7207,7 +7481,6 @@ model CoachUsage {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, dateKey])
-  @@index([userId, dateKey])
   @@map("coach_usage")
 }
 
@@ -7458,7 +7731,6 @@ model ClinicianShareLinkDocument {
   document  InboundDocument    @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([shareLinkId, documentId])
-  @@index([shareLinkId])
   @@index([documentId])
   @@map("clinician_share_link_documents")
 }
@@ -7685,6 +7957,9 @@ model InsightStatusCache {
   /// Why the last generation served the deterministic line instead of a note:
   /// `timeout` | `error` | `screened`. Set together with `retryAt`.
   negativeReason String?   @map("negative_reason")
+  /// Generations in a row that ended without a note; sets the length of the
+  /// next negative-cache window. Reset to 0 when a note is written or re-dated.
+  failureStreak  Int       @default(0) @map("failure_streak")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
@@ -8049,7 +8324,6 @@ model MenstrualCycle {
   dayLogs CycleDayLog[]
 
   @@unique([userId, startDate])
-  @@index([userId, startDate])
   // Keyset support for the `/api/sync/changes` cycle feed
   // (`where userId` ordered by `(updatedAt asc, id asc)`).
   @@index([userId, updatedAt, id])
@@ -8149,9 +8423,10 @@ model CycleDayLog {
   // NULL-distinct external dedup key for HealthKit re-ingest (the
   // MoodEntry dual-unique precedent).
   @@unique([userId, source, externalId])
-  @@index([userId, date])
   // Keyset support for the `/api/sync/changes` cycle-day feed.
   @@index([userId, updatedAt, id])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([cycleId])
   @@map("cycle_day_logs")
 }
 
@@ -8343,7 +8618,6 @@ model IllnessDayLog {
 
   @@unique([episodeId, date])
   @@index([userId, date])
-  @@index([episodeId])
   @@map("illness_day_logs")
 }
 
@@ -8730,9 +9004,9 @@ enum ExtractedFactStatus {
 }
 
 model InboundDocument {
-  id                 String                @id @default(cuid())
-  userId             String                @map("user_id")
-  kind               InboundDocumentKind   @default(OTHER)
+  id                   String                @id @default(cuid())
+  userId               String                @map("user_id")
+  kind                 InboundDocumentKind   @default(OTHER)
   /// User-given label. Deliberately plaintext (like `filename`) so the library
   /// list can ILIKE-search + ORDER BY in SQL. The document BODY stays
   /// encrypted; only this short, user-authored title is clear-text. Tradeoff:
@@ -8740,18 +9014,18 @@ model InboundDocument {
   /// cleartext at rest / in backups — the same exposure the pre-existing
   /// plaintext `filename` already carries. Accepted to keep server-side search
   /// and sort.
-  title              String?
+  title                String?
   /// Original filename as uploaded (sanitised, optional).
-  filename           String?
+  filename             String?
   /// Magic-byte-sniffed MIME type the document was stored as.
-  mimeType           String                @map("mime_type")
+  mimeType             String                @map("mime_type")
   /// Stored byte length of the original (pre-encryption) document.
-  byteSize           Int                   @map("byte_size")
+  byteSize             Int                   @map("byte_size")
   /// AES-256-GCM ciphertext of the raw document bytes (base64 of the binary
   /// → `encrypt()` string → UTF-8 BYTEA), the `*_encrypted` Bytes convention
   /// shared with the note columns. The original is sensitive and never
   /// stored in the clear or logged.
-  contentEncrypted   Bytes                 @map("content_encrypted")
+  contentEncrypted     Bytes                 @map("content_encrypted")
   /// Lowercase-hex SHA-256 of the PLAINTEXT document bytes, computed at
   /// upload for same-user duplicate detection. Nullable: rows stored before
   /// the vault release are not backfilled (only new uploads dedupe). A
@@ -8760,29 +9034,29 @@ model InboundDocument {
   ///   CREATE UNIQUE INDEX inbound_documents_user_sha_live
   ///     ON inbound_documents (user_id, content_sha256)
   ///     WHERE deleted_at IS NULL AND content_sha256 IS NOT NULL;
-  contentSha256      String?               @map("content_sha256") @db.VarChar(64)
+  contentSha256        String?               @map("content_sha256") @db.VarChar(64)
   /// Storage codec of `contentEncrypted`. "base64v1" = legacy string path
   /// (base64-of-binary → `encrypt()` string → UTF-8 bytes); "binary2" = the
   /// binary AES-256-GCM layout written by `encryptBytes()` (no base64
   /// detour). Explicit column, never header-sniffed; the default keeps every
   /// pre-existing row correct.
-  contentCodec       String                @default("base64v1") @map("content_codec")
-  status             InboundDocumentStatus @default(STORED)
+  contentCodec         String                @default("base64v1") @map("content_codec")
+  status               InboundDocumentStatus @default(STORED)
   /// Provider type that ran the extraction (e.g. "anthropic", "openai",
   /// "local"). Diagnostic only. Null on a store-only document.
-  providerType       String?               @map("provider_type")
+  providerType         String?               @map("provider_type")
   /// The document's stated report/collection date (YYYY-MM-DD at UTC), as
   /// transcribed by the model — never inferred, never user-set.
-  reportDate         DateTime?             @map("report_date")
+  reportDate           DateTime?             @map("report_date")
   /// Effective filing date the library sorts, groups, and range-filters on
   /// (editable). Distinct from `reportDate`, which is the model-transcribed
   /// value. On store it defaults to the upload day (now) when the user does
   /// not supply one, so a stored row's filing date is never NULL and display
   /// == sort == filter. It stays user-editable and MAY be cleared back to
   /// NULL via PATCH (the list then sorts such rows last).
-  documentDate       DateTime?             @map("document_date")
+  documentDate         DateTime?             @map("document_date")
   /// Failure reason when status = FAILED (a short code, never the document).
-  errorReason        String?               @map("error_reason")
+  errorReason          String?               @map("error_reason")
   /// AES-256-GCM ciphertext of a short (3-4 sentence) plain-language summary
   /// of WHAT the document is, generated ONCE in the background right after
   /// upload when the user's `documentsAutoAiRead` opt-in is ON (that flag is
@@ -8790,39 +9064,39 @@ model InboundDocument {
   /// provider is configured, or generation has not run yet. Descriptive only —
   /// never a diagnosis. `encrypt()`-string-as-UTF-8 BYTEA, the shared Bytes
   /// codec every other note column uses; PHI, never logged.
-  summaryEncrypted   Bytes?                @map("summary_encrypted")
+  summaryEncrypted     Bytes?                @map("summary_encrypted")
   /// When the background summary was generated (null until it runs). Surfaced
   /// as meta beside the summary in the document detail view.
-  summaryGeneratedAt DateTime?             @map("summary_generated_at")
+  summaryGeneratedAt   DateTime?             @map("summary_generated_at")
   /// What actually happened to this document's summary, so the detail view can
   /// tell the four outcomes apart instead of reading a null column as "still
   /// generating". `summaryEncrypted` alone cannot: a document nobody ever
   /// enqueued, one whose provider is missing, one the safety screen withheld,
   /// and one mid-flight all leave it null. NONE is the default, which keeps
   /// every pre-existing row correct — none of them were ever attempted.
-  summaryState       DocumentSummaryState  @default(NONE) @map("summary_state")
+  summaryState         DocumentSummaryState  @default(NONE) @map("summary_state")
   /// When the most recent content-index attempt finished (auto job, corpus
   /// backfill, or the manual index route — they share one recorder),
   /// successful or not. Null until any attempt ran. Diagnostic state the
   /// detail view pairs with `lastIndexOutcome`; carried verbatim in the
   /// disaster-recovery backup like its summary siblings.
-  lastIndexAttemptAt DateTime?             @map("last_index_attempt_at")
+  lastIndexAttemptAt   DateTime?             @map("last_index_attempt_at")
   /// Why the most recent index attempt produced NO index — a closed string
   /// enum (`DocumentIndexOutcomeValue` in
   /// `src/lib/validations/inbound-documents.ts`): local-empty |
-  /// local-unsupported | decrypt-error | raster-failed | provider-error |
-  /// pdf-needs-anthropic | empty-transcription. Null after a successful
-  /// attempt (the `DocumentContentIndex` row itself is the success signal)
-  /// and before the first attempt. Lets the detail view tell "never tried"
+  /// local-unsupported | decrypt-error | resource-limit | raster-failed |
+  /// provider-error | pdf-needs-anthropic | empty-transcription. Null after a
+  /// successful attempt (the `DocumentContentIndex` row itself is the success
+  /// signal) and before the first attempt. Lets the detail view tell "never tried"
   /// from "tried and here is why it failed" instead of showing a bare
   /// not-indexed state for both.
-  lastIndexOutcome   String?               @map("last_index_outcome")
+  lastIndexOutcome     String?               @map("last_index_outcome")
   /// v1.39.2 (#1038) — where an imported document came from: a closed string
   /// enum (`DOCUMENT_SOURCE_SYSTEMS` in
   /// `src/lib/validations/inbound-documents.ts`): PAPERLESS | PAPRA | OTHER.
   /// Null for a document added in HealthLog itself. Sent by the import script
   /// and the Paperless workflow recipe; shown on the detail sheet.
-  sourceSystem       String?               @map("source_system") @db.VarChar(16)
+  sourceSystem         String?               @map("source_system") @db.VarChar(16)
   /// v1.39.2 (#1038) — the document's id in `sourceSystem`. Together with
   /// `userId`, `sourceSystem` and `sourceInstance` it is unique across live
   /// AND tombstoned rows (raw SQL in migrations 0353 and 0356, not expressible
@@ -8830,7 +9104,7 @@ model InboundDocument {
   /// Including tombstones is the point: re-running an importer must not bring
   /// back a document the person deleted. The purge carries the key over to
   /// `DocumentImportKey` when it removes the row.
-  sourceId           String?               @map("source_id") @db.VarChar(128)
+  sourceId             String?               @map("source_id") @db.VarChar(128)
   /// v1.39.3 (#1038) — which instance of `sourceSystem` the document came
   /// from: the normalised origin (`scheme://host[:port]`) of the Paperless-ngx
   /// or Papra it was fetched from, so id 123 on one Paperless and id 123 on
@@ -8841,12 +9115,20 @@ model InboundDocument {
   /// source-key unique index since migration 0356, which rebuilt it as
   ///   (user_id, source_system, source_instance, source_id) NULLS NOT DISTINCT
   ///   WHERE source_id IS NOT NULL.
-  sourceInstance     String?               @map("source_instance") @db.VarChar(512)
+  sourceInstance       String?               @map("source_instance") @db.VarChar(512)
   /// v1.39.2 (#1038) — the upload asked for `aiRead=defer`: nothing may send
   /// this document to an AI provider on its own (the summary catch-up, the
   /// summary job, lab auto-staging all skip it). Cleared when the person
   /// explicitly reads it with AI or generates its summary.
-  aiReadDeferred     Boolean               @default(false) @map("ai_read_deferred")
+  aiReadDeferred       Boolean               @default(false) @map("ai_read_deferred")
+  /// Whether the facts staged by the last extraction may leave part of the
+  /// document out: a read stopped at the provider's output limit, came back
+  /// unreadable or was never sent, the text or pages ran past what the reads
+  /// take, or the document held more facts than one review takes. Written by
+  /// both stagings (the extract route or run, and lab auto-staging) with the
+  /// facts they replace, so a review opened later says so, not only the
+  /// notice at the end of the run. False for a document never extracted.
+  extractionIncomplete Boolean               @default(false) @map("extraction_incomplete")
 
   facts            ExtractedFact[]
   conditionLinks   DocumentConditionLink[]
@@ -9350,6 +9632,8 @@ model Encounter {
   @@index([userId, deletedAt, occurredAt])
   @@index([userId, status, occurredAt])
   @@index([practitionerId])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([reminderId])
   @@map("encounters")
 }
 
@@ -9610,6 +9894,10 @@ model VaccinationRecord {
   @@index([userId, deletedAt, occurredAt])
   @@index([userId, antigenSlug, occurredAt])
   @@index([customVaccineId])
+  // Leads the foreign key, so a cascade from the parent row is an index lookup.
+  @@index([encounterId])
+  @@index([practitionerId])
+  @@index([reminderId])
   @@map("vaccination_records")
 }
 
@@ -9842,21 +10130,21 @@ model DocumentAiRun {
 model LifeEvent {
   id             String             @id @default(cuid())
   userId         String             @map("user_id")
-  /// @pending-consumer(#613) The kind of event, from a deliberately short list.
+  /// The kind of event, from a deliberately short list.
   category       LifeEventCategory
-  /// @pending-consumer(#613) First day of the event, `YYYY-MM-DD`. At MONTH or
+  /// First day of the event, `YYYY-MM-DD`. At MONTH or
   /// YEAR precision the first day of that month or year.
   startDate      String             @map("start_date")
-  /// @pending-consumer(#613) Last day, `YYYY-MM-DD`, for an event that spans a
+  /// Last day, `YYYY-MM-DD`, for an event that spans a
   /// period (parental leave, a year abroad). NULL = a single date.
   endDate        String?            @map("end_date")
-  /// @pending-consumer(#613) How much of the date is known. Applies to both
+  /// How much of the date is known. Applies to both
   /// ends.
   precision      LifeEventPrecision
-  /// @pending-consumer(#613) What happened, in the person's own words,
+  /// What happened, in the person's own words,
   /// AES-256-GCM encrypted at rest.
   titleEncrypted Bytes              @map("title_encrypted")
-  /// @pending-consumer(#613) An optional note, AES-256-GCM encrypted at rest.
+  /// An optional note, AES-256-GCM encrypted at rest.
   noteEncrypted  Bytes?             @map("note_encrypted")
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")

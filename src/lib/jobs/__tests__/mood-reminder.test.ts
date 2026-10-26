@@ -217,7 +217,7 @@ describe("buildMoodReminderPayload", () => {
     expect(p.body).toBe("How are you feeling today?");
   });
 
-  it.each(["es", "fr", "it", "pl", "ko"] as const)(
+  it.each(["es", "fr", "it", "pl", "ko", "nl", "pt-BR"] as const)(
     "returns native (non-EN) strings for locale=%s",
     (locale) => {
       const p = buildMoodReminderPayload(locale);
@@ -387,7 +387,9 @@ describe("runMoodReminderTick", () => {
     });
 
     expect(prisma.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { moodReminderEnabled: true } }),
+      expect.objectContaining({
+        where: { moodReminderEnabled: true, deletionRequestedAt: null },
+      }),
     );
   });
 

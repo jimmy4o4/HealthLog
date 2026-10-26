@@ -28,6 +28,7 @@ import { ApiTokenOverviewSection } from "@/components/admin/api-token-overview-s
 import { AppLogPreviewSection } from "@/components/admin/app-log-preview-section";
 import { BackupsSection } from "@/components/admin/backups-section";
 import { OffhostBackupsSection } from "@/components/admin/offhost-backups-section";
+import { RecoveryReadinessCard } from "@/components/admin/recovery-readiness-card";
 import { DangerZoneSection } from "@/components/admin/danger-zone-section";
 import { EncryptionSection } from "@/components/admin/encryption-section";
 import { GeneralSettingsSection } from "@/components/admin/general-settings-section";
@@ -103,7 +104,7 @@ export function AdminSectionRenderer({
       // v1.18.1 — the former ai-quality, assistant, and coach-feedback
       // sections fold into one Coach area: surface toggles + operator
       // config first, then the two feedback-quality tables.
-      // v1.18.6 (W9) — server-wide module availability moved out to its own
+      // v1.18.6 — server-wide module availability moved out to its own
       // `module-availability` section: it gates EVERY module, not just the
       // coach, so it no longer belongs stacked under Coach.
       return (
@@ -118,7 +119,7 @@ export function AdminSectionRenderer({
         </SectionFrame>
       );
     case "module-availability":
-      // v1.18.6 (W9) — operator-side server-wide module on/off, its own
+      // v1.18.6 — operator-side server-wide module on/off, its own
       // admin section (was stacked under Coach). Reconciled name: the
       // user-facing "Module" settings pick from what is available here.
       return (
@@ -166,10 +167,12 @@ export function AdminSectionRenderer({
         </SectionFrame>
       );
     case "backups":
-      // Two cards, two independent failure modes: the copies held in this
-      // database, then the copies that reached the operator's bucket.
+      // The verdict across every backup first, then two cards, two
+      // independent failure modes: the copies held in this database, then
+      // the copies that reached the operator's bucket.
       return (
         <SectionFrame>
+          <RecoveryReadinessCard />
           <BackupsSection />
           <OffhostBackupsSection />
         </SectionFrame>
@@ -187,8 +190,8 @@ export function AdminSectionRenderer({
         </SectionFrame>
       );
     case "about":
-      // v1.4.36 W4e — About section reused as-is from the settings surface.
-      // v1.18.6 (W9) — route it through `SectionFrame` like every other admin
+      // v1.4.36 — About section reused as-is from the settings surface.
+      // v1.18.6 — route it through `SectionFrame` like every other admin
       // section so it gets the same visible heading + subtitle (the one admin
       // page that was bypassing the frame and showing no heading).
       return (

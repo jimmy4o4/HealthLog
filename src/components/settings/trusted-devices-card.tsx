@@ -40,7 +40,7 @@ export function TrustedDevicesCard({
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<string | null>(null);
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.trustedDevices(),
     queryFn: () =>
       apiGet<{ devices: TrustedDeviceRow[] }>("/api/auth/me/trusted-devices"),
@@ -105,6 +105,8 @@ export function TrustedDevicesCard({
 
         {isError && (
           <QueryErrorRow
+            inset
+            error={error}
             message={t("settings.security.trustedDevices.loadError")}
             onRetry={() => refetch()}
           />
@@ -135,6 +137,7 @@ export function TrustedDevicesCard({
                 </div>
                 <ConfirmButton
                   slot="revoke-trusted-device"
+                  destructive
                   size="sm"
                   className="min-h-9 shrink-0"
                   label={t("settings.security.trustedDevices.revoke")}
@@ -155,6 +158,7 @@ export function TrustedDevicesCard({
           <SettingsCardActions>
             <ConfirmButton
               slot="revoke-all-trusted-devices"
+              destructive
               className="min-h-11 sm:min-h-9"
               label={t("settings.security.trustedDevices.revokeAll")}
               title={t(

@@ -21,9 +21,11 @@
  * that moves the registry back off the global breaks this paragraph, not
  * just a performance assumption.
  */
-import type { User } from "@/generated/prisma/client";
+import type { SessionUser } from "@/lib/auth/session-user";
 
 import { prisma } from "@/lib/db";
+import { runDetached } from "@/lib/logging/detached";
+import { trackBackgroundTask } from "@/lib/logging/background-tasks";
 import { annotate } from "@/lib/logging/context";
 import { cachedSwr, caches, type ServerCache } from "@/lib/cache/server-cache";
 import { dashboardSnapshotCacheKey } from "@/lib/cache/invalidate";
@@ -41,6 +43,10 @@ import { briefingForToday } from "@/lib/daily/briefing-today";
 import { requestTodayBriefingWarm } from "@/lib/daily/briefing-today-warm";
 import { readBriefingGeneratedAt } from "@/lib/insights/briefing-generated-at";
 import { userDayKey } from "@/lib/tz/format";
+import {
+  INSIGHTS_CACHE_SELECT,
+  openInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
 
 /**
  * Per-key TTL for the snapshot cache entry. Strictly greater than the
@@ -117,11 +123,29 @@ export interface SnapshotReadOptions {
  * timing surface; the RSC prefetch passes none.
  */
 export async function readDashboardSnapshotCached(
-  user: User,
+  user: SessionUser,
   time?: <T>(label: string, builder: () => Promise<T>) => Promise<T>,
   options: SnapshotReadOptions = {},
 ): Promise<SnapshotReadResult> {
-  // `User` row is already in hand at both call sites — no extra round-trip.
+  // The cached briefing text is not on the per-request user
+  // (`SESSION_USER_SELECT`), so it is read here, beside the locale: every
+  // read needs it for the generated-at stamp below, not only a cache miss.
+  const [cacheRow, locale] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: INSIGHTS_CACHE_SELECT,
+    }),
+    // v1.21.2 — the briefing recall + forward-look is locale-specific
+    // prose, so the snapshot cache key carries the resolved locale: an EN and
+    // a DE session never share a snapshot cell (and never see each other's
+    // memory wording). The `${user.id}|` prefix still covers the key under
+    // the measurement-write stale-sweep.
+    resolveServerLocale({
+      userLocale: user.locale,
+      override: options.locale ?? null,
+    }),
+  ]);
+  const cachedText = openInsightsCachedText(cacheRow);
   const snapshotUser: SnapshotUserInput = {
     id: user.id,
     username: user.username,
@@ -132,7 +156,7 @@ export async function readDashboardSnapshotCached(
     gender: user.gender,
     glucoseUnit: user.glucoseUnit,
     onboardingTourCompleted: user.onboardingTourCompleted,
-    insightsCachedText: user.insightsCachedText,
+    insightsCachedText: cachedText,
     insightsCachedAt: user.insightsCachedAt,
     insightsCachedLocale: user.insightsCachedLocale,
     dashboardWidgetsJson: user.dashboardWidgetsJson,
@@ -140,16 +164,6 @@ export async function readDashboardSnapshotCached(
     thresholdsJson: user.thresholdsJson,
     healthScoreConfigJson: user.healthScoreConfigJson,
   };
-
-  // v1.21.2 (A4) — the briefing recall + forward-look is locale-specific
-  // prose, so the snapshot cache key carries the resolved locale: an EN and
-  // a DE session never share a snapshot cell (and never see each other's
-  // memory wording). The `${user.id}|` prefix still covers the key under
-  // the measurement-write stale-sweep.
-  const locale = await resolveServerLocale({
-    userLocale: user.locale,
-    override: options.locale ?? null,
-  });
 
   // Stale-while-revalidate: a measurement write marks the analytics
   // bucket stale rather than hard-evicting the snapshot, so a busy iOS
@@ -177,7 +191,7 @@ export async function readDashboardSnapshotCached(
   // the cached body. The record's own state decides, whoever is reading, so a
   // delegate sees the owner's briefing exactly when the owner would.
   const now = options.now ?? new Date();
-  const generatedAt = readBriefingGeneratedAt(user.insightsCachedText);
+  const generatedAt = readBriefingGeneratedAt(cachedText);
   const body = applyBriefingForToday(
     applyBriefingCapability(cached, briefingAi),
     { generatedAt, timezone: user.timezone, language: locale, now },
@@ -189,14 +203,18 @@ export async function readDashboardSnapshotCached(
   // its claim, never thrown.
   if (briefingAi.available) {
     const lastSeen = cached.tiles?.lastSeenByType ?? {};
-    void requestTodayBriefingWarm({
-      userId: user.id,
-      locale,
-      timezone: user.timezone,
-      generatedAt,
-      lastSeenAt: (type) => lastSeen[type]?.lastSeenAt ?? null,
-      now,
-    }).catch(() => undefined);
+    trackBackgroundTask(
+      runDetached(() =>
+        requestTodayBriefingWarm({
+          userId: user.id,
+          locale,
+          timezone: user.timezone,
+          generatedAt,
+          lastSeenAt: (type) => lastSeen[type]?.lastSeenAt ?? null,
+          now,
+        }),
+      ).catch(() => undefined),
+    );
   }
 
   return { body, locale };

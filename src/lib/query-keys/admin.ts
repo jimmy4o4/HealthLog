@@ -55,9 +55,10 @@ export const adminKeys = {
     ["admin", "maintenance", "measurements"] as const,
   /** v1.43 — the pulse day-mean method, its dry run and apply step. */
   adminPulseDayMean: () => ["admin", "maintenance", "pulse-day-mean"] as const,
-  /** v1.40.0 — the "Back up your encryption key" step (admin + dashboard banner). */
-  adminEncryptionKeyBackup: () =>
-    ["admin", "encryption", "key-backup"] as const,
+  /** The recovery kit (admin Encryption section + dashboard banner). */
+  adminRecoveryKit: () => ["admin", "recovery-kit"] as const,
+  /** Every backup signal's verdict (admin overview + Backups). */
+  adminRecoveryReadiness: () => ["admin", "recovery-readiness"] as const,
   adminCoachFeedback: () => ["admin", "coach-feedback"] as const,
   adminFeedback: (status: string) => ["admin", "feedback", status] as const,
   adminFeedbackRoot: () => ["admin", "feedback"] as const,
@@ -68,7 +69,7 @@ export const adminKeys = {
   adminAuditActions: () => ["admin", "audit-log", "actions"] as const,
   adminAuditOverview: () => ["admin", "audit-log", "overview-preview"] as const,
   /**
-   * v1.4.42 W3-QUERYKEY-LONGTAIL — paginated + filtered audit-log
+   * v1.4.42 — paginated + filtered audit-log
    * read used by the login-overview admin section. The `filtered`
    * discriminator at index 2 keeps the no-arg `adminAuditLog(filter)`
    * cache slot byte-distinct so its consumers don't collide.

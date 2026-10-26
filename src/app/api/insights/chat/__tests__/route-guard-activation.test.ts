@@ -98,7 +98,8 @@ const { assertConsentForChain } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/ai/consent-guard", () => ({ assertConsentForChain }));
 vi.mock("@/lib/ai/prompts/insight-generator", () => ({ PROMPT_VERSION: "x" }));
-vi.mock("@/lib/ai/ai-budgets", () => ({
+vi.mock("@/lib/ai/ai-budgets", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/ai-budgets")>()),
   AI_BUDGETS: { coach: { maxTokens: 1500, temperature: 0.4 } },
 }));
 
@@ -128,7 +129,7 @@ vi.mock("@/lib/ai/coach/facts", () => ({
 // Guard II — the schedule read. Empty here; the schedule-gated dose rule is
 // unit-tested in the outbound-screen suite.
 vi.mock("@/lib/medications/scheduled-doses", () => ({
-  getScheduledDoseValues: vi.fn(async () => []),
+  getScheduledDosePlan: vi.fn(async () => []),
 }));
 
 const { reserveBudget, reconcileSpend } = vi.hoisted(() => ({

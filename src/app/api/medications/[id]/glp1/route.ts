@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W4d — GLP-1 medication details endpoint.
+ * v1.4.25 — GLP-1 medication details endpoint.
  *
  * Returns per-medication extras the GLP-1 card variant + the dashboard
  * tile + the doctor-report PDF section read: chronological dose-change
@@ -8,7 +8,7 @@
  * /api/medications/[id] GET is unchanged so v1.4.24 consumers keep
  * working untouched.
  *
- * v1.4.25 W21 Fix-K — POST hardened with Zod parse, audit-log, 30/min
+ * v1.4.25 — POST hardened with Zod parse, audit-log, 30/min
  * rate-limit, finite-number guard on `doseValue`, length cap on `note`,
  * and sane bounds on `effectiveFrom`. Mirrors the sibling
  * `/inventory` + `/side-effects` route shape.
@@ -18,13 +18,8 @@ import { prisma } from "@/lib/db";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { auditLog } from "@/lib/auth/audit";
 import { annotate } from "@/lib/logging/context";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { glp1PostBodySchema } from "@/lib/validations/medication";
 import { assertMedicationOwnership } from "@/lib/medications/route-guards";
@@ -34,7 +29,7 @@ import {
   estimateRunwayDays,
   lowStockTriggerDays,
   type RunwaySchedule,
-} from "@/components/medications/detail/supply-runway";
+} from "@/lib/medications/supply-runway";
 import {
   resolveLowStockRunwayDays,
   resolveReorderLeadDays,
@@ -48,6 +43,7 @@ import {
 import { NextRequest } from "next/server";
 import { dueSchedules } from "@/lib/medications/intake-tracking";
 import { floorWhole } from "@/lib/medications/units-per-dose";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -68,8 +64,8 @@ export const GET = apiHandler(
     const { user } = await requireRecordAuth("read", "medications");
     const { id } = await params;
 
-    // v1.5.5 F-1 C-4 — close the §10 invariant 24 gap. The destructive
-    // sweep in af224964 lifted every sibling `[id]/**` handler onto the
+    // v1.5.5 — close the §10 invariant 24 gap. The destructive
+    // sweep in af224964 lifted every sibling `[id]` handler onto the
     // shared ownership helper; the glp1 GET still hand-rolled the
     // `findUnique + userId compare` pattern. Routing it through the
     // same predicate keeps the 404 leak shape identical across every
@@ -95,7 +91,7 @@ export const GET = apiHandler(
           take: 12,
           select: { takenAt: true, injectionSite: true },
         },
-        schedules: true,
+        schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
       },
     });
 
@@ -283,16 +279,10 @@ async function postGlp1Update(
     });
   }
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, glp1PostBodySchema, {
     maxBytes: 64 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = glp1PostBodySchema.safeParse(body);
-  if (!parsed.success) {
-    // v1.4.43 W6 — multi-issue 422.
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const ip = getClientIp(request);
 

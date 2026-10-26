@@ -314,6 +314,12 @@ export interface MetricFreshnessEntry extends MetricFreshnessSample {
    * `classifyMetricFreshness`.
    */
   stale: boolean;
+  /**
+   * Apple Health types the app writes back to the phone only (#1247): the
+   * newest reading entered here rather than arriving from Apple Health, or
+   * null when there is none. Absent on every other entry.
+   */
+  lastEnteredHereAt?: string | null;
 }
 
 /**
@@ -330,15 +336,33 @@ export function classifyMetricFreshness(
   samples: readonly MetricFreshnessSample[],
   verdict: SyncVerdict,
   now: Date | number = Date.now(),
+  enteredHere?: ReadonlyMap<string, string | null>,
 ): MetricFreshnessEntry[] {
   const nowMs = now instanceof Date ? now.getTime() : now;
   return samples.map((sample) => {
-    if (verdict !== "fresh" || SPARSE_METRIC_TYPES.has(sample.type)) {
-      return { ...sample, stale: false };
-    }
-    const seen = toMillis(sample.lastSeenAt);
-    return {
+    // A type the app writes back to the phone (#1247): what is entered here
+    // goes to Apple Health and never arrives back, so a person who keeps
+    // their readings here would otherwise watch the type go quiet. That
+    // reading is in Apple Health too, so the newer of the two is the type's
+    // newest reading: it is what the row shows and what the verdict reads.
+    const written = enteredHere?.has(sample.type)
+      ? { lastEnteredHereAt: enteredHere.get(sample.type) ?? null }
+      : {};
+    const seen = newest(
+      toMillis(sample.lastSeenAt),
+      toMillis(written.lastEnteredHereAt),
+    );
+    const resolved = {
       ...sample,
+      ...written,
+      lastSeenAt:
+        seen != null ? new Date(seen).toISOString() : sample.lastSeenAt,
+    };
+    if (verdict !== "fresh" || SPARSE_METRIC_TYPES.has(sample.type)) {
+      return { ...resolved, stale: false };
+    }
+    return {
+      ...resolved,
       stale: seen != null && nowMs - seen > METRIC_QUIET_AFTER_MS,
     };
   });

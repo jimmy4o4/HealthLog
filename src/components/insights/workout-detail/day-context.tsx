@@ -107,7 +107,7 @@ export function WorkoutDetailDayContext({
         initialDateKey={workout.dayKey}
       />
 
-      <Card className="gap-2 py-3 md:py-4" data-slot="workout-detail-day-card">
+      <Card density="compact" data-slot="workout-detail-day-card">
         <CardContent>
           <div className="divide-border divide-y">
             {sleepEnabled ? (
@@ -120,6 +120,8 @@ export function WorkoutDetailDayContext({
                   {sleep.isError ? (
                     // A failed read is not an absent night.
                     <QueryErrorRow
+                      inset
+                      error={sleep.error}
                       onRetry={sleep.refetch}
                       slot="workout-detail-day-sleep-error"
                     />
@@ -169,6 +171,8 @@ export function WorkoutDetailDayContext({
                 </p>
                 {mood.isError ? (
                   <QueryErrorRow
+                    inset
+                    error={mood.error}
                     onRetry={mood.refetch}
                     slot="workout-detail-day-mood-error"
                   />

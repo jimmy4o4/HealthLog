@@ -8,13 +8,17 @@ import {
   STAGE_ORDER,
   buildCompositionRows,
   compositionTotals,
+  stagesInWindow,
   windowHasNap,
   type SleepStageBreakdown,
   type SleepStageNight,
 } from "../sleep-stage-stacked-bar";
+import { primeLocales } from "@/__tests__/helpers/prime-locales";
+
+primeLocales("de");
 
 /**
- * v1.4.25 W4c / W3f — sleep-stage stacked-bar chart unit tests.
+ * v1.4.25 — sleep-stage stacked-bar chart unit tests.
  *
  * The chart relies on Recharts which uses `ResponsiveContainer` —
  * `renderToStaticMarkup` produces SSR-only HTML so we assert the
@@ -61,7 +65,7 @@ describe("<SleepStageStackedBar>", () => {
     expect(html).toContain("Stage composition");
     expect(html).toContain("Last 23 nights");
     // The title routes through the canonical tile header rather than a
-    // hand-rolled title row (UI-STANDARDS §1 / §8).
+    // hand-rolled title row (ui-standards.md §1 / §8).
     expect(html).toContain('data-slot="tile-header"');
   });
 
@@ -158,7 +162,7 @@ describe("<SleepStageStackedBar>", () => {
   });
 
   /**
-   * v1.4.25 W3f — per-night surface + window toggle.
+   * v1.4.25 — per-night surface + window toggle.
    */
   describe("per-night + window toggle (v1.4.25 W3f)", () => {
     it("renders three window-toggle buttons (7 / 14 / 30 days) with 7d active by default", () => {
@@ -179,10 +183,10 @@ describe("<SleepStageStackedBar>", () => {
       expect(html).toContain('data-slot="sleep-stage-window-30"');
       // The 7d button is default-active.
       expect(html).toMatch(
-        /data-slot="sleep-stage-window-7"[^>]*aria-pressed="true"/,
+        /aria-pressed="true"[^>]*data-slot="sleep-stage-window-7"/,
       );
       expect(html).toMatch(
-        /data-slot="sleep-stage-window-14"[^>]*aria-pressed="false"/,
+        /aria-pressed="false"[^>]*data-slot="sleep-stage-window-14"/,
       );
     });
 
@@ -338,5 +342,51 @@ describe("nap band", () => {
     expect(windowHasNap(buildCompositionRows(perNight, 2, label).rows)).toBe(
       false,
     );
+  });
+});
+
+describe("legend follows the visible stages", () => {
+  const label = (dayKey: string) => dayKey;
+
+  it("leaves a stage the window never holds out of the mounted bands", () => {
+    // A staged week: deep, REM, core and wake bouts, no unspecified "asleep"
+    // minutes. Every mounted band is a legend entry, so ASLEEP must not be one.
+    const perNight: SleepStageNight[] = [
+      {
+        dayKey: "2026-06-03",
+        stages: { DEEP: 60, REM: 90, CORE: 250, AWAKE: 15 },
+      },
+      { dayKey: "2026-06-04", stages: { DEEP: 55, REM: 80, CORE: 260 } },
+    ];
+    const { rows } = buildCompositionRows(perNight, 7, label);
+    expect(stagesInWindow(rows)).toEqual(["DEEP", "REM", "CORE", "AWAKE"]);
+  });
+
+  it("keeps the unspecified stage when an older source sends it", () => {
+    const perNight: SleepStageNight[] = [
+      { dayKey: "2026-06-03", stages: { ASLEEP: 410, AWAKE: 20 } },
+    ];
+    const { rows } = buildCompositionRows(perNight, 7, label);
+    expect(stagesInWindow(rows)).toEqual(["ASLEEP", "AWAKE"]);
+  });
+
+  it("keeps the stack order whatever order the payload uses", () => {
+    const perNight: SleepStageNight[] = [
+      { dayKey: "2026-06-03", stages: { AWAKE: 10, CORE: 200, DEEP: 40 } },
+    ];
+    const { rows } = buildCompositionRows(perNight, 7, label);
+    expect(stagesInWindow(rows)).toEqual(["DEEP", "CORE", "AWAKE"]);
+  });
+
+  it("follows the window, not the whole series", () => {
+    const perNight: SleepStageNight[] = [
+      { dayKey: "2026-05-01", stages: { ASLEEP: 400 } },
+      ...Array.from({ length: 7 }, (_, i) => ({
+        dayKey: `2026-06-0${i + 1}`,
+        stages: { CORE: 250, DEEP: 50 },
+      })),
+    ];
+    const { rows } = buildCompositionRows(perNight, 7, label);
+    expect(stagesInWindow(rows)).toEqual(["DEEP", "CORE"]);
   });
 });

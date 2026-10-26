@@ -39,10 +39,14 @@
  * shipped several of those.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { authGuardsText, guardSourceOf } from "./helpers/auth-guards";
+import {
+  readSource,
+  readSourceText,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -55,7 +59,7 @@ function sourceFiles(): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
+  return readSourceText(join(SRC, rel));
 }
 
 function filesMatching(re: RegExp): string[] {
@@ -81,7 +85,18 @@ function functionBody(src: string, name: string): string {
   return "";
 }
 
-const API_HANDLER = read("lib/api-handler.ts");
+/**
+ * The auth layer: the route wrapper and every guard module it re-exports,
+ * joined, with the two record resolvers as anchors so a move that loses them
+ * throws instead of leaving the negative legs below green.
+ */
+const AUTH_LAYER = (() => {
+  guardSourceOf("requireRecordAuth", ["requireGuardianAuth"]);
+  return [
+    readSource("src/lib/api-handler.ts", "apiHandler"),
+    authGuardsText(),
+  ].join("\n");
+})();
 
 /** The two helpers that resolve a record and therefore must consult the fence. */
 const FENCED_RESOLVERS = ["requireRecordAuth", "requireGuardianAuth"] as const;
@@ -118,13 +133,18 @@ const UNFENCED_HELPERS = [
 ] as const;
 
 describe("the fence runs in exactly two auth helpers", () => {
-  it("is called by both record resolvers and by nothing else in api-handler", () => {
-    const calls = [...API_HANDLER.matchAll(/assertRecordSessionFence\s*\(/g)];
+  it("is called by both record resolvers and by nothing else in the auth layer", () => {
+    const calls = [
+      ...authGuardsText().matchAll(/assertRecordSessionFence\s*\(/g),
+    ];
+    expect(readSource("src/lib/api-handler.ts", "apiHandler")).not.toMatch(
+      /assertRecordSessionFence\s*\(/,
+    );
     // Non-zero proof: an emptied file would agree with an emptied expectation.
     expect(calls.length).toBeGreaterThan(0);
 
     const callers = FENCED_RESOLVERS.filter((name) =>
-      functionBody(API_HANDLER, name).includes("assertRecordSessionFence("),
+      functionBody(AUTH_LAYER, name).includes("assertRecordSessionFence("),
     );
     expect(callers).toEqual([...FENCED_RESOLVERS]);
     // Two call sites, one import. Anything else means a third caller appeared.
@@ -134,7 +154,7 @@ describe("the fence runs in exactly two auth helpers", () => {
   it.each(FENCED_RESOLVERS)(
     "%s fences after authentication and before the carrier and the grant",
     (name) => {
-      const body = functionBody(API_HANDLER, name);
+      const body = functionBody(AUTH_LAYER, name);
       expect(body.length).toBeGreaterThan(100);
 
       const fence = body.indexOf("assertRecordSessionFence(");
@@ -157,11 +177,11 @@ describe("the fence runs in exactly two auth helpers", () => {
   it("fences before any grant lookup in the shared resolver path", () => {
     // `findActiveGrant` lives in `resolveSwitchedRecord`, which both resolvers
     // tail-call. Assert it appears nowhere ABOVE the fence in either body.
-    const grantCalls = [...API_HANDLER.matchAll(/findActiveGrant\s*\(/g)];
+    const grantCalls = [...authGuardsText().matchAll(/findActiveGrant\s*\(/g)];
     expect(grantCalls.length).toBeGreaterThan(0);
 
     for (const name of FENCED_RESOLVERS) {
-      const body = functionBody(API_HANDLER, name);
+      const body = functionBody(AUTH_LAYER, name);
       const fence = body.indexOf("assertRecordSessionFence(");
       const grant = body.indexOf("findActiveGrant(");
       // Either the body never names it (it is in the shared tail) or it names
@@ -171,7 +191,7 @@ describe("the fence runs in exactly two auth helpers", () => {
   });
 
   it.each(UNFENCED_HELPERS)("%s deliberately does not fence", (name) => {
-    const body = functionBody(API_HANDLER, name);
+    const body = functionBody(AUTH_LAYER, name);
     expect(body.length).toBeGreaterThan(50);
     expect(body).not.toContain("assertRecordSessionFence");
   });
@@ -181,8 +201,11 @@ describe("the fence runs in exactly two auth helpers", () => {
     // client's context is unknown; the switch endpoint is the way out of a
     // context that cannot be proved. Fencing either would make an unprovable
     // context unrecoverable.
-    const me = read("app/api/auth/me/route.ts");
-    const sw = read("app/api/account/switch/route.ts");
+    const me = readSource("src/app/api/auth/me/route.ts", "requireActorAuth");
+    const sw = readSource(
+      "src/app/api/account/switch/route.ts",
+      "requireActorAuth",
+    );
     expect(me).toContain("requireActorAuth");
     expect(sw).toContain("requireActorAuth");
     expect(me).not.toContain("assertRecordSessionFence");
@@ -217,7 +240,7 @@ describe("the epoch has one writer and a closed reader set", () => {
         // Projects it off the session row it already loaded.
         "lib/auth/session.ts",
         // Carries it on the auth context the fence is handed.
-        "lib/api-handler.ts",
+        "lib/auth/guards/context.ts",
         // Compares it. The one place that decides anything from it.
         "lib/sharing/record-session-fence.ts",
         // Reads it off the same session lookup the idempotency wrapper already
@@ -229,7 +252,10 @@ describe("the epoch has one writer and a closed reader set", () => {
   });
 
   it("is consulted by the idempotency wrapper, above the cache", () => {
-    const src = read("lib/idempotency.ts");
+    const src = readSource(
+      "src/lib/idempotency.ts",
+      "refuseStaleRecordSessionClaim(claim)",
+    );
     const fence = src.indexOf("refuseStaleRecordSessionClaim(claim)");
     const cache = src.indexOf("findCached(ctx)");
     const claimRow = src.indexOf("claimKey(ctx)");

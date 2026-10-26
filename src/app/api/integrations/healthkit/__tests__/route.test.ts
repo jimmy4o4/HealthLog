@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/db", () => ({
   prisma: {
     user: { findUnique: vi.fn(), update: vi.fn() },
-    // v1.4.43 W6 — audit-ledger breadcrumb for validation-failed paths.
+    // v1.4.43 — audit-ledger breadcrumb for validation-failed paths.
     auditLog: { create: vi.fn() },
     // Per-metric freshness + first-run sync progress for the APPLE_HEALTH
     // source (#778).
@@ -48,6 +48,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth/session";
 import { listLiveMeasurementTypes } from "@/lib/measurements/live-types";
 import { APPLE_HEALTH_DATA_STALE_AFTER_MS } from "@/lib/integrations/sync-verdict";
+import { auditLog } from "@/lib/auth/audit";
 
 const SESSION_OK = {
   session: { id: "sess-1", expiresAt: new Date(Date.now() + 3_600_000) },
@@ -56,6 +57,7 @@ const SESSION_OK = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(auditLog).mockResolvedValue(undefined);
   vi.mocked(prisma.user.findUnique).mockResolvedValue({
     healthKitConfigJson: null,
     healthKitLastSyncedAt: null,
@@ -220,18 +222,16 @@ describe("PATCH /api/integrations/healthkit — 422 multi-issue (v1.4.43 W6)", (
     );
     expect(res.status).toBe(422);
     await new Promise((r) => setTimeout(r, 5));
-    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(prisma.auditLog.create).mock.calls[0]?.[0] as {
-      data: { userId: string; action: string };
-    };
-    expect(call.data.action).toBe("integrations.healthkit.validation-failed");
+    // Through `auditLog()`, which decides whether the refusal is filed.
+    expect(auditLog).toHaveBeenCalledWith(
+      "integrations.healthkit.validation-failed",
+      expect.anything(),
+    );
   });
 
   it("does not block the 422 when the audit-row write rejects", async () => {
     vi.mocked(getSession).mockResolvedValue(SESSION_OK as never);
-    vi.mocked(prisma.auditLog.create).mockRejectedValueOnce(
-      new Error("db down"),
-    );
+    vi.mocked(auditLog).mockRejectedValueOnce(new Error("db down"));
     const res = await PATCH(
       patchReq({ entries: [{ id: "bodyMass", direction: "JUNK" }] }),
     );
@@ -356,6 +356,89 @@ describe("GET /api/integrations/healthkit — sync health", () => {
     );
     expect(byType.RESPIRATORY_RATE).toBe(true);
     expect(byType.PULSE).toBe(false);
+  });
+
+  // #1247 — weight entered here goes to Apple Health and never arrives back,
+  // so a person who keeps their weight here watched the type go quiet.
+  describe("a type the app writes back to the phone", () => {
+    function mockWriteBack(enteredHereAt: Date | null): void {
+      vi.mocked(listLiveMeasurementTypes).mockResolvedValue([
+        "WEIGHT",
+        "PULSE",
+      ]);
+      vi.mocked(prisma.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+      ) => {
+        const sql = strings.join("?");
+        if (sql.includes("medication_intake_events")) {
+          return [{ last_seen: null }];
+        }
+        if (sql.includes("<> 'APPLE_HEALTH'")) {
+          return [{ type: "WEIGHT", last_seen: enteredHereAt }];
+        }
+        return [
+          { type: "WEIGHT", last_seen: ago(30 * DAY) },
+          { type: "PULSE", last_seen: ago(30 * DAY) },
+        ];
+      }) as never);
+    }
+
+    function byType(body: Body) {
+      return Object.fromEntries(
+        body.metricFreshness.map((entry) => [entry.type, entry]),
+      ) as Record<
+        string,
+        Body["metricFreshness"][number] & {
+          lastEnteredHereAt?: string | null;
+        }
+      >;
+    }
+
+    it("is not quiet while readings are entered here", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        healthKitConfigJson: null,
+        healthKitLastSyncedAt: ago(60 * 60 * 1000),
+      } as never);
+      const enteredHereAt = ago(2 * DAY);
+      mockWriteBack(enteredHereAt);
+      const entries = byType(await read());
+      expect(entries.WEIGHT.stale).toBe(false);
+      expect(entries.WEIGHT.lastEnteredHereAt).toBe(
+        enteredHereAt.toISOString(),
+      );
+      // The reading entered here is in Apple Health too, so it is the type's
+      // newest reading: the row and the verdict read the same instant.
+      expect(entries.WEIGHT.lastSeenAt).toBe(enteredHereAt.toISOString());
+      // A read-only type keeps its own verdict and carries no such field.
+      expect(entries.PULSE.stale).toBe(true);
+      expect(entries.PULSE).not.toHaveProperty("lastEnteredHereAt");
+    });
+
+    it("is quiet when nothing arrived and nothing was entered here", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        healthKitConfigJson: null,
+        healthKitLastSyncedAt: ago(60 * 60 * 1000),
+      } as never);
+      mockWriteBack(null);
+      const entries = byType(await read());
+      expect(entries.WEIGHT.stale).toBe(true);
+      expect(entries.WEIGHT.lastEnteredHereAt).toBeNull();
+    });
+
+    it("counts only what the entry still writes back", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        healthKitConfigJson: {
+          entries: [
+            { id: "bodyMass", kind: "bodyMass", direction: "readOnly" },
+          ],
+        },
+        healthKitLastSyncedAt: ago(60 * 60 * 1000),
+      } as never);
+      mockWriteBack(ago(2 * DAY));
+      const entries = byType(await read());
+      expect(entries.WEIGHT.stale).toBe(true);
+      expect(entries.WEIGHT).not.toHaveProperty("lastEnteredHereAt");
+    });
   });
 
   // #586 — the reporter's question is whether the phone delivers on its own or
@@ -534,6 +617,7 @@ describe("GET /api/integrations/healthkit — sync health", () => {
       lastNewSampleAt: null,
       lastBackgroundAt: backgroundAt.toISOString(),
       lastBackfillAt: null,
+      lastSeenDuplicateAt: null,
     });
     expect(byType.PULSE).toMatchObject({ lastBackgroundAt: null });
   });

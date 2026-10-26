@@ -8,8 +8,8 @@ vi.mock("@/lib/api-handler", () => ({
   })),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma = {
     measurement: {
       create: vi.fn(),
       createManyAndReturn: vi.fn(),
@@ -18,8 +18,13 @@ vi.mock("@/lib/db", () => ({
       upsert: vi.fn(),
     },
     moodEntry: { create: vi.fn(), findUnique: vi.fn(), upsert: vi.fn() },
-  },
-}));
+    // A mood entry is written in a transaction with its links and context;
+    // the callback runs against this same client. Given as the mock's own
+    // implementation, so `resetAllMocks` keeps it.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: vi.fn(),
@@ -29,7 +34,8 @@ vi.mock("@/lib/auth/audit", () => ({
   auditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/logging/context", () => ({
+vi.mock("@/lib/logging/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/logging/context")>()),
   annotate: vi.fn(),
 }));
 
@@ -54,9 +60,19 @@ vi.mock("@/lib/rollups/measurement-rollups", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/rollups/measurement-rollups")
   >("@/lib/rollups/measurement-rollups");
+  const perKey = vi.fn().mockResolvedValue(undefined);
   return {
     ...actual,
-    recomputeBucketsForMeasurement: vi.fn().mockResolvedValue(undefined),
+    recomputeBucketsForMeasurement: perKey,
+    // The keyed refold, observed as the per-key recomputes it stands for.
+    recomputeBucketsForKeys: vi.fn(
+      async (
+        userId: string,
+        keys: Array<{ type: string; measuredAt: Date }>,
+      ) => {
+        for (const k of keys) await perKey(userId, k.type, k.measuredAt);
+      },
+    ),
   };
 });
 

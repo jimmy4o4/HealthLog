@@ -137,6 +137,17 @@ function makeRequest(
   });
 }
 
+/**
+ * GPS tracks are kept only after the account opts in (v1.44,
+ * `storeWorkoutRoutes`, off by default). The route-storing cases turn it on.
+ */
+async function keepWorkoutRoutes(): Promise<void> {
+  await getPrismaClient().user.update({
+    where: { id: TEST_USER_ID },
+    data: { storeWorkoutRoutes: true },
+  });
+}
+
 function baseWorkout(
   externalId: string,
   overrides: WorkoutFixture = {},
@@ -154,6 +165,7 @@ function baseWorkout(
 describe("POST /api/workouts/batch (real Postgres)", () => {
   it("inserts a single workout with a nested route", async () => {
     const { POST } = await import("@/app/api/workouts/batch/route");
+    await keepWorkoutRoutes();
 
     const body = {
       workouts: [
@@ -216,6 +228,58 @@ describe("POST /api/workouts/batch (real Postgres)", () => {
     ).toEqual(body.workouts[0]!.route!.geometry);
   });
 
+  it("keeps the workout and drops its track for an account that has not opted in", async () => {
+    const { POST } = await import("@/app/api/workouts/batch/route");
+    const before = await getPrismaClient().user.findUniqueOrThrow({
+      where: { id: TEST_USER_ID },
+      select: { storeWorkoutRoutes: true },
+    });
+    expect(before.storeWorkoutRoutes).toBe(false);
+
+    const body = {
+      workouts: [
+        baseWorkout("hk-uuid-no-optin-001", {
+          totalDistanceM: 5200,
+          route: {
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [11.077, 49.452],
+                [11.078, 49.453],
+              ],
+            },
+          },
+        }),
+      ],
+    };
+
+    const res = await POST(makeRequest(body));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      data: {
+        inserted: number;
+        entries: Array<{ index: number; status: string }>;
+      };
+    };
+    // The entry status speaks for the workout, which was stored; the track
+    // follows the account's own setting, which the client reads separately.
+    expect(json.data.inserted).toBe(1);
+    expect(json.data.entries).toEqual([{ index: 0, status: "inserted" }]);
+
+    const workouts = await getPrismaClient().workout.findMany({
+      where: { userId: TEST_USER_ID },
+      include: { route: true },
+    });
+    expect(workouts).toHaveLength(1);
+    expect(workouts[0]?.totalDistanceM).toBe(5200);
+    expect(workouts[0]?.route).toBeNull();
+    expect(
+      await getPrismaClient().workoutRoute.count({
+        where: { workout: { userId: TEST_USER_ID } },
+      }),
+    ).toBe(0);
+  });
+
   it("persists a route-independent HR series for an indoor workout (v1.10.0)", async () => {
     const { POST } = await import("@/app/api/workouts/batch/route");
 
@@ -254,6 +318,7 @@ describe("POST /api/workouts/batch (real Postgres)", () => {
 
   it("inserts a 100-workout batch with a mix of routed and routeless entries", async () => {
     const { POST } = await import("@/app/api/workouts/batch/route");
+    await keepWorkoutRoutes();
 
     const workouts: WorkoutFixture[] = Array.from({ length: 100 }, (_, i) => {
       const offsetMin = i * 60;
@@ -356,8 +421,16 @@ describe("POST /api/workouts/batch (real Postgres)", () => {
   it("preserves same-source workouts and surfaces exact re-posts as duplicates", async () => {
     const { POST } = await import("@/app/api/workouts/batch/route");
 
+    // Two sessions of one source in the same five-minute slot: different
+    // start and length, so two workouts.
     const body = {
-      workouts: [baseWorkout("hk-uuid-dup-1"), baseWorkout("hk-uuid-dup-2")],
+      workouts: [
+        baseWorkout("hk-uuid-dup-1"),
+        baseWorkout("hk-uuid-dup-2", {
+          startedAt: "2026-05-14T06:32:00.000Z",
+          endedAt: "2026-05-14T06:50:00.000Z",
+        }),
+      ],
     };
 
     const first = await POST(makeRequest(body));
@@ -391,6 +464,31 @@ describe("POST /api/workouts/batch (real Postgres)", () => {
       where: { userId: TEST_USER_ID },
     });
     expect(stored).toBe(2);
+  });
+
+  it("stores a session re-sent under a new id once, the way the list shows it", async () => {
+    // HealthKit can hand the same session over twice with two external ids.
+    // The list collapses it to one workout; the write keeps one row and
+    // reports the other as a duplicate instead of storing what no read shows.
+    const { POST } = await import("@/app/api/workouts/batch/route");
+    const res = await POST(
+      makeRequest({
+        workouts: [
+          baseWorkout("hk-uuid-resend-1"),
+          baseWorkout("hk-uuid-resend-2"),
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      data: { inserted: number; duplicates: number };
+    };
+    expect(json.data.inserted).toBe(1);
+    expect(json.data.duplicates).toBe(1);
+    const stored = await getPrismaClient().workout.count({
+      where: { userId: TEST_USER_ID },
+    });
+    expect(stored).toBe(1);
   });
 
   it("replays a cached response when the same Idempotency-Key is reused", async () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceProvenanceLink } from "@/components/provenance/source-provenance-link";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Scale } from "lucide-react";
@@ -29,7 +30,7 @@ import {
 } from "@/lib/analytics/value-bands";
 
 /**
- * v1.4.25 W4 — `/insights/weight`.
+ * v1.4.25 — `/insights/weight`.
  *
  * Routed Weight sub-page. Renders the weight chart with green/orange/red
  * bands plus the per-section AI assessment. The chart-cog
@@ -39,7 +40,7 @@ import {
  * v1.34 — the bands follow the user's own weight target when one is set,
  * and fall back to the height-derived WHO band only when it is not.
  *
- * v1.4.28 R3d (BK-F-H1 + BK-F-M1) — analytics fetch + empty-state
+ * v1.4.28 — analytics fetch + empty-state
  * branch now consume `useInsightsAnalytics()` + `<MetricEmptyState>`.
  */
 export default function InsightsGewichtPage() {
@@ -222,6 +223,8 @@ export default function InsightsGewichtPage() {
         slug="weight"
         icon={<Scale className="h-5 w-5" />}
       />
+      {/* v1.44 (#1204) — where these values come from. */}
+      <SourceProvenanceLink type="WEIGHT" />
     </SubPageShell>
   );
 }

@@ -332,6 +332,11 @@ test("value lines: quarterly means, gaps kept, short ones bridged, as many as th
     );
   expect(dots).toHaveLength(15);
   await page.keyboard.press("Escape");
+  // The menu closes on an exit animation and only then hands focus back to
+  // its trigger, which scrolls the page to the toolbar. Measured before
+  // that, the scroll to the last row below was undone a moment later.
+  await expect(options).toHaveCount(0);
+  await expect(trigger).toBeFocused();
   await expect
     .poll(() => log.timelineQueries.at(-1)?.get("values")?.split(",").length)
     .toBe(15);
@@ -504,6 +509,12 @@ test("a chosen range lives in the URL: reload keeps it, Back returns to it", asy
   expect(await chart.boundingBox()).toEqual(before);
   await expect(desktop.locator('[data-slot="timeline-range"]')).toHaveCount(0);
   expect(page.url()).not.toContain("zoom=range");
+  // The popover slides and scales in (`slide-in-from-top-2 zoom-in-95`);
+  // measured mid-animation it sat up to 8 px higher than where it comes to
+  // rest. Read its place once the entry animation has finished.
+  await popover.evaluate((el) =>
+    Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
+  );
   const anchor = await zoom("range").boundingBox();
   const box = await popover.boundingBox();
   expect(box!.y).toBeGreaterThanOrEqual(anchor!.y + anchor!.height);
@@ -834,9 +845,9 @@ test("the timeline page ends where its content does, at every desktop width", as
       expect(m.mainSw, where).toBeLessThanOrEqual(m.mainCw + 1);
       expect(m.docSw, where).toBeLessThanOrEqual(m.docCw + 1);
       expect(m.docSh, where).toBeLessThanOrEqual(m.docCh + 1);
-      // The shell's own buffer below the last card (pb-20 and the top
-      // padding), nothing more.
-      expect(m.mainSh, where).toBeLessThanOrEqual(m.contentBottom + 104 + 2);
+      // The shell's own buffer below the last card (the desktop shell's
+      // pb-24 and the top padding), nothing more.
+      expect(m.mainSh, where).toBeLessThanOrEqual(m.contentBottom + 120 + 2);
     }
   }
 });

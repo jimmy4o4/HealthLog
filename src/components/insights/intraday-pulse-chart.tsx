@@ -23,7 +23,7 @@ import { userDayKey, shiftDateKey, DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import { TileHeader } from "@/components/insights/tile-header";
 import { DayLink } from "@/components/day/day-link";
 import { Button } from "@/components/ui/button";
-import { QueryErrorCard } from "@/components/ui/query-error-card";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { Skeleton } from "@/components/ui/skeleton";
 import { axisUnitSuffix } from "@/lib/charts/axis-unit";
 import {
@@ -32,6 +32,7 @@ import {
   type IntradayResolution,
   type TensionWindow,
 } from "@/lib/analytics/intraday-pulse";
+import { ChartEmptyState } from "@/components/charts/chart-empty-state";
 
 /** Slim DTO the intraday route returns (type-only — no server code bundled). */
 interface IntradayPulseDto {
@@ -54,7 +55,7 @@ function minuteLabel(minute: number): string {
 const AXIS_TICKS = [0, 360, 720, 1080, 1440];
 
 /**
- * S11 — the intraday pulse "shape of the day" layer inside the pulse insight.
+ * The intraday pulse "shape of the day" layer inside the pulse insight.
  *
  * Charts one local day's 10-minute mean heart rate (computed on demand from
  * raw), with the personal resting baseline drawn as a reference line and any
@@ -70,14 +71,14 @@ const AXIS_TICKS = [0, 360, 720, 1080, 1440];
  * line discloses the coverage so the shape doesn't read as more continuous
  * than it is.
  *
- * v1.29.x — a day navigator (`TileHeader`'s `right` slot, per UI-STANDARDS
+ * v1.29.x — a day navigator (`TileHeader`'s `right` slot, per ui-standards.md
  * §11) pages the same route backward through prior days; "next" is disabled
  * at today, so the view can never step into the future. A day outside the
  * dense retention window (`DENSE_INTRADAY_RETENTION_DAYS`) reads back at the
  * coarser hourly grain instead of an empty chart — `resolution` on the DTO
  * tells the caption which, and the tension read is always absent on an
  * hourly day (it needs per-sample resolution to stay honest). A failed fetch
- * renders `<QueryErrorCard>` with a retry action instead of falling through
+ * renders `<QueryErrorRow>` with a retry action instead of falling through
  * to the empty-day copy.
  *
  * `initialDateKey` pins the first day shown, for callers that already know
@@ -120,7 +121,7 @@ export function IntradayPulseChart({
     setSelectedDateKey(next === todayKey ? null : next);
   };
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.insightsPulseIntraday(dateKey),
     queryFn: () =>
       apiGet<IntradayPulseDto>(`/api/insights/pulse/intraday?date=${dateKey}`),
@@ -254,17 +255,20 @@ export function IntradayPulseChart({
       {isLoading ? (
         <Skeleton className="h-[180px] w-full rounded-lg" />
       ) : isError ? (
-        <QueryErrorCard
-          onRetry={() => refetch()}
-          className="border-0 bg-transparent shadow-none"
+        <QueryErrorRow
+          inset
+          error={error}
+          slot="intraday-pulse-error"
+          onRetry={() => void refetch()}
         />
       ) : (data?.series?.length ?? 0) < MIN_BUCKETS_FOR_COURSE ? (
         // A lone reading or two on a 24-hour axis drew a dot in an empty
         // field and called it the course of the day. Below a handful of
         // buckets the card says there is not enough for a course.
-        <div className="text-muted-foreground flex h-44 items-center justify-center rounded-lg border border-dashed text-sm">
-          {t("insights.intradayPulse.empty")}
-        </div>
+        <ChartEmptyState
+          title={t("insights.intradayPulse.empty")}
+          height={176}
+        />
       ) : (
         <div className="touch-pan-y">
           <ResponsiveContainer width="100%" height={180}>

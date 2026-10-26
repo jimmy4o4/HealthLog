@@ -1,3 +1,4 @@
+import { releaseUnbackedClientApps } from "@/lib/integrations/oauth-kit/connect-target";
 import { prisma } from "@/lib/db";
 import { auditLog } from "@/lib/auth/audit";
 import {
@@ -24,6 +25,12 @@ import {
   WIPE_MODELS,
 } from "@/lib/data-wipe/wipe-plan";
 import { stampSyncReset } from "@/lib/sync/reset";
+import {
+  accountDeletionGraceDays,
+  accountDeletionPurgeAt,
+} from "@/lib/account-deletion/grace";
+import { takePreWipeCopy } from "@/lib/account-deletion/pre-wipe-copy";
+import { logCaught } from "@/lib/logging/signal";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +91,29 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
   // (a no-op on the cookie path).
   await auth.commitElevation();
 
+  // With a deletion grace window, the whole record is stored first,
+  // through the writer the weekly copy uses, as a copy of its own
+  // (`PRE_WIPE_<ms>`). The wipe below leaves it in place, an admin can
+  // restore it until the window ends, and the off-host copies from before
+  // the wipe wait for the same date. A copy that cannot be written stops the
+  // wipe before anything is deleted: an undoable wipe the person was told
+  // about must not quietly become a final one.
+  const wipedAt = new Date();
+  const purgeAt = accountDeletionPurgeAt(wipedAt, accountDeletionGraceDays());
+  let preWipeCopy: { id: string; type: string } | null = null;
+  if (purgeAt) {
+    try {
+      preWipeCopy = await takePreWipeCopy(prisma, userId, wipedAt);
+    } catch (error) {
+      logCaught("settings.data.clear.pre_wipe_copy_failed", error);
+      return apiError(
+        "The copy kept before deleting could not be written, so nothing was deleted. Try again later or ask your admin.",
+        503,
+        { errorCode: "data_wipe.copy_failed" },
+      );
+    }
+  }
+
   let counts: Record<string, number>;
   try {
     counts = await prisma.$transaction(
@@ -92,7 +122,10 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
         // through AccountGrant removal. A queued Guardian egress claim thus
         // rechecks after this wipe commits instead of sending from a grant
         // this transaction has already deleted.
-        await protectManagedProfilesDuringDataWipe(tx, userId);
+        const affectedProfiles = await protectManagedProfilesDuringDataWipe(
+          tx,
+          userId,
+        );
 
         const perModel: Record<string, number> = {};
         for (const model of WIPE_MODELS) {
@@ -112,7 +145,18 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
         // The nightly off-host copies of the record are part of "all your
         // data". The request commits with the wipe; the purge job deletes
         // the objects and removes it.
-        await requestOffhostPurge(tx, userId, "data_wiped");
+        // Held back to the end of the grace window when there is one, so the
+        // off-host copies from before the wipe stay as long as the copy above.
+        await requestOffhostPurge(tx, userId, "data_wiped", {
+          notBefore: purgeAt,
+        });
+
+        // A guardian's wipe ends their grants; a provider app a profile
+        // borrowed from them goes with those grants.
+        for (const profileId of affectedProfiles) {
+          if (profileId !== userId)
+            await releaseUnbackedClientApps(profileId, tx);
+        }
 
         return perModel;
       },
@@ -122,6 +166,12 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
       },
     );
   } catch (error) {
+    // Nothing was wiped, so the copy taken for undoing it has no purpose.
+    if (preWipeCopy) {
+      await prisma.dataBackup
+        .delete({ where: { id: preWipeCopy.id } })
+        .catch((err) => logCaught("settings.data.clear.copy_cleanup", err));
+    }
     if (error instanceof LastManagedGuardianError) {
       return apiError(
         "Add another Guardian or delete the managed profile first",
@@ -142,7 +192,12 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
   await auditLog("user.data.clear", {
     userId,
     ipAddress: getClientIp(request),
-    details: { deletedRows, models: counts },
+    details: {
+      deletedRows,
+      models: counts,
+      preWipeCopyId: preWipeCopy?.id ?? null,
+      restorableUntil: purgeAt?.toISOString() ?? null,
+    },
   });
 
   annotate({
@@ -159,5 +214,12 @@ export const DELETE = apiHandler(async (request: NextRequest) => {
   invalidateUserData(userId);
   await kickOffhostPurge();
 
-  return apiSuccess({ cleared: true, deletedRows, models: counts });
+  // `restorableUntil`: until when an admin can bring the record back from
+  // the copy taken first; null when there is no grace window.
+  return apiSuccess({
+    cleared: true,
+    deletedRows,
+    models: counts,
+    restorableUntil: purgeAt?.toISOString() ?? null,
+  });
 });

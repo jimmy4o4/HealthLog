@@ -22,13 +22,15 @@ import {
   HISTORY_REACH_DAYS,
   lookbackText,
 } from "@/lib/ai/coach/history-reach";
+import type {
+  CoachDefaultWindow,
+  CoachPrefs,
+} from "@/lib/validations/coach-prefs";
 import {
   DEFAULT_COACH_CLUSTERS,
-  coachDataClusterEnum,
+  COACH_DATA_CLUSTERS,
   type CoachDataCluster,
-  type CoachDefaultWindow,
-  type CoachPrefs,
-} from "@/lib/validations/coach-prefs";
+} from "@/lib/ai/coach/prefs-constants";
 
 /**
  * v1.7.2 — "What I can see" rail, backed by the persisted Coach prefs.
@@ -48,8 +50,7 @@ import {
  * member count beneath each label spells out the scope so the user can
  * see how much data each toggle pulls in.
  */
-const CLUSTER_OPTIONS: ReadonlyArray<CoachDataCluster> =
-  coachDataClusterEnum.options;
+const CLUSTER_OPTIONS: ReadonlyArray<CoachDataCluster> = COACH_DATA_CLUSTERS;
 
 /**
  * The lookback options, narrowest first. The choice is a limit
@@ -61,7 +62,7 @@ const WINDOW_OPTIONS = COACH_HISTORY_WINDOWS;
 export interface SourcesRailProps {
   className?: string;
   /**
-   * v1.21.2 (A2) — the human label of the metric the current conversation
+   * v1.21.2 — the human label of the metric the current conversation
    * was launched scoped to, or null for a generic (all-source) open. When
    * set, the rail surfaces a small "the Coach is already on <metric>" line
    * above the persisted-cluster toggles so the active narrowing is VISIBLE
@@ -141,7 +142,7 @@ export function SourcesRail({ className, activeScopeLabel }: SourcesRailProps) {
         {t("insights.coach.sourcesTitle")}
       </h3>
 
-      {/* v1.21.2 (A2) — the visible launch scope for this conversation. Only
+      {/* v1.21.2 — the visible launch scope for this conversation. Only
           rendered when the Coach was opened narrowed to a metric; a generic
           open omits it entirely so the rail is unchanged for the default
           all-source case. */}

@@ -55,13 +55,14 @@ import { importWithRetry } from "@/lib/retry-import";
 import { BiomarkerAliases } from "./biomarker-aliases";
 import { BiomarkerForm } from "./biomarker-form";
 import { LabForm } from "./lab-form";
+import { LabTrendCard } from "./lab-trend-card";
 import type {
   BiomarkerDto,
   LabResultDto,
   LabResultListResponse,
 } from "./types";
 
-// v1.18.11 (W5 perf) — defer the recharts biomarker chart through
+// v1.18.11 — defer the recharts biomarker chart through
 // `next/dynamic` so recharts is off `/labs/[biomarkerId]`'s first-load JS.
 // The chart only paints once the reading list resolves; the `<ChartSkeleton>`
 // loading shell matches the in-card chart footprint so the layout is stable.
@@ -166,7 +167,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
     queryFn: () => apiGet<BiomarkerDto>(`/api/biomarkers/${biomarkerId}`),
   });
 
-  // v1.43 (D1223) — a marker merged into another answers 404 with the
+  // v1.43 — a marker merged into another answers 404 with the
   // marker it went into; a bookmark or a stale screen follows it there.
   const mergedInto =
     markerFailure instanceof ApiError &&
@@ -191,6 +192,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
     data: list,
     isLoading,
     isError: listError,
+    error: listFailure,
     refetch: refetchList,
   } = useInfiniteQuery({
     queryKey: queryKeys.labResultsInfinite({ biomarkerId, sortDir: "desc" }),
@@ -270,7 +272,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
     invalidateAfterReadingWrite();
   }
 
-  // v1.30.1 H3 — "Save & add another": same invalidation as `afterAdd`,
+  // v1.30.1 — "Save & add another": same invalidation as `afterAdd`,
   // minus the close. Useful here too — logging several past readings for
   // this one biomarker back-to-back without re-opening the sheet each time.
   function afterAddKeepOpen() {
@@ -320,7 +322,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
       ? marker.context.trim()
       : t("labs.detail.genericDescription");
 
-  // v1.25.1 (H2-M2) — the error state keeps the heading + description and adds a
+  // v1.25.1 — the error state keeps the heading + description and adds a
   // retry, mirroring the insights `SubPageShell` recovery affordance rather than
   // collapsing to a bare line with no context and no way back.
   // A merged marker is on its way to its target (see above), not failed.
@@ -332,6 +334,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
           description={description}
         />
         <QueryErrorCard
+          error={markerError ? markerFailure : listFailure}
           title={t("labs.loadError")}
           onRetry={() => {
             if (markerError) void refetchMarker();
@@ -403,7 +406,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
             {canAddLab && (
               <Button
                 onClick={() => setAddOpen(true)}
-                // v1.18.10 (W10) — on the narrowest phones the h1 + Edit + Delete +
+                // v1.18.10 — on the narrowest phones the h1 + Edit + Delete +
                 // text "Add" button crowd the row and truncate the title hard.
                 // Drop the Add button to icon-only under `sm` (label kept for
                 // screen readers via `aria-label`); the full text returns at `sm+`.
@@ -428,7 +431,7 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
         </p>
       ) : null}
 
-      {/* v1.43 (D1223) — the other spellings this marker answers to. */}
+      {/* v1.43 — the other spellings this marker answers to. */}
       {marker ? (
         <BiomarkerAliases marker={marker} canEdit={canManageLabs} />
       ) : null}
@@ -503,6 +506,10 @@ export function LabBiomarkerDetail({ biomarkerId }: { biomarkerId: string }) {
               />
             </CardContent>
           </Card>
+          <LabTrendCard
+            trend={marker?.trend}
+            unit={marker?.unit ?? latest?.unit ?? ""}
+          />
         </>
       )}
 

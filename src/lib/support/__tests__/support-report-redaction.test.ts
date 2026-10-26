@@ -21,11 +21,13 @@ import {
   type SupportReportFacts,
 } from "../report";
 import {
+  HOST_TLDS,
   redactSupportText,
   SUPPORT_REDACTION_STEPS,
   type SupportRedactionContext,
 } from "../redact";
 import type { WideEvent } from "@/lib/logging/types";
+import { locales, type Locale } from "@/lib/i18n/config";
 
 const ACCOUNT_EMAIL = "anna.schmidt@example.org";
 const ACCOUNT_ID = "cmq7x0abcdefghijklmnopqrs";
@@ -57,6 +59,7 @@ function seededFacts(): SupportReportFacts {
       node: "v22.11.0",
       processType: "web,worker",
       heapLimitMb: 792,
+      containerMemoryLimitMb: 1536,
       uptimeSeconds: 7260,
     },
     database: {
@@ -200,6 +203,49 @@ describe("support report redaction", () => {
     expect(text).toContain("environment-fetch");
   });
 
+  it("says what to raise when the heap limit is low, and keeps it through redaction", () => {
+    const facts = seededFacts();
+    const low = redactSupportText(
+      renderSupportReport({
+        ...facts,
+        build: { ...facts.build, heapLimitMb: 524 },
+      }),
+      CONTEXT,
+    );
+    expect(low).toContain("- Heap limit: 524 MB");
+    expect(low).toContain(
+      "- Heap limit note: The heap limit of 524 MB is below 700 MB.",
+    );
+    expect(low).toContain("APP_MEMORY_LIMIT=1536m in .env");
+    expect(low).toContain("docker compose up -d.");
+    const enough = redactSupportText(renderSupportReport(facts), CONTEXT);
+    expect(enough).not.toContain("Heap limit note");
+  });
+
+  it("says when the container runs below the supported memory floor", () => {
+    const facts = seededFacts();
+    const below = redactSupportText(
+      renderSupportReport({
+        ...facts,
+        build: { ...facts.build, containerMemoryLimitMb: 1024 },
+      }),
+      CONTEXT,
+    );
+    expect(below).toContain("- Container memory limit: 1024 MB");
+    expect(below).toContain(
+      "- Memory note: Below the supported floor. The container memory limit of 1024 MB is below the supported floor of 1536 MB.",
+    );
+    const atFloor = renderSupportReport(facts);
+    expect(atFloor).toContain("- Container memory limit: 1536 MB");
+    expect(atFloor).not.toContain("Memory note");
+    const unknown = renderSupportReport({
+      ...facts,
+      build: { ...facts.build, containerMemoryLimitMb: null },
+    });
+    expect(unknown).toContain("- Container memory limit: none or unreadable");
+    expect(unknown).not.toContain("Memory note");
+  });
+
   it("the seeds really are in the unredacted text", () => {
     const raw = renderSupportReport(seededFacts());
     for (const value of FORBIDDEN) expect(raw).toContain(value);
@@ -256,6 +302,21 @@ describe("error classes never carry the message", () => {
     expect(errorClassOf("job timed out: did not finish within 1 h")).toBe(
       "timeout",
     );
+    // A statement past its timeout, as Prisma words it: the SQLSTATE is the
+    // class, not the bare "Error" it used to read as.
+    expect(
+      errorClassOf(
+        "\nInvalid `prisma.measurement.findMany()` invocation:\n\n\nDatabase error. Code: `57014`. Message: `canceling statement due to statement timeout`",
+      ),
+    ).toBe("statement_timeout");
+    expect(
+      errorClassOf(
+        "compaction-tombstone-purge: stopped while deleting a batch (lock_timeout)",
+      ),
+    ).toBe("lock_timeout");
+    expect(errorClassOf("timeout exceeded when trying to connect")).toBe(
+      "pool_timeout",
+    );
     expect(errorClassOf("anything at all, an email a@b.co")).toBe("Error");
     expect(errorClassOf(null)).toBe("unknown");
   });
@@ -305,5 +366,66 @@ describe("error classes never carry the message", () => {
     expect(JSON.stringify(top)).not.toContain(ACCOUNT_EMAIL);
     expect(JSON.stringify(top)).not.toContain("hlk_secret");
     expect(JSON.stringify(top)).not.toContain(SEEDS.ids);
+  });
+});
+
+describe("host names under every app language's country codes", () => {
+  // Where each shipped language is at home. A new locale fails here until its
+  // countries are listed, and a listed country fails until HOST_TLDS has it.
+  const HOST_TLD_LOCALE_REGIONS: Record<Locale, readonly string[]> = {
+    de: ["de", "at", "ch", "li", "lu", "be"],
+    en: ["uk", "ie", "us", "ca", "au", "nz"],
+    fr: ["fr", "be", "ch", "lu", "ca"],
+    es: ["es", "mx", "ar"],
+    it: ["it", "ch"],
+    pl: ["pl"],
+    ko: ["kr"],
+    nl: ["nl", "be"],
+    "pt-BR": ["br", "pt", "ao", "mz"],
+  };
+
+  it("covers every shipped locale", () => {
+    expect(Object.keys(HOST_TLD_LOCALE_REGIONS).sort()).toEqual(
+      [...locales].sort(),
+    );
+  });
+
+  it.each(Object.entries(HOST_TLD_LOCALE_REGIONS))(
+    "redacts a host under each of %s's country codes",
+    (_locale, tlds) => {
+      for (const tld of tlds) {
+        expect(HOST_TLDS, tld).toContain(tld);
+        const text = redactSupportText(`reached nas.familie.${tld} late`, {
+          knownValues: [],
+        });
+        expect(text, tld).toBe("reached [host] late");
+      }
+    },
+  );
+
+  it("redacts Brazilian and Portuguese hosts, with a port or a second-level registry", () => {
+    const cases = [
+      "saude.minhacasa.br:3000",
+      "vida.example.com.br",
+      "healthlog.casa.pt",
+      "nas.lan.com.pt:8443",
+    ];
+    for (const host of cases) {
+      const text = redactSupportText(`unexpected_silence ${host}`, {
+        knownValues: [],
+      });
+      expect(text, host).not.toMatch(/minhacasa|example|casa|lan\.com/);
+      expect(text).toContain("[host]");
+    }
+  });
+
+  it("still leaves report prose and action names alone", () => {
+    const text = redactSupportText(
+      "- Actions: mental-health.create, coach.budget.exceeded, measurement.batch.ingest\n- Node: v22.11.0",
+      { knownValues: [] },
+    );
+    expect(text).toContain("mental-health.create");
+    expect(text).toContain("coach.budget.exceeded");
+    expect(text).toContain("measurement.batch.ingest");
   });
 });

@@ -8,7 +8,7 @@
  * strictly association-framed, never a verdict. Each row links through to the
  * medication's Wirkung tab for the full view.
  *
- * Card anatomy per UI-STANDARDS §8: TileHeader + the inherited `px-4 md:px-6`
+ * Card anatomy per ui-standards.md §8: TileHeader + the inherited `px-4 md:px-6`
  * inset (never re-declared), foreground for content, muted for meta.
  */
 import Link from "next/link";
@@ -24,6 +24,8 @@ import type {
   MedicationEfficacyDTO,
   EfficacyTargetView,
 } from "@/lib/medications/efficacy/build-efficacy";
+import { InlineAction } from "@/components/ui/inline-action";
+import { EmptyState } from "@/components/ui/empty-state";
 
 function primaryWithDelta(
   dto: MedicationEfficacyDTO,
@@ -78,9 +80,11 @@ export function MedicationEfficacySummary({
       </CardHeader>
       <CardContent className="space-y-3">
         {rows.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            {t("medications.efficacy.insights.empty")}
-          </p>
+          <EmptyState
+            variant="plain"
+            size="compact"
+            title={t("medications.efficacy.insights.empty")}
+          />
         ) : (
           <ul className="divide-border/60 divide-y">
             {rows.map(({ med, target }) => {
@@ -108,13 +112,14 @@ export function MedicationEfficacySummary({
                       </span>
                     </p>
                   </div>
-                  <Link
-                    href={`/medications/${med.id}?tab=wirkung`}
-                    className="text-primary focus-visible:ring-ring shrink-0 rounded-sm text-xs underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:outline-none"
-                    data-slot="insights-medication-efficacy-link"
-                  >
-                    {t("medications.efficacy.insights.link")}
-                  </Link>
+                  <InlineAction asChild className="shrink-0">
+                    <Link
+                      href={`/medications/${med.id}?tab=wirkung`}
+                      data-slot="insights-medication-efficacy-link"
+                    >
+                      {t("medications.efficacy.insights.link")}
+                    </Link>
+                  </InlineAction>
                 </li>
               );
             })}

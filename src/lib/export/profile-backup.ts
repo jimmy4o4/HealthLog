@@ -40,6 +40,7 @@ import type {
   EmergencyBloodTypeValue,
   OrganDonorStatusValue,
 } from "@/lib/validations/emergency-profile";
+import { INSIGHTS_CACHE_CLEARED } from "@/lib/insights/cached-text-cipher";
 
 export interface ProfileBackupOptions {
   purpose?: "portable-export" | "disaster-recovery";
@@ -149,7 +150,7 @@ export interface CustomMetricEntryBackupEntry {
    */
   noteEncrypted?: string | null;
   createdAt?: string;
-  /** v1.37.20 (A3-11) — soft-delete tombstone; DR payloads only. */
+  /** v1.37.20 — soft-delete tombstone; DR payloads only. */
   deletedAt?: string | null;
 }
 
@@ -209,7 +210,7 @@ export interface ProfileBackupSection {
   healthProfileFacts: HealthProfileFactBackupEntry[];
   correlationPatterns: CorrelationPatternBackupEntry[];
   /**
-   * v1.37.19 (A6-9) — field paths whose ciphertext this instance could not
+   * v1.37.19 — field paths whose ciphertext this instance could not
    * open while building a PORTABLE export (fail-soft nulls). Disclosed in
    * the file itself so an export with a nulled emergency field no longer
    * reads byte-identical to one where the field was never written — the
@@ -241,7 +242,7 @@ export interface ProfileBackupCounts {
 function decryptProfileFieldSoft(
   buf: Uint8Array | null,
   field: string,
-  /** v1.37.19 (A6-9) — collector for the file's decryptFailures manifest. */
+  /** v1.37.19 — collector for the file's decryptFailures manifest. */
   failures?: string[],
 ): string | null {
   if (!buf || buf.byteLength === 0) return null;
@@ -307,7 +308,7 @@ export async function buildProfileBackupSection(
   options: ProfileBackupOptions = {},
 ): Promise<ProfileBackupSection> {
   const disasterRecovery = options.purpose === "disaster-recovery";
-  // v1.37.19 (A6-9) — every fail-soft decrypt below records its field path
+  // v1.37.19 — every fail-soft decrypt below records its field path
   // here; the list rides the exported file as its decryptFailures manifest.
   const decryptFailures: string[] = [];
 
@@ -317,24 +318,24 @@ export async function buildProfileBackupSection(
       // A portable export never resurrects a tombstone; a DR payload restores
       // the account exactly as it stood, deletions included.
       where: disasterRecovery ? { userId } : { userId, deletedAt: null },
-      orderBy: { name: "asc" },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
       include: {
-        // v1.37.20 (A3-11) — entries soft-delete now: a portable export
+        // v1.37.20 — entries soft-delete now: a portable export
         // omits tombstoned readings (a restore must not resurrect them); a
         // DR payload carries them, tombstone included, like the parent.
         entries: {
           where: disasterRecovery ? {} : { deletedAt: null },
-          orderBy: { measuredAt: "asc" },
+          orderBy: [{ measuredAt: "asc" }, { id: "asc" }],
         },
       },
     }),
     prisma.healthProfileFactRevision.findMany({
       where: { userId },
-      orderBy: [{ kind: "asc" }, { validFrom: "asc" }],
+      orderBy: [{ kind: "asc" }, { validFrom: "asc" }, { id: "asc" }],
     }),
     prisma.correlationPattern.findMany({
       where: { userId },
-      orderBy: { canonicalKey: "asc" },
+      orderBy: [{ canonicalKey: "asc" }, { id: "asc" }],
     }),
   ]);
 
@@ -1002,7 +1003,7 @@ export async function restoreProfileData(
     await tx.user.update({
       where: { id: ownerId },
       data: {
-        insightsCachedText: null,
+        ...INSIGHTS_CACHE_CLEARED,
         insightsCachedAt: null,
         insightsCachedLocale: null,
       },

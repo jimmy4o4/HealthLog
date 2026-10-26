@@ -14,7 +14,7 @@
  * The trend-card then paints the delta with metric-aware sentiment
  * colour (up-good vs up-bad).
  *
- * v1.4.16 Fix A4: fall back to slope30 (projected onto 7 days) when
+ * v1.4.16: fall back to slope30 (projected onto 7 days) when
  * slope7 is unavailable. Some metrics (mood, sleep) have <2 entries
  * within the trailing 7-day window for users who don't log daily,
  * which used to surface as a missing delta on the dashboard tile —
@@ -23,6 +23,14 @@
  * "is this metric drifting up or down?" — we just project it onto
  * a 7-day window for label consistency. Returning `null` is reserved
  * for the truly insufficient case where neither slope is available.
+ *
+ * Neither slope reaches this function unless its window earned it: a
+ * window whose readings fall on fewer than three days, or cover less than
+ * half the window, publishes no slope (`MIN_TREND_DAYS` in
+ * `window-confidence.ts`). Before that rule two blood-pressure readings a
+ * few minutes apart, the only ones of the week, fitted a slope of thousands
+ * of mmHg per day and the tile printed it as the 7-day trend. The 30-day
+ * fallback obeys the same rule over its own window.
  *
  * Pure & deterministic — pinned by unit test.
  */

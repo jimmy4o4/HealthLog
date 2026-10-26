@@ -27,6 +27,8 @@ import {
   recordEpochParameter,
   recordScopeParameter,
 } from "./account-sharing";
+import { activityPaths } from "./activity";
+import { provenancePaths } from "./provenance";
 import { adminDiagnosticPaths, adminInvitePaths } from "./admin";
 import { aiUsagePaths } from "./ai-usage";
 import { dawarichPaths } from "./dawarich";
@@ -65,7 +67,7 @@ import { encounterPaths } from "./encounters";
 import { vaccinationPaths } from "./vaccinations";
 import { illnessPaths } from "./illness";
 import { importPaths } from "./import";
-import { insightsPaths, wellnessScoreValue } from "./insights";
+import { insightsPaths, sleepScoreValue, wellnessScoreValue } from "./insights";
 import { integrationPaths } from "./integrations";
 import { insightsSignalPaths } from "./insights-signals";
 import { labsPaths } from "./labs";
@@ -94,9 +96,9 @@ import { settingsPaths } from "./settings";
 import { symptomPaths } from "./symptoms";
 import { syncPaths } from "./sync";
 import { workoutPaths } from "./workouts";
-import { coachPrefsSchema } from "./shared";
+import { coachPrefsSchema, withScopeRefusal } from "./shared";
 
-export const openApiPaths: NonNullable<ZodOpenApiObject["paths"]> = {
+const registeredPaths: NonNullable<ZodOpenApiObject["paths"]> = {
   ...cyclePaths,
   ...metaPaths,
   ...healthRecordPaths,
@@ -105,6 +107,8 @@ export const openApiPaths: NonNullable<ZodOpenApiObject["paths"]> = {
   ...syncPaths,
   ...measurementPaths,
   ...workoutPaths,
+  ...activityPaths,
+  ...provenancePaths,
   ...devicePaths,
   ...medicationPaths,
   ...profilePaths,
@@ -143,7 +147,7 @@ export const openApiPaths: NonNullable<ZodOpenApiObject["paths"]> = {
   // v1.28 — the unified daily digest (P3 spine; appended, spread order is
   // load-bearing).
   ...dailyPaths,
-  // v1.32.21 (R5a) — dashboard widget layout: previously absent from the
+  // v1.32.21 — dashboard widget layout: previously absent from the
   // registry entirely, now documented as the reference optimistic-concurrency
   // contract (appended, spread order is load-bearing).
   ...dashboardWidgetPaths,
@@ -210,6 +214,11 @@ export const openApiPaths: NonNullable<ZodOpenApiObject["paths"]> = {
   ...retiredPaths,
 };
 
+// The generic auth gate's 403 is declared on the assembled table, not spread
+// from `stdResponses`; `scopeRefusalResponse` in `./shared` says why.
+export const openApiPaths: NonNullable<ZodOpenApiObject["paths"]> =
+  withScopeRefusal(registeredPaths);
+
 export const openApiComponents: NonNullable<ZodOpenApiObject["components"]> = {
   // Schemas listed here are forced into `components.schemas` even when no
   // route references them directly. `Medication` lives in this slot
@@ -245,7 +254,7 @@ export const openApiComponents: NonNullable<ZodOpenApiObject["components"]> = {
   // the DTO and reported two fields as missing that were already on the wire.
   // Publishing the shape a `$ref` cannot reach is exactly what this slot is
   // for; the `value` description names it as the shape the three score ids
-  // return.
+  // return. `SleepScoreValue` rides the same slot for `SLEEP_SCORE`.
   schemas: {
     Medication: medicationResource,
     MedicationDoseHistoryImportFatalReason:
@@ -253,6 +262,7 @@ export const openApiComponents: NonNullable<ZodOpenApiObject["components"]> = {
     CoachPrefs: coachPrefsSchema,
     MoodTagLayout: moodTagLayout,
     WellnessScoreValue: wellnessScoreValue,
+    SleepScoreValue: sleepScoreValue,
   },
   // v1.36.0 — the per-request account selector, defined in the sharing route
   // module so that `src/__tests__/acting-account-boundary-guard.test.ts` keeps
@@ -278,7 +288,8 @@ export const openApiComponents: NonNullable<ZodOpenApiObject["components"]> = {
       type: "apiKey",
       in: "cookie",
       name: "healthlog_session",
-      description: "Browser session cookie — set by /api/auth/login.",
+      description:
+        "Browser session cookie — set by /api/auth/login. Named `__Host-healthlog_session` wherever the cookie is `Secure` (every HTTPS install); a plain-HTTP install, which cannot hold a `__Host-` cookie, keeps `healthlog_session`.",
     },
   },
 };

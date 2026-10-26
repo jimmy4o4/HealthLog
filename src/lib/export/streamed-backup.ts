@@ -8,6 +8,23 @@
  * alone would not fit a 1 GB container beside the running app (#1031). Every
  * other section of the same file is a few megabytes.
  *
+ * The documents are the other one: a stored document is up to a hundred
+ * megabytes, and a vault of 190 MB held whole cost more heap than a 524 MB
+ * process has (#1239). The first read keeps each document without its stored
+ * bytes (`DOCUMENT_CONTENT_LEFT_OUT` in their place), and
+ * `forEachDocumentContent` reads them again one document at a time. The ECG
+ * strips are kept without their traces the same way, and `forEachEcgTrace`
+ * reads those again one strip at a time.
+ *
+ * The other sections that grow with a record (`BACKUP_STREAMED_SECTIONS`) are
+ * read an element at a time too and kept as they are, so no section of the
+ * file is ever one string of its own. That string, and the parse beside it,
+ * is what a reader that takes a section whole pays twice over.
+ *
+ * Every reader of a backup file goes through `readStreamedBackup`, or, where
+ * it only counts and checks keys, through `BACKUP_STREAM_KEYS`: the sections
+ * read element by element are named here and nowhere else.
+ *
  * So the file is read twice. The first read keeps everything except the
  * measurements, and checks each measurement against the same element schema
  * the whole-file schema uses, counting them. Nothing is written on the
@@ -44,7 +61,60 @@ async function loadMeasurementSchema(): Promise<MeasurementSchema> {
 export type BackupSource = () => AsyncIterable<Uint8Array>;
 
 const MEASUREMENTS = "measurements";
-const STREAMED = new Set([MEASUREMENTS]);
+const DOCUMENTS = "documents";
+const ECG_RECORDINGS = "ecgRecordings";
+
+/**
+ * The sections a backup reader takes an element at a time, never whole: the
+ * ones that grow with a record, in rows (measurements, intake events, mood
+ * entries) or in stored bytes (documents, ECG traces). How the first read
+ * treats each: the measurements are checked and counted, not kept; the
+ * documents are kept without their stored bytes and the ECG strips without
+ * their traces; the rest are kept element by element.
+ */
+export const BACKUP_STREAMED_SECTIONS = [
+  MEASUREMENTS,
+  "intakeEvents",
+  "moodEntries",
+  DOCUMENTS,
+  ECG_RECORDINGS,
+] as const;
+
+/** `BACKUP_STREAMED_SECTIONS` as `scanBackupJson` takes it. */
+export const BACKUP_STREAM_KEYS: ReadonlySet<string> = new Set(
+  BACKUP_STREAMED_SECTIONS,
+);
+
+const MEASUREMENTS_ONLY = new Set([MEASUREMENTS]);
+const DOCUMENTS_ONLY = new Set([DOCUMENTS]);
+const ECG_ONLY = new Set([ECG_RECORDINGS]);
+
+/**
+ * What a document's `contentEncrypted` reads as in `raw`, where the stored
+ * bytes are left out (#1239): valid base64, so the whole-file schema still
+ * sees a document that carries content, and too short to be ciphertext, so
+ * nothing could mistake it for some. The restore writes the real value, from
+ * `forEachDocumentContent`.
+ */
+const DOCUMENT_CONTENT_LEFT_OUT = "AA==";
+
+/**
+ * What an ECG strip's trace reads as in `raw`: the stored ciphertext as the
+ * same short stand-in, or an empty sample array on a portable file. The
+ * restore writes the real trace, from `forEachEcgTrace`.
+ */
+const ECG_CIPHERTEXT_LEFT_OUT = "AA==";
+
+/** One strip's trace, as the second read hands it over. */
+export interface EcgTrace {
+  /** The stored ciphertext as base64 (a disaster-recovery file). */
+  waveformEncrypted?: string;
+  /** The micro-volt samples (a portable file). */
+  waveform?: number[];
+}
+
+/** Base64, as the backup schema accepts it for stored bytes. */
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** A measurement the element schema refused, with where it is in the file. */
 export class StreamedBackupInvalidError extends Error {
@@ -77,6 +147,24 @@ export interface StreamedBackup {
   forEachMeasurementBatch(
     size: number,
     fn: (batch: BackupMeasurement[]) => Promise<void>,
+  ): Promise<void>;
+  /**
+   * Read the file again and hand over each document's `contentEncrypted`
+   * (the base64 the first read left out of `raw`, or undefined where the
+   * file carries none) with the document's position, one document at a time.
+   * Awaits `fn` before reading further.
+   */
+  forEachDocumentContent(
+    fn: (content: string | undefined, index: number) => Promise<void>,
+  ): Promise<void>;
+  /**
+   * Read the file again and hand over each ECG strip's trace (the stored
+   * ciphertext or the sample array the first read left out of `raw`) with
+   * the strip's position, one strip at a time. Awaits `fn` before reading
+   * further.
+   */
+  forEachEcgTrace(
+    fn: (trace: EcgTrace, index: number) => Promise<void>,
   ): Promise<void>;
 }
 
@@ -119,6 +207,8 @@ export async function readStreamedBackup(
   let firstWithoutId: number | null = null;
   let bytes = 0;
   const keys = new BackupKeyIdCollector();
+  // Every streamed section but the measurements, as `raw` keeps it.
+  const kept = new Map<string, unknown[]>();
   async function* counted() {
     for await (const chunk of source()) {
       bytes += chunk.byteLength;
@@ -126,12 +216,24 @@ export async function readStreamedBackup(
     }
   }
   const { document, streamedCounts } = await scanBackupJson(counted(), {
-    streamKeys: STREAMED,
-    onElement: (_key, element, index) => {
-      const row = parseMeasurement(schema, element, index);
-      if (!row.id && firstWithoutId === null) firstWithoutId = index;
-      keys.visit(element, MEASUREMENTS);
-      options.onMeasurementChecked?.(index + 1, row);
+    streamKeys: BACKUP_STREAM_KEYS,
+    onElement: (key, element, index) => {
+      if (key === MEASUREMENTS) {
+        const row = parseMeasurement(schema, element, index);
+        if (!row.id && firstWithoutId === null) firstWithoutId = index;
+        keys.visit(element, MEASUREMENTS);
+        options.onMeasurementChecked?.(index + 1, row);
+        return;
+      }
+      let section = kept.get(key);
+      if (!section) kept.set(key, (section = []));
+      section.push(
+        key === DOCUMENTS
+          ? withoutContent(element, index, keys)
+          : key === ECG_RECORDINGS
+            ? withoutTrace(element, index, keys)
+            : element,
+      );
     },
   });
 
@@ -147,10 +249,19 @@ export async function readStreamedBackup(
     );
   }
 
+  // A section the file carries holds what was kept of it (an empty one kept
+  // nothing); one it does not carry stays absent.
+  for (const [key, elements] of kept) document[key] = elements;
   keys.visit(document);
 
   const skipKeys = new Set(
     Object.keys(document).filter((key) => key !== MEASUREMENTS),
+  );
+  const documentSkipKeys = new Set(
+    Object.keys(document).filter((key) => key !== DOCUMENTS),
+  );
+  const ecgSkipKeys = new Set(
+    Object.keys(document).filter((key) => key !== ECG_RECORDINGS),
   );
 
   return {
@@ -161,7 +272,7 @@ export async function readStreamedBackup(
     async forEachMeasurementBatch(size, fn) {
       let batch: BackupMeasurement[] = [];
       await scanBackupJson(source(), {
-        streamKeys: STREAMED,
+        streamKeys: MEASUREMENTS_ONLY,
         skipKeys,
         onElement: async (_key, element, index) => {
           batch.push(parseMeasurement(schema, element, index));
@@ -174,5 +285,105 @@ export async function readStreamedBackup(
       });
       if (batch.length > 0) await fn(batch);
     },
+    async forEachDocumentContent(fn) {
+      await scanBackupJson(source(), {
+        streamKeys: DOCUMENTS_ONLY,
+        skipKeys: documentSkipKeys,
+        onElement: async (_key, element, index) => {
+          const content = (element as { contentEncrypted?: unknown })
+            ?.contentEncrypted;
+          await fn(typeof content === "string" ? content : undefined, index);
+        },
+      });
+    },
+    async forEachEcgTrace(fn) {
+      await scanBackupJson(source(), {
+        streamKeys: ECG_ONLY,
+        skipKeys: ecgSkipKeys,
+        onElement: async (_key, element, index) => {
+          const { waveformEncrypted, waveform } = (element ?? {}) as EcgTrace;
+          await fn(
+            {
+              ...(typeof waveformEncrypted === "string"
+                ? { waveformEncrypted }
+                : {}),
+              ...(Array.isArray(waveform) ? { waveform } : {}),
+            },
+            index,
+          );
+        },
+      });
+    },
   };
+}
+
+/**
+ * An ECG strip as `raw` keeps it: its trace replaced by a stand-in, after the
+ * key the ciphertext was written under is recorded and the trace's form is
+ * checked, since the whole-file schema only sees the stand-in. A long Withings
+ * or Apple Watch history is hundreds of strips of tens to hundreds of
+ * kilobytes each; held whole it is the next vault.
+ */
+function withoutTrace(
+  element: unknown,
+  index: number,
+  keys: BackupKeyIdCollector,
+): unknown {
+  if (!element || typeof element !== "object") return element;
+  const { waveformEncrypted, waveform, ...rest } = element as Record<
+    string,
+    unknown
+  >;
+  if (typeof waveformEncrypted === "string") {
+    if (
+      waveformEncrypted.length === 0 ||
+      waveformEncrypted.length % 4 !== 0 ||
+      !BASE64.test(waveformEncrypted)
+    ) {
+      throw new StreamedBackupInvalidError(
+        `${ECG_RECORDINGS}.${index}.waveformEncrypted`,
+        "Expected base64-encoded encrypted bytes",
+      );
+    }
+    keys.add(ECG_RECORDINGS, waveformEncrypted, "waveformEncrypted");
+    return {
+      ...rest,
+      waveformEncrypted: ECG_CIPHERTEXT_LEFT_OUT,
+      ...(waveform === undefined ? {} : { waveform }),
+    };
+  }
+  if (Array.isArray(waveform)) {
+    if (!waveform.every((sample) => typeof sample === "number")) {
+      throw new StreamedBackupInvalidError(
+        `${ECG_RECORDINGS}.${index}.waveform`,
+        "Expected an array of numbers",
+      );
+    }
+    return { ...rest, waveform: [] };
+  }
+  return element;
+}
+
+/**
+ * A document as `raw` keeps it: its stored bytes replaced by
+ * `DOCUMENT_CONTENT_LEFT_OUT`, after the key they were written under is
+ * recorded and their form is checked, since the whole-file schema only sees
+ * the stand-in.
+ */
+function withoutContent(
+  element: unknown,
+  index: number,
+  keys: BackupKeyIdCollector,
+): unknown {
+  if (!element || typeof element !== "object") return element;
+  const { contentEncrypted, ...rest } = element as Record<string, unknown>;
+  if (typeof contentEncrypted !== "string") return element;
+  if (contentEncrypted.length % 4 !== 0 || !BASE64.test(contentEncrypted)) {
+    throw new StreamedBackupInvalidError(
+      `${DOCUMENTS}.${index}.contentEncrypted`,
+      "Expected base64-encoded encrypted bytes",
+    );
+  }
+  keys.add(DOCUMENTS, contentEncrypted, "contentEncrypted");
+  return { ...rest, contentEncrypted: DOCUMENT_CONTENT_LEFT_OUT };
 }

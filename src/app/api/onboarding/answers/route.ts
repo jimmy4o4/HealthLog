@@ -1,5 +1,5 @@
 /**
- * v1.39 (C1) — `PATCH /api/onboarding/answers`.
+ * v1.39 — `PATCH /api/onboarding/answers`.
  *
  * One step at a time, saved the moment it is answered, so leaving the flow and
  * coming back resumes where it stopped (design spec §Principles 4). The body
@@ -24,13 +24,8 @@
 import type { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma, toJson } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";
@@ -68,21 +63,13 @@ export const PATCH = apiHandler(async (request: NextRequest) => {
     });
   }
 
-  const { data: body, error: jsonError } = await safeJson<unknown>(request, {
+  const parsed = await parseJsonBody(request, onboardingAnswerSchema, {
     maxBytes: 16 * 1024,
+    action: "onboarding.needs.save",
+    meta: { outcome: "validation_failed" },
+    errorCode: "onboarding.answers.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = onboardingAnswerSchema.safeParse(body);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "onboarding.needs.save" },
-      meta: { outcome: "validation_failed" },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "onboarding.answers.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
   const answer = parsed.data;
 
   const existing = await prisma.onboardingRecord.findUnique({

@@ -9,13 +9,11 @@ import {
   withBaseToken,
   isConflict,
 } from "@/lib/api/optimistic-token";
-import {
-  DEFAULT_COACH_PREFS,
-  type CoachPrefs,
-} from "@/lib/validations/coach-prefs";
+import type { CoachPrefs } from "@/lib/validations/coach-prefs";
+import { DEFAULT_COACH_PREFS } from "@/lib/ai/coach/prefs-constants";
 
 /**
- * v1.32.22 (R5b) — the cached Coach-prefs row carries the optimistic-
+ * v1.32.22 — the cached Coach-prefs row carries the optimistic-
  * concurrency token (`User.updatedAt`) alongside its payload so the writer
  * can echo it. The read query and the save mutation both speak this shape;
  * the token is opaque (the client only ever echoes a server-returned value).
@@ -23,7 +21,7 @@ import {
 type CoachPrefsWithToken = CoachPrefs & { updatedAt?: string };
 
 /**
- * v1.4.23 W6 (S-03) — shared accessor for the per-user Coach
+ * v1.4.23 — shared accessor for the per-user Coach
  * preferences row. Both the Coach drawer's settings sheet and the
  * message-thread evidence-disclosure default consume the same
  * `/api/auth/me/coach-prefs` payload; before the extraction the two
@@ -71,7 +69,7 @@ export function useSaveCoachPrefs(opts?: {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: queryKeys.coachPrefs(),
-    // v1.32.22 (R5b) — echo the base token this edit was based on so a
+    // v1.32.22 — echo the base token this edit was based on so a
     // concurrent write to the same row (another tab, the chat sources rail)
     // 409s instead of silently overwriting the newer state. Read straight from
     // the cache at mutate time so it reflects the latest settled write.
@@ -91,7 +89,7 @@ export function useSaveCoachPrefs(opts?: {
       opts?.onSuccess?.();
     },
     onError: (err) => {
-      // v1.32.22 (R5b) — a 409 means the stored prefs advanced since this edit
+      // v1.32.22 — a 409 means the stored prefs advanced since this edit
       // was based. Refetch so the token advances and the form re-syncs to the
       // fresh server state, then let the caller nudge gently — nothing was
       // clobbered. Every other error is handed back to the caller.

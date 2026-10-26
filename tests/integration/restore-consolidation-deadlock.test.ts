@@ -153,7 +153,8 @@ async function untilHeldInTrigger() {
   const prisma = getPrismaClient();
   for (let i = 0; i < 100; i++) {
     const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event = 'PgSleep'
+      SELECT count(*) AS n FROM pg_stat_activity
+       WHERE wait_event = 'PgSleep' AND datname = current_database()
     `;
     if (Number(rows[0]?.n ?? 0) > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -190,7 +191,8 @@ describe("restore against a running consolidation (#1031)", () => {
     const restore = await startRestore(backupId);
 
     const [folded] = await Promise.all([consolidation, restore.done]);
-    const { readBackupRestoreJob } = await import("@/lib/jobs/backup-restore");
+    const { readBackupRestoreJob } =
+      await import("@/lib/jobs/backup-restore-view");
     const job = await readBackupRestoreJob(restore.jobId);
 
     expect(

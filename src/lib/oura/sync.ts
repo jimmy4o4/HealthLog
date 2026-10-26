@@ -1,10 +1,10 @@
 /**
- * v1.17.0 (F4) — Oura Cloud v2 sync.
+ * v1.17.0 — Oura Cloud v2 sync.
  *
  * Pulls daily readiness (→ RECOVERY_SCORE + BODY_TEMPERATURE_DEVIATION), sleep
  * (real per-segment hypnogram timeline when present, else per-stage totals;
  * efficiency, HRV, RHR, respiratory rate), daily activity (steps, active
- * energy, equivalent walking distance), the daily Sleep Score (→ SLEEP_SCORE),
+ * energy), the daily Sleep Score (→ SLEEP_SCORE),
  * daily SpO2 (→ OXYGEN_SATURATION), the dedicated vO2_max collection (→
  * VO2_MAX), and the daily cardiovascular-age estimate (→ VASCULAR_AGE) for one
  * connected user, mapping each into `Measurement` rows tagged `source = OURA`.
@@ -20,9 +20,11 @@
  * unknown / missing level mints no row. See `RESILIENCE_LEVELS` in `./client`.
  *
  * Token model: Oura uses refresh tokens. The merged schema has no expiry
- * column, so the sync refreshes REACTIVELY — the first read that 401s triggers
- * one refresh (persisting BOTH rotated tokens) and a single retry. A failed
- * refresh (`invalid_grant`) records `reauth_required` on the `oura` ledger.
+ * column, so the sync refreshes REACTIVELY — the first read refused for its
+ * token triggers one refresh (persisting BOTH rotated tokens, serialised per
+ * user) and a single retry. A 401 that names a missing scope is not a token
+ * refusal and spends no refresh. A failed refresh (`invalid_grant`) records
+ * `reauth_required` on the `oura` ledger.
  *
  * Idempotency: `externalId = <resource>:<day>:<fieldTag>` for the day-keyed
  * collections; sleep rows carry a record-scoped `sleep:<record-id>:<fieldTag>`
@@ -43,17 +45,10 @@ import {
   toFailureKind,
   type FailureKind,
 } from "@/lib/integrations/status";
-import {
-  collapseToTypeDayKeys,
-  recomputeBucketsForMeasurement,
-} from "@/lib/rollups/measurement-rollups";
-import {
-  emitInsertedMeasurementArrivals,
-  type InsertedMeasurementArrivalRow,
-} from "@/lib/arrivals/measurement-emit";
+import type { InsertedMeasurementArrivalRow } from "@/lib/arrivals/measurement-emit";
 import { invalidateUserMeasurements } from "@/lib/cache/invalidate";
 import { afterMeasurementMutation } from "@/lib/rollups/after-measurement-mutation";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/comprehensive-generate";
+import { afterProviderWrite } from "@/lib/integrations/sync-kit/after-write";
 import type { SyncWriteResult } from "@/lib/outcome/written-outcome";
 import { maybeEnqueueMorningRefresh } from "@/lib/daily/morning-refresh-trigger";
 import {
@@ -73,6 +68,9 @@ import {
   fetchResilience,
   fetchSleep,
   fetchVo2Max,
+  fetchWorkouts,
+} from "./client";
+import {
   isRetiredOuraSleepPeriod,
   mapCardiovascularAge,
   mapDailyActivity,
@@ -82,18 +80,24 @@ import {
   mapResilience,
   mapSleep,
   mapVo2Max,
-  refreshAccessToken,
   type MappedMeasurement,
-} from "./client";
-import {
-  getOuraClientCredentials,
-  getOuraConnection,
-  storeOuraTokens,
-  syncOuraScopeDenied,
-} from "./credentials";
+} from "./map";
+import { getOuraConnection, syncOuraScopeDenied } from "./credentials";
+import { refreshOuraAfterRefusal } from "./oauth-descriptor";
 import { OuraApiError, classifyOuraError } from "./response-classifier";
 import { syncUserOuraCyclePhases } from "./cycle-sync";
-import { OURA_SCOPE_GATED_COLLECTIONS } from "./scope";
+import {
+  OURA_COLLECTIONS,
+  isOuraScopeGatedCollection,
+  type OuraCollectionName,
+} from "./scope";
+import { writeOuraWorkouts } from "./sync-workouts";
+import {
+  refoldOuraTouchedDays,
+  resolveOuraHeartRateWindow,
+  syncOuraHeartRateRange,
+  TouchedDays,
+} from "./sync-heart-rate";
 import { shiftDateKey, userDayKey } from "@/lib/tz/format";
 import { resolveUserTimezone } from "@/lib/tz/resolver";
 
@@ -223,9 +227,12 @@ function toUpsert(
 
 /** One Oura collection: its ledger name and a self-contained fetch+map closure
  * that resolves to the collection's mapped upserts. Each closure owns its own
- * client call and mapper so a throw is contained to this one collection. */
+ * client call and mapper so a throw is contained to this one collection. A
+ * collection that writes rows of its own (workouts, the heart-rate stream)
+ * writes inside the closure, counts on `OuraRunContext.sideImported`, and
+ * resolves to no upserts. */
 interface OuraCollectionSpec {
-  name: string;
+  name: OuraCollectionName;
   collect: (token: string) => Promise<OuraMeasurementUpsert[]>;
 }
 
@@ -254,53 +261,236 @@ export interface OuraFetchResult {
    */
   sleepRetirements: string[];
   /**
-   * Collections refused with 401 while a sibling succeeded with the same
-   * token: the token is fine, the grant does not cover them. Not failures; the
-   * card asks for one reconnect instead. `null` when the run never proved the
-   * token (no collection succeeded, or the refresh was abandoned): it learned
-   * nothing about the grant, so the note from the last run that did stands.
+   * Collections the grant does not cover: refused with a 401 that names the
+   * missing scope, or with a bare 401 while a sibling succeeded with the same
+   * token. Not failures; the card asks for one reconnect instead. `null` when
+   * the run never proved the token (no collection succeeded, none was refused
+   * by name, or the refresh was abandoned): it learned nothing about the
+   * grant, so the note from the last run that did stands.
    */
   scopeDenied: string[] | null;
 }
 
 /**
- * A 401 from Oura: the token, or the grant's scope, was refused. A 403 stays a
- * plain failure: Oura also answers 403 for a lapsed membership, which a
- * reconnect does not fix.
+ * What one run reads: the day window of the day-keyed collections, the time
+ * range of the heart-rate stream, the user's zone, and the sinks the sleep
+ * collection and the self-writing collections fill as they go.
  */
-function isAuthRefusal(err: unknown): boolean {
-  return err instanceof OuraApiError && err.httpStatus === 401;
+export interface OuraRunContext {
+  userId: string;
+  tz: string;
+  query: { startDate: string; endDate: string };
+  heartRate: { start: Date; end: Date };
+  /** False on a history backfill: old rows are not arrivals. */
+  emitArrivals: boolean;
+  sleepSweeps: SleepSegmentSweep[];
+  sleepRetirements: string[];
+  /** Rows written by the collections that write their own. */
+  sideImported: number;
+  /** Days the heart-rate stream touched; refolded once by the caller. */
+  heartRateTouched: TouchedDays;
 }
 
-const SCOPE_GATED: ReadonlySet<string> = new Set(OURA_SCOPE_GATED_COLLECTIONS);
-
-/**
- * A 401 that can be the grant's scope rather than the token: only the
- * collections behind `spo2` / `heart_health` sit outside the `daily` scope
- * every grant carries. A 401 on sleep, readiness or activity is a real auth
- * failure whatever its siblings did.
- */
-function isScopeRefusal(f: OuraCollectionFailure): boolean {
-  return SCOPE_GATED.has(f.name) && isAuthRefusal(f.err);
+export function ouraRunContext(
+  userId: string,
+  tz: string,
+  query: { startDate: string; endDate: string },
+  heartRate: { start: Date; end: Date },
+  emitArrivals = true,
+): OuraRunContext {
+  return {
+    userId,
+    tz,
+    query,
+    heartRate,
+    emitArrivals,
+    sleepSweeps: [],
+    sleepRetirements: [],
+    sideImported: 0,
+    heartRateTouched: new TouchedDays(),
+  };
 }
 
 /**
- * Split the scope refusals out of a run's failures once a sibling collection
- * has proven the token. Oura's authorization server enforces scopes per
- * collection, so a grant issued without `spo2` / `heart_health` answers 401 on
- * exactly the collections behind them and 200 everywhere else. Counting those
- * toward the reconnect ladder painted a working connection as broken on every
- * sync, and refreshing the token over them changed nothing. Any other failure,
- * a 401 on a core collection included, stays a failure.
+ * The fetch+map (or fetch+write) closure of one collection over the context's
+ * window. The one place each collection's read is defined, for the hourly
+ * sync and the history backfill alike.
+ */
+export function ouraCollectionReader(
+  name: OuraCollectionName,
+  ctx: OuraRunContext,
+): (token: string) => Promise<OuraMeasurementUpsert[]> {
+  const { tz, query } = ctx;
+  switch (name) {
+    case "readiness":
+      return async (t) =>
+        (await fetchReadiness(t, query)).flatMap((r) =>
+          toUpsert(
+            mapReadiness(r, tz),
+            "readiness",
+            r.timestamp ? undefined : r.day,
+          ),
+        );
+    case "sleep":
+      return async (t) => {
+        const records = await fetchSleep(t, query);
+        const ups: OuraMeasurementUpsert[] = [];
+        for (const s of records) {
+          if (isRetiredOuraSleepPeriod(s)) {
+            if (s.id) ctx.sleepRetirements.push(`sleep:${s.id}:`);
+            continue;
+          }
+          const rows = toUpsert(
+            mapSleep(s, tz),
+            "sleep",
+            s.bedtime_end ? undefined : s.day,
+          );
+          ups.push(...rows);
+          // Record-scoped sweep entry: every SLEEP_DURATION row of this
+          // record keys under `sleep:<id>:` (hypnogram runs AND the
+          // stage-total fallback), so the prefix bounds the cleanup to this
+          // one record. Clears whatever a revised hypnogram orphaned —
+          // shifted run boundaries, legacy run-indexed `seg:<i>` rows, and a
+          // stale stage-total set once the hypnogram appears.
+          ctx.sleepSweeps.push({
+            prefix: `sleep:${s.id}:`,
+            keepIds: rows
+              .filter((r) => r.type === "SLEEP_DURATION")
+              .map((r) => r.externalId),
+          });
+        }
+        return ups;
+      };
+    case "activity":
+      return async (t) =>
+        (await fetchDailyActivity(t, query)).flatMap((a) =>
+          toUpsert(
+            mapDailyActivity(a, tz),
+            "activity",
+            a.timestamp ? undefined : a.day,
+          ),
+        );
+    case "daily_sleep":
+      return async (t) =>
+        (await fetchDailySleep(t, query)).flatMap((d) =>
+          toUpsert(
+            mapDailySleep(d, tz),
+            "daily_sleep",
+            d.timestamp ? undefined : d.day,
+          ),
+        );
+    case "spo2":
+      return async (t) =>
+        (await fetchDailySpo2(t, query)).flatMap((s) =>
+          toUpsert(mapDailySpo2(s, tz), "spo2", s.day),
+        );
+    case "vo2max":
+      return async (t) =>
+        (await fetchVo2Max(t, query)).flatMap((v) =>
+          toUpsert(mapVo2Max(v, tz), "vo2max", v.timestamp ? undefined : v.day),
+        );
+    case "cardio_age":
+      return async (t) =>
+        (await fetchCardiovascularAge(t, query)).flatMap((c) =>
+          toUpsert(mapCardiovascularAge(c, tz), "cardio_age", c.day),
+        );
+    case "resilience":
+      return async (t) =>
+        (await fetchResilience(t, query)).flatMap((r) =>
+          toUpsert(mapResilience(r, tz), "resilience", r.day),
+        );
+    case "workout":
+      return async (t) => {
+        const workouts = await fetchWorkouts(t, query);
+        ctx.sideImported += await writeOuraWorkouts(ctx.userId, workouts, {
+          emitArrivals: ctx.emitArrivals,
+        });
+        return [];
+      };
+    case "heartrate":
+      return async (t) => {
+        const { imported, truncated } = await syncOuraHeartRateRange(
+          ctx.userId,
+          t,
+          ctx.heartRate,
+          { emitArrivals: ctx.emitArrivals, touched: ctx.heartRateTouched },
+        );
+        ctx.sideImported += imported;
+        if (truncated) {
+          // A window Oura could not page to its end is not read: fail it so
+          // the run is not reported clean over a gap.
+          throw new Error("oura heart-rate walk stopped short of its window");
+        }
+        return [];
+      };
+  }
+}
+
+/**
+ * A 401 whose body names the missing scope (see `./scope`): Oura checked the
+ * token and found it valid, the grant just does not cover this collection. A
+ * refresh cannot widen a grant, so none is spent on it.
+ */
+export function isNamedScopeRefusal(err: unknown): boolean {
+  return (
+    err instanceof OuraApiError &&
+    err.httpStatus === 401 &&
+    err.missingScope !== undefined
+  );
+}
+
+/**
+ * Any other 401: the token was refused, or an older authorization server sent
+ * no body to tell. This is what the one refresh is for. A 403 is neither: Oura
+ * answers it for a lapsed membership, which no refresh or reconnect fixes.
+ */
+export function isTokenRefusal(err: unknown): boolean {
+  return (
+    err instanceof OuraApiError &&
+    err.httpStatus === 401 &&
+    err.missingScope === undefined
+  );
+}
+
+/**
+ * A failure that is the grant's scope rather than the token. Only the
+ * collections behind a scope beyond `daily` qualify: without `daily` nothing
+ * syncs, and that is a reconnect, not a hint. On those, a 401 naming its scope
+ * always qualifies; a bare 401 qualifies only once a sibling collection has
+ * proven the token, the inference that predates Oura naming the scope.
+ */
+function isScopeRefusal(
+  f: OuraCollectionFailure,
+  tokenProven: boolean,
+): boolean {
+  if (!isOuraScopeGatedCollection(f.name)) return false;
+  return isNamedScopeRefusal(f.err) || (tokenProven && isTokenRefusal(f.err));
+}
+
+/**
+ * Split the scope refusals out of a run's failures. Oura's authorization
+ * server enforces scopes per collection, so a grant issued without `spo2`,
+ * `heart_health` or `stress` answers 401 on exactly the collections behind
+ * them and 200 everywhere else. Counting those toward the reconnect ladder
+ * painted a working connection as broken on every sync, and refreshing the
+ * token over them changed nothing. Any other failure, a 401 on a core
+ * collection included, stays a failure.
+ *
+ * A 401 that names its scope proves the token by itself: Oura validated it in
+ * order to say which permission it lacks.
  */
 function splitScopeDenied(
   failures: OuraCollectionFailure[],
-  tokenProven: boolean,
+  siblingSucceeded: boolean,
 ): { failures: OuraCollectionFailure[]; scopeDenied: string[] | null } {
+  const tokenProven =
+    siblingSucceeded || failures.some((f) => isNamedScopeRefusal(f.err));
   if (!tokenProven) return { failures, scopeDenied: null };
   return {
-    failures: failures.filter((f) => !isScopeRefusal(f)),
-    scopeDenied: failures.filter(isScopeRefusal).map((f) => f.name),
+    failures: failures.filter((f) => !isScopeRefusal(f, true)),
+    scopeDenied: failures
+      .filter((f) => isScopeRefusal(f, true))
+      .map((f) => f.name),
   };
 }
 
@@ -321,125 +511,17 @@ function splitScopeDenied(
  * connection at `reauth_required`.
  */
 async function fetchAll(
-  userId: string,
+  ctx: OuraRunContext,
   accessToken: string,
-  refreshToken: string,
   refreshTokenCiphertext: string,
-  lookbackDays: number,
   knownScopeDenied: readonly string[] = [],
 ): Promise<OuraFetchResult> {
-  // Oura keys its daily collections by the user's calendar date, so the
-  // window is cut on the user's own days, and date-only records are anchored
-  // at local noon of their date in this zone.
-  const tz = await resolveUserTimezone(userId);
-  const today = userDayKey(new Date(), tz);
-  const query = {
-    startDate: shiftDateKey(today, -lookbackDays),
-    endDate: today,
-  };
-
-  // Filled by the sleep collection's closure as it maps records; carried on
-  // the result so the caller can run the record-scoped sweep before the
-  // upsert. A collection that throws pushes nothing (the fetch is its first
-  // await), so a 401-retry cannot double-enter a record.
-  const sleepSweeps: SleepSegmentSweep[] = [];
-  const sleepRetirements: string[] = [];
-
-  const collections: OuraCollectionSpec[] = [
-    {
-      name: "readiness",
-      collect: async (t) =>
-        (await fetchReadiness(t, query)).flatMap((r) =>
-          toUpsert(
-            mapReadiness(r, tz),
-            "readiness",
-            r.timestamp ? undefined : r.day,
-          ),
-        ),
-    },
-    {
-      name: "sleep",
-      collect: async (t) => {
-        const records = await fetchSleep(t, query);
-        const ups: OuraMeasurementUpsert[] = [];
-        for (const s of records) {
-          if (isRetiredOuraSleepPeriod(s)) {
-            if (s.id) sleepRetirements.push(`sleep:${s.id}:`);
-            continue;
-          }
-          const rows = toUpsert(
-            mapSleep(s, tz),
-            "sleep",
-            s.bedtime_end ? undefined : s.day,
-          );
-          ups.push(...rows);
-          // Record-scoped sweep entry: every SLEEP_DURATION row of this
-          // record keys under `sleep:<id>:` (hypnogram runs AND the
-          // stage-total fallback), so the prefix bounds the cleanup to this
-          // one record. Clears whatever a revised hypnogram orphaned —
-          // shifted run boundaries, legacy run-indexed `seg:<i>` rows, and a
-          // stale stage-total set once the hypnogram appears.
-          sleepSweeps.push({
-            prefix: `sleep:${s.id}:`,
-            keepIds: rows
-              .filter((r) => r.type === "SLEEP_DURATION")
-              .map((r) => r.externalId),
-          });
-        }
-        return ups;
-      },
-    },
-    {
-      name: "activity",
-      collect: async (t) =>
-        (await fetchDailyActivity(t, query)).flatMap((a) =>
-          toUpsert(
-            mapDailyActivity(a, tz),
-            "activity",
-            a.timestamp ? undefined : a.day,
-          ),
-        ),
-    },
-    {
-      name: "daily_sleep",
-      collect: async (t) =>
-        (await fetchDailySleep(t, query)).flatMap((d) =>
-          toUpsert(
-            mapDailySleep(d, tz),
-            "daily_sleep",
-            d.timestamp ? undefined : d.day,
-          ),
-        ),
-    },
-    {
-      name: "spo2",
-      collect: async (t) =>
-        (await fetchDailySpo2(t, query)).flatMap((s) =>
-          toUpsert(mapDailySpo2(s, tz), "spo2", s.day),
-        ),
-    },
-    {
-      name: "vo2max",
-      collect: async (t) =>
-        (await fetchVo2Max(t, query)).flatMap((v) =>
-          toUpsert(mapVo2Max(v, tz), "vo2max", v.timestamp ? undefined : v.day),
-        ),
-    },
-    {
-      name: "cardio_age",
-      collect: async (t) =>
-        (await fetchCardiovascularAge(t, query)).flatMap((c) =>
-          toUpsert(mapCardiovascularAge(c, tz), "cardio_age", c.day),
-        ),
-    },
-    {
-      name: "resilience",
-      collect: async (t) =>
-        (await fetchResilience(t, query)).flatMap((r) =>
-          toUpsert(mapResilience(r, tz), "resilience", r.day),
-        ),
-    },
-  ];
+  const userId = ctx.userId;
+  const { sleepSweeps, sleepRetirements } = ctx;
+  const collections: OuraCollectionSpec[] = OURA_COLLECTIONS.map((c) => ({
+    name: c.name,
+    collect: ouraCollectionReader(c.name, ctx),
+  }));
 
   // Run a set of collections isolated from one another. A rejection is captured
   // per-collection, never propagated, so siblings still resolve.
@@ -448,18 +530,14 @@ async function fetchAll(
     specs: OuraCollectionSpec[],
   ): Promise<{
     readings: OuraMeasurementUpsert[];
-    failed: OuraCollectionSpec[];
     failures: OuraCollectionFailure[];
-    auth401: boolean;
     succeeded: number;
   }> => {
     const settled = await Promise.allSettled(
       specs.map((spec) => spec.collect(token)),
     );
     const readings: OuraMeasurementUpsert[] = [];
-    const failed: OuraCollectionSpec[] = [];
     const failures: OuraCollectionFailure[] = [];
-    let auth401 = false;
     let succeeded = 0;
     settled.forEach((res, i) => {
       const spec = specs[i]!;
@@ -467,28 +545,26 @@ async function fetchAll(
         succeeded++;
         readings.push(...res.value);
       } else {
-        const err = res.reason;
-        if (err instanceof OuraApiError && err.httpStatus === 401)
-          auth401 = true;
-        failed.push(spec);
-        failures.push({ name: spec.name, err });
+        failures.push({ name: spec.name, err: res.reason });
       }
     });
-    return { readings, failed, failures, auth401, succeeded };
+    return { readings, failures, succeeded };
   };
 
   const first = await attempt(accessToken, collections);
-  // A 401 limited to collections already known to sit outside the grant, next
-  // to collections that succeeded, is the grant's scope again: a refresh cannot
-  // widen it, so none is spent. Any other 401 still takes the one refresh, and
-  // whatever 401s after it beside a success is recorded as scope.
-  const knownDenied = new Set(
-    knownScopeDenied.filter((name) => SCOPE_GATED.has(name)),
+  // The refresh is for a refused token. A 401 that names its scope is not one,
+  // and neither is a bare 401 on a collection already known to sit outside the
+  // grant while a sibling succeeded with the same token: a refresh cannot
+  // widen a grant, so none is spent on either.
+  const knownDenied = new Set<string>(
+    knownScopeDenied.filter((name) => isOuraScopeGatedCollection(name)),
   );
-  const onlyKnownScope401 = first.failures
-    .filter((f) => isAuthRefusal(f.err))
-    .every((f) => knownDenied.has(f.name));
-  if (!first.auth401 || (first.succeeded > 0 && onlyKnownScope401)) {
+  const needsRefresh = first.failures.some(
+    (f) =>
+      isTokenRefusal(f.err) &&
+      !(first.succeeded > 0 && knownDenied.has(f.name)),
+  );
+  if (!needsRefresh) {
     return {
       readings: first.readings,
       ...splitScopeDenied(first.failures, first.succeeded > 0),
@@ -498,43 +574,44 @@ async function fetchAll(
   }
 
   // Reactive refresh: the access token expired (a 401 on the shared token).
-  // Refresh once (rotating both tokens) and retry ONLY the collections that
-  // failed. A failed refresh throws so the caller parks reauth_required.
-  const creds = await getOuraClientCredentials(userId);
-  if (!creds)
-    return {
-      readings: first.readings,
-      failures: first.failures,
-      sleepSweeps,
-      sleepRetirements,
-      scopeDenied: null,
-    };
-
-  const rotated = await refreshAccessToken(refreshToken, creds);
-  // Compare-and-swap persist: on a lost race against a concurrent sync this
-  // returns the peer's freshly rotated access token rather than the (now
-  // invalidated) one we just minted, so neither sync parks the connection.
-  const usableToken = await storeOuraTokens(
+  // Refresh once, serialised per user so an overlapping sync never spends the
+  // same one-time refresh token twice, and retry the collections that failed
+  // for any reason but a named scope. A failed refresh throws so the caller
+  // parks reauth_required.
+  const usableToken = await refreshOuraAfterRefusal(
     userId,
-    rotated.access_token,
-    rotated.refresh_token,
     refreshTokenCiphertext,
   );
   if (!usableToken)
     return {
       readings: first.readings,
-      failures: first.failures,
+      // The refresh never happened, so no sibling's success can be trusted
+      // over it; a refusal that names its scope still says what it says.
+      ...splitScopeDenied(first.failures, false),
       sleepSweeps,
       sleepRetirements,
-      scopeDenied: null,
     };
 
-  const retry = await attempt(usableToken, first.failed);
+  const settledByScope = first.failures.filter((f) =>
+    isNamedScopeRefusal(f.err),
+  );
+  const retryNames = new Set(
+    first.failures
+      .filter((f) => !isNamedScopeRefusal(f.err))
+      .map((f) => f.name),
+  );
+  const retry = await attempt(
+    usableToken,
+    collections.filter((c) => retryNames.has(c.name)),
+  );
   return {
     readings: [...first.readings, ...retry.readings],
     // Proven by either pass: a collection that succeeded before the refresh
     // proves the grant as much as one that succeeded after it.
-    ...splitScopeDenied(retry.failures, first.succeeded + retry.succeeded > 0),
+    ...splitScopeDenied(
+      [...settledByScope, ...retry.failures],
+      first.succeeded + retry.succeeded > 0,
+    ),
     sleepSweeps,
     sleepRetirements,
   };
@@ -610,14 +687,25 @@ export async function syncUserOura(
   const lookbackDays =
     opts.lookbackDays ?? (await resolveOuraLookbackDays(userId));
 
+  // Oura keys its daily collections by the user's calendar date, so the
+  // window is cut on the user's own days, and date-only records are anchored
+  // at local noon of their date in this zone. Heart rate is read by instant
+  // over a window of hours (`resolveOuraHeartRateWindow`).
+  const tz = await resolveUserTimezone(userId);
+  const today = userDayKey(new Date(), tz);
+  const ctx = ouraRunContext(
+    userId,
+    tz,
+    { startDate: shiftDateKey(today, -lookbackDays), endDate: today },
+    await resolveOuraHeartRateWindow(userId),
+  );
+
   let result: OuraFetchResult;
   try {
     result = await fetchAll(
-      userId,
+      ctx,
       conn.accessToken,
-      conn.refreshToken,
       conn.refreshTokenCiphertext,
-      lookbackDays,
       conn.scopeDenied,
     );
   } catch (err) {
@@ -659,13 +747,15 @@ export async function syncUserOura(
   // Import everything the healthy collections returned regardless of whether a
   // sibling collection failed — one bad collection must not blank the source.
   let insertedSleepMeasuredAts: Date[] = [];
-  const imported = await upsertOuraMeasurements(userId, result.readings, {
-    onInserted: (rows) => {
-      insertedSleepMeasuredAts = rows
-        .filter((row) => row.type === "SLEEP_DURATION")
-        .map((row) => row.measuredAt);
-    },
-  });
+  const imported =
+    (await upsertOuraMeasurements(userId, result.readings, {
+      onInserted: (rows) => {
+        insertedSleepMeasuredAts = rows
+          .filter((row) => row.type === "SLEEP_DURATION")
+          .map((row) => row.measuredAt);
+      },
+    })) + ctx.sideImported;
+  await refoldOuraTouchedDays(userId, ctx.heartRateTouched);
 
   // v1.29.x — best-effort Cycle Insights import. Fully isolated from the
   // measurement sync's status ledger on purpose: `daily_cycle_phases` sits
@@ -677,14 +767,7 @@ export async function syncUserOura(
   try {
     const freshConn = await getOuraConnection(userId);
     if (freshConn) {
-      const cycleToday = userDayKey(
-        new Date(),
-        await resolveUserTimezone(userId),
-      );
-      await syncUserOuraCyclePhases(userId, freshConn.accessToken, {
-        startDate: shiftDateKey(cycleToday, -lookbackDays),
-        endDate: cycleToday,
-      });
+      await syncUserOuraCyclePhases(userId, freshConn.accessToken, ctx.query);
     }
   } catch (err) {
     getEvent()?.addWarning(
@@ -692,7 +775,7 @@ export async function syncUserOura(
     );
   }
 
-  // S4 — trigger the debounced morning refresh on a last-night segment landing
+  // Trigger the debounced morning refresh on a last-night segment landing
   // (mirrors the Withings / WHOOP / Apple seams). Fires whether or not a
   // sibling collection failed, since the sleep readings were still imported.
   void maybeEnqueueMorningRefresh(userId, insertedSleepMeasuredAts).catch(
@@ -743,6 +826,8 @@ export async function upsertOuraMeasurements(
   readings: OuraMeasurementUpsert[],
   opts: {
     onInserted?: (rows: InsertedMeasurementArrivalRow[]) => void;
+    /** False on a history backfill: old rows are not arrivals. */
+    emitArrivals?: boolean;
   } = {},
 ): Promise<number> {
   if (readings.length === 0) return 0;
@@ -800,28 +885,16 @@ export async function upsertOuraMeasurements(
   }
 
   opts.onInserted?.(insertedRows);
-  void emitInsertedMeasurementArrivals(userId, insertedRows, "oura").catch(
-    () => {},
-  );
-  try {
-    const keys = collapseToTypeDayKeys(touched);
-    for (const k of keys) {
-      await recomputeBucketsForMeasurement(userId, k.type, k.measuredAt);
-    }
-    invalidateStatusInsightsForTypes(
-      userId,
-      keys.map((k) => k.type),
-      { source: "sync" },
-    ).catch((err) => {
-      getEvent()?.addWarning(
-        `oura: status-insight invalidate failed for ${userId}: ${err}`,
-      );
-    });
-  } catch (err) {
-    getEvent()?.addWarning(
-      `oura: rollup recompute failed for ${userId}: ${err}`,
-    );
-  }
+  // The shared tail (a history backfill writes through here and has no other
+  // invalidation); the caller may emit the arrivals itself.
+  await afterProviderWrite({
+    userId,
+    provider: "oura",
+    touched,
+    ...(opts.emitArrivals !== false
+      ? { arrivals: { rows: insertedRows, source: "oura" as const } }
+      : {}),
+  });
 
   return imported;
 }

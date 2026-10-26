@@ -5,6 +5,7 @@
  * Schemas come from `src/lib/validations/*` where shared with the
  * runtime request parsing, so the wire contract stays single-source.
  */
+import { DISPLAY_NAME_MAX_LENGTH } from "@/lib/validations/display-name";
 import { aiUsageState } from "./ai-usage";
 import { z } from "zod/v4";
 import type { ZodOpenApiObject } from "zod-openapi";
@@ -32,6 +33,7 @@ import {
   documentsAutoAiReadPatchSchema,
   injectionSitePrefsPatchSchema,
   labsLocalOcrPatchSchema,
+  workoutRoutesPatchSchema,
   unitPreferencePatchSchema,
   glucoseUnitPatchSchema,
   useCentralCodexPatchSchema,
@@ -70,7 +72,7 @@ import { isoDateTime } from "@/lib/validations/datetime";
 // `disableCoach` + operator master flag, the rest read the per-user
 // disabled-allowlist. The map is the single thing a client needs to gate
 // every secondary domain end-to-end.
-// v1.32.22 (M3) — the doc request extends the strict runtime schema with the
+// v1.32.22 — the doc request extends the strict runtime schema with the
 // optimistic-concurrency `baseUpdatedAt` token. The runtime strips it pre-Zod
 // (`takeBaseToken`) BEFORE the strict parse, so the runtime schema alone would
 // under-document the wire; documenting it here keeps the contract complete.
@@ -309,7 +311,7 @@ const diabetesFlag = z
 // is the REAL runtime validator (`notificationPrefsSchema` — every
 // category and field optional, deep-merged server-side); the response
 // is the fully-resolved shape with the documented defaults filled in.
-// v1.32.22 (M1) — the doc request extends the runtime validator with the
+// v1.32.22 — the doc request extends the runtime validator with the
 // optimistic-concurrency `baseUpdatedAt` token (stripped pre-Zod at runtime).
 const notificationPrefsPatchRequest = notificationPrefsSchema
   .extend({ baseUpdatedAt: baseUpdatedAtField })
@@ -383,6 +385,18 @@ const notificationPrefsResolved = z
       nudgeFrequency: z
         .enum(["weekly", "biweekly"])
         .describe("Nudge frequency cap: one per 7 or per 14 days."),
+      nudgeAiComposed: z
+        .boolean()
+        .describe(
+          "Opt-in for model-written nudge copy. Off by default; the deterministic template is always the fallback.",
+        ),
+    }),
+    measurementReminder: z.object({
+      clientManaged: z
+        .boolean()
+        .describe(
+          "True when the iOS app owns local check-up reminders; the server-side measurement-reminder APNs send is then suppressed. Default false.",
+        ),
     }),
     content: z.object({
       detail: z
@@ -398,13 +412,13 @@ const notificationPrefsResolved = z
       "Fully-resolved per-user notification preferences. Every key is present — a null / drifted persisted row resolves to the documented defaults.",
   });
 
-// v1.32.22 (M1) — GET / PATCH responses carry the optimistic-concurrency token
+// v1.32.22 — GET / PATCH responses carry the optimistic-concurrency token
 // as an additive sibling key next to the resolved categories.
 const notificationPrefsResponse = notificationPrefsResolved
   .extend({ updatedAt: updatedAtTokenField })
   .meta({ id: "NotificationPrefsResponse" });
 
-// v1.32.22 (M4) — coach-prefs GET / PUT responses carry the token; the PUT
+// v1.32.22 — coach-prefs GET / PUT responses carry the token; the PUT
 // request extends the runtime validator with the base token.
 const coachPrefsResponse = coachPrefsSchema
   .extend({ updatedAt: updatedAtTokenField })
@@ -532,7 +546,14 @@ export const profileUpdateRequest = z
       .describe(
         "Stored gender. Null or an empty string clears it; an omitted field is left untouched.",
       ),
-    displayName: z.string().min(1).max(80).nullable().optional(),
+    displayName: z
+      .string()
+      .max(DISPLAY_NAME_MAX_LENGTH)
+      .nullable()
+      .optional()
+      .describe(
+        "Trimmed before its bound is checked. Null, an empty string or only spaces clears it; an omitted field is left untouched.",
+      ),
     locale: z.enum(["de", "en"]).nullable().optional(),
     timezone: z.string().min(1).max(64).optional(),
     timeFormat: z
@@ -980,6 +1001,16 @@ const labsLocalOcrResponse = z
   .object({ labsLocalOcrEnabled: z.boolean() })
   .meta({ id: "LabsLocalOcrResponse" });
 
+const workoutRoutesPatchRequest = workoutRoutesPatchSchema.meta({
+  id: "WorkoutRoutesPatchRequest",
+  description:
+    "Keep or stop keeping the GPS track of new workouts. Off by default.",
+});
+
+const workoutRoutesResponse = z
+  .object({ storeWorkoutRoutes: z.boolean() })
+  .meta({ id: "WorkoutRoutesResponse" });
+
 const useCentralCodexPatchRequest = useCentralCodexPatchSchema.meta({
   id: "UseCentralCodexPatchRequest",
   description:
@@ -1109,6 +1140,29 @@ const profileSummaryResponse = z
     description:
       "The bounded profile view a record viewer gets: allergies, family history and current lifestyle facts. Structurally incapable of becoming a Settings or AI surface.",
   });
+
+/**
+ * What the single-value `/api/auth/me/*` writes answer for a body they refuse
+ * to read. Each reads through `safeJson` with a 1 KB cap, so the three
+ * refusals are the cap's, not the route's: a wrong content type is 415, a body
+ * over the cap 413, and one that does not parse 400. All three are answered
+ * before validation, and nothing is written.
+ */
+const cappedScalarBodyRefusals = {
+  "400": {
+    description: "The request body is not parseable JSON. Nothing was written.",
+    content: { "application/json": { schema: errorEnvelope } },
+  },
+  "413": {
+    description: "Request body exceeds 1024 bytes. Nothing was written.",
+    content: { "application/json": { schema: errorEnvelope } },
+  },
+  "415": {
+    description:
+      "The request did not carry `Content-Type: application/json`. Nothing was read and nothing was written.",
+    content: { "application/json": { schema: errorEnvelope } },
+  },
+};
 
 export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
   "/api/profile/summary": {
@@ -1426,7 +1480,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
         // quietly omits the refusal a person actually hits.
         "422": {
           description:
-            "The write was refused and nothing was stored. `meta.errorCode` distinguishes the cases: `health_score_config.too_narrow` — the selection cannot produce a score (`meta.reason` is `no_pillars_selected`, and the `error` string is the sentence to show the person). Since v1.38 the empty selection is the ONLY one refused: two areas of health, or one, now save and produce a score that labels its own breadth, so a client must not pre-empt the write with a three-area rule of its own. `health_score_config.invalid` — the body failed validation, with the per-issue list under `details.issues`; `invalid_base_updated_at` — `baseUpdatedAt` was present but unparseable, `null` included, which is rejected rather than falling back to the unconditional write. A body that is not JSON at all returns the bare message `health-score-config.body.invalid_json` with no errorCode.",
+            "The write was refused and nothing was stored. `meta.errorCode` distinguishes the cases: `health_score_config.too_narrow` — the selection cannot produce a score (`meta.reason` is `no_pillars_selected`, and the `error` string is the sentence to show the person). Since v1.38 the empty selection is the ONLY one refused: two areas of health, or one, now save and produce a score that labels its own breadth, so a client must not pre-empt the write with a three-area rule of its own. `health_score_config.invalid` — the body failed validation, with the per-issue list under `details.issues`; `invalid_base_updated_at` — `baseUpdatedAt` was present but unparseable, `null` included, which is rejected rather than falling back to the unconditional write. A body that is not JSON at all returns the bare message `health-score-config.body.invalid_json` with the status default `meta.errorCode: http.invalid`.",
           content: { "application/json": { schema: errorEnvelope } },
         },
       },
@@ -1832,10 +1886,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
             },
           },
         },
-        "413": {
-          description: "Request body exceeds 1024 bytes. Nothing was written.",
-          content: { "application/json": { schema: errorEnvelope } },
-        },
+        ...cappedScalarBodyRefusals,
         ...stdResponses,
       },
     },
@@ -1886,10 +1937,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
             },
           },
         },
-        "413": {
-          description: "Request body exceeds 1024 bytes. Nothing was written.",
-          content: { "application/json": { schema: errorEnvelope } },
-        },
+        ...cappedScalarBodyRefusals,
         ...stdResponses,
       },
     },
@@ -1940,10 +1988,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
             },
           },
         },
-        "413": {
-          description: "Request body exceeds 1024 bytes. Nothing was written.",
-          content: { "application/json": { schema: errorEnvelope } },
-        },
+        ...cappedScalarBodyRefusals,
         ...stdResponses,
       },
     },
@@ -2226,10 +2271,54 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
             },
           },
         },
-        "413": {
-          description: "Request body exceeds 1024 bytes. Nothing was written.",
-          content: { "application/json": { schema: errorEnvelope } },
+        ...cappedScalarBodyRefusals,
+        ...stdResponses,
+      },
+    },
+  },
+  "/api/auth/me/workout-routes": {
+    get: {
+      tags: ["Auth"],
+      summary: "Read the workout-route opt-in",
+      description:
+        "Whether the GPS track of a workout is kept. Off by default. While it is off, `POST /api/workouts/batch` and the Apple Health export import keep every workout but drop its `route`; the per-entry status is the same as with the route stored. No AI path ever reads a stored track.",
+      responses: {
+        "200": {
+          description: "The current flag.",
+          content: {
+            "application/json": {
+              schema: dataEnvelope(
+                workoutRoutesResponse,
+                "GetWorkoutRoutesEnvelope",
+              ),
+            },
+          },
         },
+        ...stdResponses,
+      },
+    },
+    patch: {
+      tags: ["Auth"],
+      summary: "Set the workout-route opt-in",
+      description:
+        "Hard-set, idempotent, audit-logged. Rate-limited 60 / min per user; body capped at 1 KB. Turning it off stops new tracks; tracks already stored stay until their workout is deleted.",
+      requestBody: {
+        required: true,
+        content: { "application/json": { schema: workoutRoutesPatchRequest } },
+      },
+      responses: {
+        "200": {
+          description: "The resolved next flag.",
+          content: {
+            "application/json": {
+              schema: dataEnvelope(
+                workoutRoutesResponse,
+                "PatchWorkoutRoutesEnvelope",
+              ),
+            },
+          },
+        },
+        ...cappedScalarBodyRefusals,
         ...stdResponses,
       },
     },
@@ -2279,10 +2368,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
             },
           },
         },
-        "413": {
-          description: "Request body exceeds 1024 bytes. Nothing was written.",
-          content: { "application/json": { schema: errorEnvelope } },
-        },
+        ...cappedScalarBodyRefusals,
         ...stdResponses,
       },
     },
@@ -2326,7 +2412,7 @@ export const profilePaths: NonNullable<ZodOpenApiObject["paths"]> = {
       summary: "Set the account timezone",
       description:
         "Lifted out of the profile patch so the picker can send one field without round-tripping the rest. Accepts any zone the running engine's `Intl` knows; anything else is 422 rather than stored, so the resolver never has to defend against a poisoned column. Audit-logged with the old and new zone.\n\n" +
-        "A change is not only a display preference. The medication-compliance rollup keys its rows by the LOCAL day a dose fell on, minted under whatever zone was in force at write time, so moving the zone re-buckets that history and the stored keys go stale — and the coverage probe compares counts rather than keys, so it cannot notice. The route therefore enqueues a re-fold of the trailing window whenever the zone actually changes. Best-effort and de-duplicated, so rapid re-picks collapse into one.",
+        "A change is not only a display preference. The supplement nutrient rows key on the LOCAL day a dose fell on, minted under whatever zone was in force at write time, so moving the zone re-buckets them. The route therefore enqueues a recompute of the account's supplement nutrients whenever the zone actually changes. Best-effort and de-duplicated, so rapid re-picks collapse into one.",
       requestBody: {
         required: true,
         content: { "application/json": { schema: timezonePutRequest } },

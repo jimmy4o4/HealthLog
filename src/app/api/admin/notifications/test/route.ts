@@ -23,7 +23,7 @@ import type {
   ChannelType,
   NotificationPayload,
 } from "@/lib/notifications/types";
-import { defaultLocale, type Locale } from "@/lib/i18n/config";
+import { defaultLocale, isLocale, type Locale } from "@/lib/i18n/config";
 import { getServerTranslator } from "@/lib/i18n/server-translator";
 
 export const dynamic = "force-dynamic";
@@ -111,18 +111,6 @@ function failedSend(
   };
 }
 
-function isLocale(value: string | null | undefined): value is Locale {
-  return (
-    value === "de" ||
-    value === "en" ||
-    value === "fr" ||
-    value === "es" ||
-    value === "it" ||
-    value === "pl" ||
-    value === "ko"
-  );
-}
-
 export const POST = apiHandler(async () => {
   const { user } = await requireAdmin();
   annotate({ action: { name: "admin.notifications.test" } });
@@ -148,7 +136,7 @@ export const POST = apiHandler(async () => {
     });
   }
 
-  // v1.4.27 F21 — resolve the admin's persisted locale so the test
+  // v1.4.27 — resolve the admin's persisted locale so the test
   // notification arrives in their preferred language. The test route
   // talks to the senders directly (not the dispatcher) because it
   // needs per-channel success / error feedback for the UI, so we

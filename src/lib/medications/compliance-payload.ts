@@ -92,6 +92,8 @@ export interface ComplianceMedicationInput {
   createdAt: Date;
   startsOn: Date | null;
   endsOn: Date | null;
+  /** #1280 — the instant "End course" ended the latest course. */
+  endedAt: Date | null;
   oneShot: boolean;
   asNeeded: boolean;
   /** v1.39.1 (#1033) — intake tracking off: no adherence, heatmap empty. */
@@ -101,7 +103,7 @@ export interface ComplianceMedicationInput {
   scheduleRevisions?: Parameters<
     typeof buildComplianceMedicationContext
   >[0]["scheduleRevisions"];
-  /** v1.25 H-MED1 — pause eras so paused days drop out of the denominator. */
+  /** v1.25 — pause eras so paused days drop out of the denominator. */
   pauseEras?: Parameters<
     typeof buildComplianceMedicationContext
   >[0]["pauseEras"];
@@ -248,7 +250,7 @@ export async function buildCompliancePayload(
       deletedAt: null,
       scheduledFor: { gte: fetchFrom },
     },
-    orderBy: { scheduledFor: "desc" },
+    orderBy: [{ scheduledFor: "desc" }, { id: "desc" }],
     select: {
       takenAt: true,
       skipped: true,
@@ -262,7 +264,7 @@ export async function buildCompliancePayload(
     },
   });
 
-  // v1.7.0 SB-SCHED-2 — thread the medication context so the denominator
+  // v1.7.0 — thread the medication context so the denominator
   // routes through the canonical engine (RRULE / rolling / one-shot / PRN /
   // cyclic). `lastIntakeAt` is the latest non-skipped takenAt inside the
   // fetch window (rolling cadences re-anchor on it).

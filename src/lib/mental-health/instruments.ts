@@ -11,18 +11,14 @@
  *   - PHQ-9: Kroenke 2001; GAD-7: Spitzer 2006 (public-domain Pfizer grant).
  *   - WHO-5: WHO/UCN/MSD/MHE/2024.1 (© WHO 2024, CC BY-NC-SA 3.0 IGO) — raw
  *     0–25, × 4 → 0–100; "a percentage score below 50 … an indication for
- *     further assessment". Six app locales ship the WHO/PRU translations
- *     verbatim; Korean, which neither distribution carries, ships the
- *     published Kim 2010 translation instead.
+ *     further assessment".
  *   - SCI: Espie et al., BMJ Open 2014;4:e004183 (© Sleepio Ltd, licensed
  *     free for non-commercial use, CC BY-NC) — 8 items, 0–4 each, total 0–32,
  *     HIGHER = better sleep; "a score of ≤16 … seems reasonable to detect
- *     possible insomnia disorder". Item text is validated in English; app
- *     locales without a validated translation present the English items.
- * This module owns the canonical NUMERIC contract; the human wording lives in
- * `messages/*.json` under `mentalHealth.items.*` (validated translations per
- * locale where they exist — re-wording invalidates the score). See
- * `.planning/research/screening-instruments-2026-07.md`.
+ *     possible insomnia disorder".
+ * This module owns the canonical NUMERIC contract. The wording, per
+ * instrument and language with its source, lives in `./wording/` and is read
+ * through `instrument-wording.ts`; it never lives in `messages/*.json`.
  *
  * PHQ-9 item 9 (index 8) is the passive self-harm ideation screen and is the
  * safety-critical field (see `crisis-resources.ts` + the API handler): any
@@ -37,7 +33,7 @@ export type InstrumentId = "PHQ9" | "GAD7" | "WHO5" | "SCI";
 
 export interface InstrumentDefinition {
   id: InstrumentId;
-  /** Lowercase i18n slug — the key segment under `mentalHealth.*`. */
+  /** Lowercase slug — the key segment of the app's own copy under `mentalHealth.*`. */
   i18nKey: "phq9" | "gad7" | "who5" | "sci";
   /** Number of scored items (PHQ-9 = 9, GAD-7 = 7, WHO-5 = 5, SCI = 8). */
   itemCount: number;
@@ -50,22 +46,17 @@ export interface InstrumentDefinition {
    */
   optionOrder: readonly number[];
   /**
-   * Fully-qualified i18n namespace for the response-option labels: without
-   * `optionGroups` one shared anchor set (`<ns>.<value>`); with
-   * `optionGroups` (SCI) per-item anchor groups (`<ns>.<group>.<value>`,
-   * group = `optionGroups[itemIndex]`). v1.32.36 — qualified rather than
-   * relative so the reverse-i18n guard resolves the subtree from the literal
-   * instead of being handed the bare `mentalHealth` namespace.
+   * Item-specific anchor groups (SCI), one per item, naming the anchor set in
+   * the wording's `anchors`. Without it every item uses the single set `all`.
    */
-  optionNamespace: string;
   optionGroups?: readonly string[];
   /**
-   * Recall-stem caption key per item under `mentalHealth.stems.` — the WHO-5
-   * and SCI items are fragments under a shared stem on the source forms, so
-   * the wizard paints the applicable stem above the question. PHQ/GAD keep
-   * their frame in the instrument description line (shipped contract).
+   * Stem id per item, naming the text in the wording's `stems`: the question
+   * the source form prints above its items (the PHQ-9 / GAD-7 "Over the last
+   * 2 weeks…", the WHO-5 "Over the last two weeks …", the SCI section stems).
+   * The wizard keeps it visible above every item.
    */
-  stemKeys?: readonly string[];
+  stemIds: readonly string[];
   /** Multiplier from item-sum to the reported total (WHO-5: × 4). */
   scoreMultiplier: number;
   /** Inclusive REPORTED total range (WHO-5: 0–100 percentage). */
@@ -86,20 +77,12 @@ export interface InstrumentDefinition {
   /** Item index (0-based) of the safety-critical self-harm item, or null. */
   safetyItemIndex: number | null;
   /**
-   * Locales whose bundled item wording is a validated translation. A locale
-   * outside this list renders the validated source-language items plus an
-   * honest chrome note — NEVER a self-made translation.
-   */
-  validatedItemLocales: readonly string[];
-  /**
    * Required attribution — render VERBATIM on the instrument's start card and
    * the result view (and in exports). Stays in English by convention (the
    * developers' names and licence identifiers are not translated).
    */
   attribution: string;
 }
-
-const ALL_APP_LOCALES = ["de", "en", "es", "fr", "it", "pl", "ko"] as const;
 
 /**
  * The PHQ family is public-domain (Pfizer 2010); this is the canonical footer
@@ -116,7 +99,6 @@ const PHQ9: InstrumentDefinition = {
   itemCount: 9,
   itemMax: 3,
   optionOrder: [0, 1, 2, 3],
-  optionNamespace: "mentalHealth.options",
   scoreMultiplier: 1,
   minScore: 0,
   maxScore: 27,
@@ -129,10 +111,12 @@ const PHQ9: InstrumentDefinition = {
     { key: "modSevere", min: 15, max: 19 },
     { key: "severe", min: 20, max: 27 },
   ],
+  // The form's own question, "Over the last 2 weeks, how often have you been
+  // bothered by any of the following problems?", stands above every item.
+  stemIds: Array(9).fill("period"),
   actionThreshold: 10,
   // Item 9 ("Thoughts that you would be better off dead…") — the safety field.
   safetyItemIndex: 8,
-  validatedItemLocales: ALL_APP_LOCALES,
   attribution: PHQ_GAD_ATTRIBUTION,
 };
 
@@ -142,7 +126,7 @@ const GAD7: InstrumentDefinition = {
   itemCount: 7,
   itemMax: 3,
   optionOrder: [0, 1, 2, 3],
-  optionNamespace: "mentalHealth.options",
+  stemIds: Array(7).fill("period"),
   scoreMultiplier: 1,
   minScore: 0,
   maxScore: 21,
@@ -156,7 +140,6 @@ const GAD7: InstrumentDefinition = {
   ],
   actionThreshold: 10,
   safetyItemIndex: null,
-  validatedItemLocales: ALL_APP_LOCALES,
   attribution: PHQ_GAD_ATTRIBUTION,
 };
 
@@ -175,8 +158,7 @@ const WHO5: InstrumentDefinition = {
   itemCount: 5,
   itemMax: 5,
   optionOrder: [5, 4, 3, 2, 1, 0],
-  optionNamespace: "mentalHealth.who5Options",
-  stemKeys: Array(5).fill("who5.period"),
+  stemIds: Array(5).fill("period"),
   scoreMultiplier: 4,
   minScore: 0,
   maxScore: 100,
@@ -188,18 +170,10 @@ const WHO5: InstrumentDefinition = {
   ],
   actionThreshold: 50,
   safetyItemIndex: null,
-  // WHO publishes official de/en/es/fr/it/pl versions — all bundled verbatim.
-  // There is no Korean one, so `ko` carries the published forward/back-
-  // translation from Kim 2010 instead, which is CC BY-NC and so
-  // redistributable. Its validation sample was community-dwelling elderly,
-  // not general adults — narrower than the other six arms.
-  validatedItemLocales: ALL_APP_LOCALES,
   attribution:
     "World Health Organization. The World Health Organization-Five Well-Being " +
     "Index (WHO-5). Geneva: World Health Organization; 2024. Licence: " +
-    "CC BY-NC-SA 3.0 IGO. WHO does not endorse this application. Korean " +
-    "translation: Kim HJ, Moon YS, Son BK, Lee SK, Rho HJ, Kim DH. J Korean " +
-    "Geriatr Psychiatry 2010;14(2):90-96 (CC BY-NC 3.0).",
+    "CC BY-NC-SA 3.0 IGO. WHO does not endorse this application.",
 };
 
 /**
@@ -216,7 +190,6 @@ const SCI: InstrumentDefinition = {
   itemCount: 8,
   itemMax: 4,
   optionOrder: [4, 3, 2, 1, 0],
-  optionNamespace: "mentalHealth.sciOptions",
   optionGroups: [
     "duration",
     "duration",
@@ -227,15 +200,15 @@ const SCI: InstrumentDefinition = {
     "impact",
     "problemDuration",
   ],
-  stemKeys: [
-    "sci.night",
-    "sci.night",
-    "sci.night",
-    "sci.night",
-    "sci.impact",
-    "sci.impact",
-    "sci.impact",
-    "sci.finally",
+  stemIds: [
+    "night",
+    "night",
+    "night",
+    "night",
+    "impact",
+    "impact",
+    "impact",
+    "finally",
   ],
   scoreMultiplier: 1,
   minScore: 0,
@@ -248,11 +221,6 @@ const SCI: InstrumentDefinition = {
   ],
   actionThreshold: 16,
   safetyItemIndex: null,
-  // Validated in English (the CC BY-NC BMJ Open publication). French/Italian
-  // validations exist in the literature but their item text is not openly
-  // redistributable, so every non-EN locale presents the English items with
-  // an honest note — never a self-made translation.
-  validatedItemLocales: ["en"],
   attribution:
     "Espie CA, Kyle SD, Hames P, et al. The Sleep Condition Indicator: a " +
     "clinical screening tool to evaluate insomnia disorder. BMJ Open " +
@@ -310,38 +278,6 @@ export function needsFollowUp(id: InstrumentId, total: number): boolean {
   return def.higherIsBetter
     ? total <= def.actionThreshold
     : total >= def.actionThreshold;
-}
-
-/**
- * i18n key (under `mentalHealth.`) for one response option of one item —
- * shared anchors (`options.2`), instrument-specific shared anchors
- * (`who5Options.5`), or the SCI's per-item anchor groups
- * (`sciOptions.duration.4`).
- */
-export function optionLabelKey(
-  id: InstrumentId,
-  itemIndex: number,
-  value: number,
-): string {
-  const def = INSTRUMENTS[id];
-  return def.optionGroups
-    ? `${def.optionNamespace}.${def.optionGroups[itemIndex]}.${value}`
-    : `${def.optionNamespace}.${value}`;
-}
-
-/** Stem caption key (under `mentalHealth.stems.`) for an item, or null. */
-export function stemKey(id: InstrumentId, itemIndex: number): string | null {
-  return INSTRUMENTS[id].stemKeys?.[itemIndex] ?? null;
-}
-
-/**
- * Whether the bundled item wording for `locale` is a validated translation.
- * When false the surface shows the validated source-language items plus a
- * localized "validated in English" chrome note.
- */
-export function hasValidatedItems(id: InstrumentId, locale: string): boolean {
-  const base = locale.toLowerCase().split("-")[0];
-  return INSTRUMENTS[id].validatedItemLocales.includes(base);
 }
 
 /**
@@ -559,5 +495,8 @@ export const AUDIT_C_STANDARD_DRINK: Readonly<Record<string, string>> = {
   fr: "Un verre standard contient 10 g d'alcool pur, par exemple 25 cl de bière à 5°, 10 cl de vin à 12° ou 3 cl d'alcool à 40°.",
   it: "Una bevanda corrisponde a una bevanda standard di circa 10 g di alcol puro, la definizione dell'OMS su cui si basano queste domande.",
   pl: "Standardowa porcja alkoholu to około 10 g czystego alkoholu, zgodnie z definicją WHO, na której opierają się te pytania.",
+  nl: "Eén drankje is een standaardglas met ongeveer 10 g pure alcohol, de WHO-definitie waarop deze vragen gebaseerd zijn.",
+  "pt-BR":
+    "Uma bebida corresponde a uma dose padrão de cerca de 10 g de álcool puro, a definição da OMS na qual estas perguntas se baseiam.",
   ko: "표준 1잔: 양주잔으로 양주 1잔, 와인잔으로 와인 1잔, 막걸리 1사발이 각각 표준 1잔이다. 맥주는 캔맥주 1캔 또는 작은 병맥주 1병이며 생맥주는 500 mL가 표준 1잔이다. 소주는 1/4병이 표준 1잔에 해당한다.",
 };

@@ -1,5 +1,5 @@
 /**
- * v1.4.43 W6 — multi-issue 422 envelope on PUT /api/medications/[id].
+ * v1.4.43 — multi-issue 422 envelope on PUT /api/medications/[id].
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -41,6 +41,39 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+// The answer is the medication's read model (`medicationDetail`), whose
+// reads and resolution the integration walks hold against the contract.
+// Here it stands in with the part these tests read: the written row with
+// its schedules wired as every medication answer wires them.
+vi.mock("@/lib/medications/read-medication", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/medications/read-medication")>();
+  const { scheduleWireFields } =
+    await import("@/lib/medications/intake-tracking");
+  const { serializeScheduleUnitsPerDose } =
+    await import("@/lib/medications/schedule-units-dto");
+  return {
+    ...actual,
+    medicationDetail: vi.fn(
+      async ({
+        medication,
+      }: {
+        medication: Parameters<typeof actual.medicationDetail>[0]["medication"];
+      }) => ({
+        ...medication,
+        unitsPerDose: Number(medication.unitsPerDose),
+        ...scheduleWireFields(
+          medication.trackIntake,
+          serializeScheduleUnitsPerDose(
+            medication.schedules,
+            medication.unitsPerDose,
+          ),
+        ),
+      }),
+    ),
+  };
+});
+
 vi.mock("@/lib/auth/session", () => ({ getSession: vi.fn() }));
 vi.mock("@/lib/auth/audit", () => ({
   auditLog: vi.fn().mockResolvedValue(undefined),
@@ -51,9 +84,9 @@ vi.mock("@/lib/cache/invalidate", () => ({
 // v1.16.1 — the schedule-replace branch recomputes the compliance
 // rollups of the tombstoned slots; stub the rollup module so the route
 // test never reaches `$executeRaw`.
-vi.mock("@/lib/rollups/medication-compliance-rollups", () => ({
+vi.mock("@/lib/medications/dose-day-refresh", () => ({
   dayKeyForScheduledFor: vi.fn(() => "2026-06-10"),
-  recomputeMedicationComplianceForDay: vi.fn().mockResolvedValue(undefined),
+  refreshDoseDay: vi.fn().mockResolvedValue(undefined),
 }));
 // v1.40 (#1024) — the course writer and reader run against their own
 // integration suite; here they answer "no course, nothing refused".
@@ -99,8 +132,8 @@ import {
 import { auditLog } from "@/lib/auth/audit";
 import {
   dayKeyForScheduledFor,
-  recomputeMedicationComplianceForDay,
-} from "@/lib/rollups/medication-compliance-rollups";
+  refreshDoseDay,
+} from "@/lib/medications/dose-day-refresh";
 
 const SESSION_OK = {
   session: { id: "sess-1", expiresAt: new Date(Date.now() + 3_600_000) },
@@ -297,7 +330,7 @@ describe("PUT /api/medications/[id] — schedule replace archives a revision (v1
     vi.mocked(getMedicationCategories).mockResolvedValue({});
     vi.mocked(auditLog).mockResolvedValue(undefined);
     vi.mocked(dayKeyForScheduledFor).mockReturnValue("2026-06-10");
-    vi.mocked(recomputeMedicationComplianceForDay).mockResolvedValue(undefined);
+    vi.mocked(refreshDoseDay).mockResolvedValue(undefined);
     vi.mocked(prisma.medicationSchedule.findMany).mockResolvedValue([
       PREVIOUS_ROW,
     ] as never);
@@ -447,19 +480,19 @@ describe("PUT /api/medications/[id] — schedule replace migrates open slots", (
       ROUTE_CTX,
     );
     expect(res.status).toBe(200);
-    expect(recomputeMedicationComplianceForDay).toHaveBeenCalledTimes(2);
-    expect(recomputeMedicationComplianceForDay).toHaveBeenCalledWith(
-      "user-1",
-      "m1",
-      "2026-06-10",
-      "Europe/Berlin",
-    );
-    expect(recomputeMedicationComplianceForDay).toHaveBeenCalledWith(
-      "user-1",
-      "m1",
-      "2026-06-11",
-      "Europe/Berlin",
-    );
+    expect(refreshDoseDay).toHaveBeenCalledTimes(2);
+    expect(refreshDoseDay).toHaveBeenCalledWith({
+      userId: "user-1",
+      medicationId: "m1",
+      dayKey: "2026-06-10",
+      tz: "Europe/Berlin",
+    });
+    expect(refreshDoseDay).toHaveBeenCalledWith({
+      userId: "user-1",
+      medicationId: "m1",
+      dayKey: "2026-06-11",
+      tz: "Europe/Berlin",
+    });
   });
 
   it("does NOT touch intake rows when the body carries no schedules array", async () => {
@@ -600,7 +633,7 @@ describe("PUT /api/medications/[id] — primary-schedule grace bridge", () => {
     expect(res.status).toBe(200);
     expect(prisma.medicationSchedule.findFirst).toHaveBeenCalledWith({
       where: { medicationId: "m1" },
-      orderBy: { windowStart: "asc" },
+      orderBy: [{ windowStart: "asc" }, { id: "asc" }],
       select: { id: true },
     });
     expect(prisma.medicationSchedule.update).toHaveBeenCalledWith({
@@ -865,7 +898,7 @@ describe("PUT /api/medications/[id] — intake tracking switch (#1033)", () => {
     vi.mocked(getMedicationCategories).mockResolvedValue({});
     vi.mocked(auditLog).mockResolvedValue(undefined);
     vi.mocked(dayKeyForScheduledFor).mockReturnValue("2026-06-10");
-    vi.mocked(recomputeMedicationComplianceForDay).mockResolvedValue(undefined);
+    vi.mocked(refreshDoseDay).mockResolvedValue(undefined);
     vi.mocked(prisma.medicationSchedule.findMany).mockResolvedValue([
       LIVE_ROW,
     ] as never);
@@ -1055,7 +1088,7 @@ describe("PUT /api/medications/[id] — shipped client on a record-only medicati
     vi.mocked(getMedicationCategories).mockResolvedValue({});
     vi.mocked(auditLog).mockResolvedValue(undefined);
     vi.mocked(dayKeyForScheduledFor).mockReturnValue("2026-06-10");
-    vi.mocked(recomputeMedicationComplianceForDay).mockResolvedValue(undefined);
+    vi.mocked(refreshDoseDay).mockResolvedValue(undefined);
     vi.mocked(prisma.medicationSchedule.findMany).mockResolvedValue([
       STORED_ROW,
     ] as never);

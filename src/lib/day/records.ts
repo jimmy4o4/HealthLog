@@ -41,6 +41,12 @@ import { resolveCycleDay } from "@/lib/cycle/verdict";
 import { effectiveMoodTz } from "@/lib/mood/date-key";
 import { dateOnlyKey, dayKeyAsUtcMidnight } from "@/lib/tz/date-only";
 import { daysBetweenDateKeys, shiftDateKey, userDayKey } from "@/lib/tz/format";
+import { visitPath } from "@/lib/encounters/visit-links";
+import {
+  canonicalWorkoutsInRange,
+  readWorkoutsAroundRange,
+  WORKOUT_PICK_SELECT,
+} from "@/lib/workouts/canonical-read";
 
 /** Everything a section reader needs about the day. */
 export interface DayFrame {
@@ -196,7 +202,7 @@ async function medicationsPart(frame: DayFrame): Promise<SectionPart> {
           doseTaken: true,
           medication: { select: { name: true, dose: true } },
         },
-        orderBy: { takenAt: "asc" },
+        orderBy: [{ takenAt: "asc" }, { id: "asc" }],
       }),
       prisma.medicationDoseChange.findMany({
         where: {
@@ -223,7 +229,7 @@ async function medicationsPart(frame: DayFrame): Promise<SectionPart> {
           doseValue: true,
           doseUnit: true,
         },
-        orderBy: { effectiveFrom: "desc" },
+        orderBy: [{ effectiveFrom: "desc" }, { id: "desc" }],
         distinct: ["medicationId"],
       }),
     ]);
@@ -537,6 +543,9 @@ async function symptomsPart(frame: DayFrame): Promise<SectionPart> {
       intensity: true,
       noteEncrypted: true,
       episodeId: true,
+      // The link opens its episode only while that episode exists; a link to
+      // a deleted one opens the illness page like an unfiled occurrence.
+      episode: { select: { deletedAt: true } },
       definition: { select: { labelEncrypted: true } },
     },
     orderBy: { occurredAt: "asc" },
@@ -552,7 +561,10 @@ async function symptomsPart(frame: DayFrame): Promise<SectionPart> {
         title: openText(row.definition.labelEncrypted, "symptom label") ?? "",
         meta: String(row.intensity),
         note: openText(row.noteEncrypted, "symptom note"),
-        href: row.episodeId ? `/illness/${row.episodeId}` : "/illness",
+        href:
+          row.episodeId && row.episode && row.episode.deletedAt === null
+            ? `/illness/${row.episodeId}`
+            : "/illness",
       }),
     ),
   };
@@ -624,7 +636,7 @@ async function visitsPart(frame: DayFrame): Promise<SectionPart> {
         meta: row.status === "PLANNED" ? "PLANNED" : row.kind,
         note: openText(row.outcomeEncrypted, "visit outcome"),
         docs: docs.get(row.id) ?? [],
-        href: `/checkups?visit=${row.id}`,
+        href: visitPath(row.id),
       }),
     ),
   };
@@ -707,6 +719,7 @@ async function labsPart(frame: DayFrame): Promise<SectionPart> {
           row.value !== null
             ? // Every recorded digit, without the float noise a converted
               // reading carries (the labs page prints the same figure).
+              // eslint-disable-next-line healthlog/no-unlocalised-decimal -- the day contract's meta is wire text; the lab figure keeps the notation it was stored in
               `${formatRecordedNumber(row.value, (v, digits) => v.toFixed(digits), row.sourceValue)} ${row.unit}`.trim()
             : (row.valueText ?? null),
         note: openText(row.noteEncrypted, "lab note"),
@@ -896,14 +909,27 @@ async function assessmentsPart(frame: DayFrame): Promise<SectionPart> {
 /* ─── workouts, cycle ─────────────────────────────────────────────────────── */
 
 async function workoutsPart(frame: DayFrame): Promise<SectionPart> {
-  const rows = await prisma.workout.findMany({
-    where: {
-      userId: frame.userId,
-      startedAt: { gte: frame.dayStart, lt: frame.dayEnd },
-    },
-    select: { id: true, sportType: true, startedAt: true, durationSec: true },
-    orderBy: { startedAt: "asc" },
-  });
+  const [account, stored] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: frame.userId },
+      select: { sourcePriorityJson: true },
+    }),
+    // The windowed reader orders the rows itself.
+    readWorkoutsAroundRange(
+      { from: frame.dayStart, to: frame.dayEnd },
+      (bounds) =>
+        prisma.workout.findMany({
+          where: { userId: frame.userId, startedAt: bounds },
+          select: WORKOUT_PICK_SELECT,
+        }),
+    ),
+  ]);
+  // One session synced by two services is one workout on the day, as in the
+  // workout list it links to, a twin across midnight included.
+  const rows = canonicalWorkoutsInRange(
+    stored,
+    account?.sourcePriorityJson ?? null,
+  );
   return {
     running: [],
     events: rows.map((row) =>

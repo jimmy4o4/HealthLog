@@ -24,20 +24,16 @@
   <a href="https://testflight.apple.com/join/bucuTBpa">iOS TestFlight</a>
 </p>
 
-<img width="2434" height="1247" alt="HealthLog dashboard in dark theme: the Today overview with a lead sentence, the health score ring, Today facts and worth-a-look cards, above metric tiles with 7-day trends" src="docs/assets/dashboard-hero.jpeg" />
+<img width="2400" height="1500" alt="HealthLog dashboard in dark theme: a lead sentence on the latest vitals, today's medications, sleep and cycle, the health score ring, worth-a-look cards, and metric tiles with 7-day trends" src="docs/assets/dashboard.jpeg" />
 <p align="center">
-  <img src="docs/assets/Insights.png"
-       alt="Insights"
-       width="23%">
-  <img src="docs/assets/resting-pulse.png"
-       alt="Insights RHR"
-       width="23%">
-  <img src="docs/assets/Medications.png"
-       alt="Medications"
-       width="23%">
-  <img src="docs/assets/Coach.png"
-       alt="Coach Chat"
-       width="23%">
+  <img src="docs/assets/timeline.jpeg" alt="Timeline: life events, conditions, medications, vaccinations, labs and cycles on one time axis, above blood pressure, weight and resting heart rate" width="32%">
+  <img src="docs/assets/day-panel.jpeg" alt="Blood pressure insights with the day panel open: what was running that day, its values and scores" width="32%">
+  <img src="docs/assets/resting-heart-rate.jpeg" alt="Resting heart rate insights: summary, usual range and the full history chart" width="32%">
+</p>
+<p align="center">
+  <img src="docs/assets/medications.jpeg" alt="Medications with next and last intake, adherence and streaks" width="32%">
+  <img src="docs/assets/labs.jpeg" alt="Lab results with reference ranges and trend sparklines" width="32%">
+  <img src="docs/assets/coach.jpeg" alt="Coach: a conversation about the week's recovery, grounded in the recorded data" width="32%">
 </p>
 
 ## Why HealthLog
@@ -54,13 +50,13 @@ Try the [live demo](https://demo.healthlog.dev) to see a working install — sig
 - **Clinical signals, opt-in and additive.** Validated self-checks for mental wellbeing and sleep (WHO-5, PHQ-9, GAD-7, Sleep Condition Indicator — official questionnaire wording, calm crisis-resource handling), grip strength, a 0–10 pain score, waist and body measurements, and a longevity lab panel — each added through one signal registry, so a new signal wires into charts, correlations, the coach, the FHIR map, and the API at once.
 - **Records, structured.** Allergies and family history as structured records that flow into the doctor report (reactions and notes are encrypted, the substance and condition names are not), plus lab values you key in or scan from a printed report — OCR extracts the stated values, units, and dates for you to review and confirm before anything is saved. HealthLog transcribes what a report says; it never interprets or diagnoses from it. A vaccination record keeps a lifetime immunization log, doses grouped under the disease they protect against, and prints in the doctor report.
 - **A document vault for the paper trail.** An opt-in module stores every letter, report, and scan encrypted at rest — PDFs and photos preview inline, Office and text files stay download-only, and nothing user-uploaded can ever execute in the app. One searchable timeline with type, condition, and year filters, drag-and-drop and paste-to-upload, bulk filing, undo-able delete with a 30-day grace, and per-file/per-account limits the operator tunes.
-- **Context that explains the numbers.** An opt-in environmental module folds weather, daylight, and temperature in as influence signals (winter darkness against mood, heat against blood pressure) using a home location you set, so a pattern has somewhere to point.
+- **Context that explains the numbers.** An environmental module folds weather, daylight, temperature, air quality, and pollen in as influence signals (winter darkness against mood, heat against blood pressure) using a home location you set, so a pattern has somewhere to point. It is on by default, and nothing leaves the host until someone sets that location.
 - **Your devices, one server.** Withings, WHOOP, Oura and Polar sync over OAuth2, Google Health connects Fitbit and Pixel Watch through your own Google Cloud client, Nightscout streams CGM glucose, an Apple Health `export.zip` folds your full history in, and the native iOS app streams HealthKit live. A per-metric source priority decides which reading is canonical when wearables overlap.
 - **Medication tracking that tells the truth.** Flexible schedules (weekly injections, weekday-only, intervals, PRN, cyclic), a configurable intake window per dose, and a traceable dose history where every slot reads taken, late, skipped, or missed — the same ledger the compliance rate is computed from, so the percentage can never disagree with the timeline.
 - **AI insights you own.** Daily briefing, health scores, correlations, and a conversational coach grounded in your own measurements and interpreted against cited guideline reference bands — where a value sits and what that means in plain words, never a diagnosis. The coach proposes concrete if-then plans you accept or decline, and suppresses proactive check-ins when there's nothing genuine to say. Bring your own OpenAI or Anthropic key, or point at a local endpoint (Ollama, LM Studio, vLLM) so AI requests stay on your network.
 - **Clinician-ready output.** A doctor-report PDF rendered on your server, a read-only HL7 FHIR R4 API, and scoped, time-limited share links you revoke after the visit.
 - **Private by construction.** AES-256-GCM encryption at rest for notes and other free text, documents, questionnaire answers, AI-written text and credentials, with zero-downtime key rotation. Measurement values, lab values, medication names and mood scores are stored unencrypted in the database, so the database volume and its backups need the same protection as the host. Passkey login, server-side sessions, strict CSP, and no third-party tracking anywhere.
-- **Built to be lived in.** Installable PWA with offline support, medication reminders over APNs, Telegram, ntfy, and Web Push, a sub-second dashboard on years of imported history — in English, German, Spanish, French, Italian, Polish, and Korean end to end.
+- **Built to be lived in.** Installable PWA with offline support, medication reminders over APNs, Telegram, ntfy, and Web Push, a sub-second dashboard on years of imported history — in English, German, Spanish, French, Italian, Polish, Korean, Dutch, and Brazilian Portuguese end to end.
 
 The full feature tour, integration guides, and API reference live at [docs.healthlog.dev](https://docs.healthlog.dev).
 
@@ -89,11 +85,11 @@ Verify the running version:
 curl -s http://localhost:3000/api/version   # returns version + buildSha + builtAt
 ```
 
-`SESSION_COOKIE_SECURE=false` is the one setting plain-HTTP self-hosts must set: without it the session cookie carries the `Secure` flag, the browser drops it over HTTP, and login silently fails. Leave it unset (or `true`) only when a TLS reverse proxy serves HTTPS — and then set `NEXT_PUBLIC_APP_URL` and `APP_URL` to the public URL first (see the [self-hosting guide](https://docs.healthlog.dev/self-hosting/)).
+`SESSION_COOKIE_SECURE=false` is the one setting plain-HTTP self-hosts must set: without it the session cookie carries the `Secure` flag, the browser drops it over HTTP, and login silently fails. Leave it unset (or `true`) only when a TLS reverse proxy serves HTTPS — and then set `NEXT_PUBLIC_APP_URL` and `APP_URL` to the public URL first (see the [self-hosting guide](https://docs.healthlog.dev/getting-started/self-host-in-10-minutes/)).
 
-Persistent state lives in exactly one named volume (`pgdata`, the Postgres data dir); the app container is stateless, so backing up the database backs up everything.
+Persistent state lives in the database volume (`postgres-data`) and in `backups`, which holds the nightly database dumps; the app container is stateless. An install from v1.45 or earlier moves its Postgres 16 database from `pgdata` into the new volume on the first start ([details](docs/ops/postgres-major-upgrade.md)); recovering a lost server is in [disaster-recovery.md](docs/ops/disaster-recovery.md).
 
-NAS and homelab users have ready-made paths: [Unraid Community Applications](docs/self-hosting/unraid.md) and [Portainer app templates](docs/self-hosting/portainer/README.md).
+NAS and homelab users have ready-made paths: [Unraid Community Applications](docs/self-hosting/unraid.md), [Portainer app templates](docs/self-hosting/portainer/README.md) and [TrueNAS](docs/self-hosting/truenas.md) (the Community train app is pending catalog review).
 
 ## Self-hosting
 
@@ -109,17 +105,18 @@ The App Store listing carries a small price, which exists to cover Apple's yearl
 
 ## Tech stack
 
-Next.js 16 (App Router, React Server Components), TypeScript strict, PostgreSQL 16 with Prisma, pg-boss for jobs, Tailwind CSS 4 + shadcn/ui, Recharts, WebAuthn passkeys, Vitest + Playwright, multi-stage Alpine Docker image. The OpenAPI 3.1 contract for native clients is generated from the Zod schemas at [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
+Next.js 16 (App Router, React Server Components), TypeScript strict, PostgreSQL 18 with Prisma, pg-boss for jobs, Tailwind CSS 4 + shadcn/ui, Recharts, WebAuthn passkeys, Vitest + Playwright, multi-stage Alpine Docker image. The OpenAPI 3.1 contract for native clients is generated from the Zod schemas at [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 ## Documentation
 
-|                        |                                                  |
-| ---------------------- | ------------------------------------------------ |
-| User and operator docs | [docs.healthlog.dev](https://docs.healthlog.dev) |
-| Release history        | [CHANGELOG.md](CHANGELOG.md)                     |
-| API contract           | [`docs/api/openapi.yaml`](docs/api/openapi.yaml) |
-| Security policy        | [SECURITY.md](SECURITY.md)                       |
-| Contributing           | [CONTRIBUTING.md](CONTRIBUTING.md)               |
+|                        |                                                              |
+| ---------------------- | ------------------------------------------------------------ |
+| User and operator docs | [docs.healthlog.dev](https://docs.healthlog.dev)             |
+| Release history        | [CHANGELOG.md](CHANGELOG.md)                                 |
+| API contract           | [`docs/api/openapi.yaml`](docs/api/openapi.yaml)             |
+| Security policy        | [SECURITY.md](SECURITY.md)                                   |
+| Contributing           | [CONTRIBUTING.md](CONTRIBUTING.md)                           |
+| Translating            | [CONTRIBUTING.md#translations](CONTRIBUTING.md#translations) |
 
 ## Status
 

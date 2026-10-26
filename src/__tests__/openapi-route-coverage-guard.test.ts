@@ -114,6 +114,7 @@ import { describe, expect, it } from "vitest";
 
 import { openApiPaths } from "@/lib/openapi/routes";
 import { RETIRED_ROUTES } from "@/lib/http/retired-routes";
+import { stripComments } from "./helpers/source-files";
 
 const ROOT = process.cwd();
 
@@ -135,7 +136,7 @@ type HttpMethod = (typeof HTTP_METHODS)[number];
  */
 const REASONS = {
   /**
-   * `requireAdmin()` is cookie-only by construction (`src/lib/api-handler.ts`),
+   * `requireAdmin()` is cookie-only by construction (`src/lib/auth/guards/cookie.ts`),
    * so a Bearer token cannot reach these however wide its scope. The only
    * caller that can is the operator's own browser on the admin console, which
    * ships with the server and does not read a spec to find out what it talks
@@ -216,11 +217,13 @@ const UNPUBLISHED: Readonly<Record<string, Exemption>> = {
   "/api/admin/backup/test": { kind: "adminConsole", methods: ["POST"] },
   "/api/admin/backups": { kind: "adminConsole", methods: ["GET"] },
   "/api/admin/backups/run": { kind: "adminConsole", methods: ["POST"] },
-  "/api/admin/backups/upload": { kind: "adminConsole", methods: ["POST"] },
-  // `/api/admin/backups/{id}/download` and `/api/admin/backups/{id}/restore`
-  // are published rather than exempted: both open the encrypted stored copy,
-  // and the refusal they answer when it will not open is a promise an operator
-  // needs to be able to look up. See `src/lib/openapi/routes/admin-backups.ts`.
+  // `/api/admin/backups/{id}/download`, `/api/admin/backups/{id}/restore` and
+  // `/api/admin/backups/upload` are published rather than exempted: the first
+  // two open the encrypted stored copy, and the refusal they answer when it
+  // will not open is a promise an operator needs to be able to look up; the
+  // upload refuses a file for reasons (a missing key, an unknown owner, a
+  // newer schema) an operator has to be able to look up the same way. See
+  // `src/lib/openapi/routes/admin-backups.ts`.
   "/api/admin/backups/{id}/summary": { kind: "adminConsole", methods: ["GET"] },
   "/api/admin/central-codex": {
     kind: "adminConsole",
@@ -236,18 +239,6 @@ const UNPUBLISHED: Readonly<Record<string, Exemption>> = {
   },
   "/api/admin/data": { kind: "adminConsole", methods: ["DELETE"] },
   "/api/admin/drain-per-sample-cumulative": {
-    kind: "adminConsole",
-    methods: ["POST"],
-  },
-  "/api/admin/encryption/key-backup": {
-    kind: "adminConsole",
-    methods: ["GET"],
-  },
-  "/api/admin/encryption/key-backup/confirm": {
-    kind: "adminConsole",
-    methods: ["POST"],
-  },
-  "/api/admin/encryption/key-backup/verify": {
     kind: "adminConsole",
     methods: ["POST"],
   },
@@ -273,6 +264,19 @@ const UNPUBLISHED: Readonly<Record<string, Exemption>> = {
   "/api/admin/provider-health": { kind: "adminConsole", methods: ["GET"] },
   "/api/admin/notifications/health": { kind: "adminConsole", methods: ["GET"] },
   "/api/admin/notifications/test": { kind: "adminConsole", methods: ["POST"] },
+  "/api/admin/recovery-kit": { kind: "adminConsole", methods: ["GET"] },
+  "/api/admin/recovery-kit/confirm": {
+    kind: "adminConsole",
+    methods: ["POST"],
+  },
+  "/api/admin/recovery-kit/verify": {
+    kind: "adminConsole",
+    methods: ["POST"],
+  },
+  "/api/admin/recovery-readiness": {
+    kind: "adminConsole",
+    methods: ["GET"],
+  },
   "/api/admin/rollups/recompute": { kind: "adminConsole", methods: ["POST"] },
   "/api/admin/settings": { kind: "adminConsole", methods: ["GET", "PUT"] },
   "/api/admin/settings/assistant-flags": {
@@ -297,6 +301,10 @@ const UNPUBLISHED: Readonly<Record<string, Exemption>> = {
     methods: ["POST"],
   },
   "/api/admin/users/{id}/reset-password": {
+    kind: "adminConsole",
+    methods: ["POST"],
+  },
+  "/api/admin/users/{id}/undo-deletion": {
     kind: "adminConsole",
     methods: ["POST"],
   },
@@ -375,10 +383,6 @@ const UNPUBLISHED: Readonly<Record<string, Exemption>> = {
     methods: ["GET"],
   },
 };
-
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
-}
 
 /** `src/app/api/foo/[id]/route.ts` → `/api/foo/{id}`. */
 function toApiPath(file: string): string {

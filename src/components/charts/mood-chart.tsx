@@ -15,12 +15,15 @@ import {
   ReferenceLine,
 } from "recharts";
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { TagChip } from "@/components/ui/tag-chip";
 import { TileHeader } from "@/components/insights/tile-header";
-import { useDateFormatPreference, useTranslations } from "@/lib/i18n/context";
+import {
+  useDateFormatPreference,
+  useFormatters,
+  useTranslations,
+} from "@/lib/i18n/context";
 import { makeBucketLabelFormatters } from "@/lib/charts/bucket-label";
 import { readStoredTimezone } from "@/lib/timezone-mirror";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
@@ -39,6 +42,7 @@ import {
   useChartDayLinks,
 } from "@/components/day/chart-day-links";
 import { ChartEmptyState } from "./chart-empty-state";
+import { ChartRangeTabs } from "./chart-range-tabs";
 import { ChartErrorState } from "./chart-error-state";
 import { prefersReducedMotion } from "@/lib/charts/reduced-motion";
 import { shiftDailySeriesForward } from "@/lib/charts/comparison-shift";
@@ -54,6 +58,7 @@ import { CHART_HEIGHT_PX } from "@/lib/charts/constants";
 import { shouldFireDataReady } from "@/lib/charts/data-ready-latch";
 import { moodLabelKeyForScore } from "@/lib/mood/labels";
 import { apiGet } from "@/lib/api/api-fetch";
+import { trendLineByTime } from "@/lib/stats/linear-fit";
 
 // --- Types ---
 
@@ -69,25 +74,25 @@ interface ChartDataPoint {
   score: number;
   ma?: number;
   trend?: number;
-  /** v1.4.16 B8 — prior-period overlay value. */
+  /** v1.4.16 — prior-period overlay value. */
   scoreCompare?: number;
 }
 
 interface MoodChartProps {
   title?: string;
   /**
-   * v1.4.16 B5c — compact mode for embedding inside the
+   * v1.4.16 — compact mode for embedding inside the
    * RecommendationCard. Hides the range tabs / toggle row and shrinks
    * padding. Tooltip stays intact.
    */
   mini?: boolean;
   /**
-   * v1.4.16 B5c — pin the chart to a specific rationale data
+   * v1.4.16 — pin the chart to a specific rationale data
    * window regardless of any parent UI state.
    */
   windowOverride?: "last7days" | "last30days" | "last90days" | "allTime";
   /**
-   * v1.4.16 B8 — when set to "lastMonth" / "lastYear", overlay a
+   * v1.4.16 — when set to "lastMonth" / "lastYear", overlay a
    * dimmed prior-period mood line beneath the current series. Same
    * shift mechanic the BP/weight/pulse chart uses; the mood score is
    * a single metric so only one comparison line is drawn.
@@ -122,32 +127,8 @@ interface MoodChartProps {
 // --- Constants ---
 
 // The range tabs select a CALENDAR-DAY window ending now, matching
-// `health-chart.tsx` (see the note there). Until v1.37.29 this chart
-// sliced the last N LOGGED DAYS out of the whole history instead — the
-// same "7" tab meant seven calendar days on a weight chart and seven
-// logged days (possibly weeks apart) on the mood chart one card over.
-const TIME_RANGES_KEYS = [
-  {
-    labelKey: "charts.days7Label",
-    days: 7,
-    titleKey: "charts.days7Title",
-  },
-  {
-    labelKey: "charts.days30Label",
-    days: 30,
-    titleKey: "charts.days30Title",
-  },
-  {
-    labelKey: "charts.days90Label",
-    days: 90,
-    titleKey: "charts.days90Title",
-  },
-  {
-    labelKey: "charts.daysAllLabel",
-    days: 0,
-    titleKey: "charts.daysAllTitle",
-  },
-] as const;
+// `health-chart.tsx`, through the same `ChartRangeTabs` every chart drawn in
+// days carries.
 
 // MOOD_LABELS built dynamically via t() in the component
 
@@ -195,44 +176,6 @@ function movingAverageByPoints(
       value: Math.round(avg * 100) / 100,
     };
   });
-}
-
-function buildTrendLine(data: Array<{ date: Date; value: number }>): {
-  points: Array<{ date: Date; value: number }>;
-  slopePerDay: number;
-} | null {
-  if (data.length < 2) return null;
-
-  const sorted = [...data].sort((a, b) => a.date.getTime() - b.date.getTime());
-  const startTime = sorted[0].date.getTime();
-  const points = sorted.map((p) => ({
-    x: (p.date.getTime() - startTime) / 86400000,
-    y: p.value,
-  }));
-
-  const n = points.length;
-  const sumX = points.reduce((s, p) => s + p.x, 0);
-  const sumY = points.reduce((s, p) => s + p.y, 0);
-  const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
-  const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
-
-  const denominator = n * sumXX - sumX * sumX;
-  if (denominator === 0) return null;
-
-  const slope = (n * sumXY - sumX * sumY) / denominator;
-  const intercept = (sumY - slope * sumX) / n;
-
-  return {
-    points: sorted.map((p) => ({
-      date: p.date,
-      value:
-        Math.round(
-          (intercept + slope * ((p.date.getTime() - startTime) / 86400000)) *
-            100,
-        ) / 100,
-    })),
-    slopePerDay: slope,
-  };
 }
 
 // --- Aggregation helpers (exported for unit tests) ---
@@ -336,6 +279,7 @@ export function MoodChart({
 }: MoodChartProps) {
   const { isAuthenticated } = useAuth();
   const { t, locale } = useTranslations();
+  const fmt = useFormatters();
   // Issue #490 — x-axis tick + tooltip date labels. Every timestamp this
   // chart formats encodes a CALENDAR DAY (noon-UTC of a server day key,
   // or a `bucketTimeSeries` Berlin-day UTC-midnight bucket start), so
@@ -368,7 +312,7 @@ export function MoodChart({
   const effectiveCompareBaseline =
     !mini && chartKey ? overlayPrefs.prefs.comparisonBaseline : compareBaseline;
 
-  // v1.30.1 M2 — hydrate the range tab from the persisted prefs once
+  // v1.30.1 — hydrate the range tab from the persisted prefs once
   // they arrive; see health-chart.tsx for the full rationale (the
   // dashboard-layout query resolves after mount, and `rangePoints`
   // stays local state because several memos depend on it by identity).
@@ -387,12 +331,12 @@ export function MoodChart({
     setRangePoints(overlayPrefs.prefs.rangePoints);
   }
 
-  // v1.4.19 A2 — viewport-aware tick density helper.
+  // v1.4.19 — viewport-aware tick density helper.
   const viewportWidth = useViewportWidth();
 
   const displayTitle = title ?? t("charts.mood");
 
-  // v1.4.40 W-RSC — align the chart's queryKey with the dashboard's
+  // v1.4.40 — align the chart's queryKey with the dashboard's
   // `useQuery({ queryKey: queryKeys.moodAnalytics() })` call against the
   // same `/api/mood/analytics` endpoint. Pre-fix the chart fetched its
   // own copy under `["mood-chart-data"]` (audit C1) — TanStack treated
@@ -406,7 +350,7 @@ export function MoodChart({
   // cache fresh; the chart's own subscription becomes the cache writer
   // for any insights / mood sub-page that mounts the chart without the
   // dashboard parent having fetched first.
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.moodAnalytics(),
     queryFn: async (): Promise<MoodAnalyticsData> => {
       return apiGet<MoodAnalyticsData>("/api/mood/analytics");
@@ -444,7 +388,7 @@ export function MoodChart({
     onDataReadyRef.current?.();
   }, [isLoading]);
 
-  // v1.4.43 W2-CHART-GATE — raw mood-entry count across every day in
+  // v1.4.43 — raw mood-entry count across every day in
   // the window. `entries[].samples` carries the per-day raw count
   // straight from the analytics endpoint; summing it produces the
   // total entries the user logged, independent of how many calendar
@@ -479,7 +423,7 @@ export function MoodChart({
         ? allPoints.filter((point) => point.timestamp >= cutoff)
         : allPoints;
 
-    // v1.4.15 Fix 3: parity with health-chart's auto-bucketing. Other
+    // v1.4.15: parity with health-chart's auto-bucketing. Other
     // dashboard charts (BP, weight, pulse) auto-aggregate to weekly /
     // monthly when the visible range is long enough that drawing every
     // daily point would clutter the chart; the mood chart used to show
@@ -542,7 +486,7 @@ export function MoodChart({
       }));
 
       if (scoreData.length >= 2) {
-        const trend = buildTrendLine(scoreData);
+        const trend = trendLineByTime(scoreData);
         if (trend) {
           for (const point of trend.points) {
             const pointTimestamp = point.date.getTime();
@@ -561,7 +505,7 @@ export function MoodChart({
   }, [data, rangePoints, showMA, showTrend, tzFmt, profileTimeZone]);
 
   /**
-   * v1.4.16 B8 — comparison overlay merged into chartData.
+   * v1.4.16 — comparison overlay merged into chartData.
    *
    * Same mechanic as HealthChart: shift the full mood-entries history
    * forward by 30 / 365 days, key by the existing `date` formatter, and
@@ -633,7 +577,7 @@ export function MoodChart({
 
   const maxPointIndex = Math.max(0, (chartData?.length ?? 1) - 1);
 
-  // v1.4.27 B6 / BL-P6-11 — the chart axis and the mood-list cards
+  // v1.4.27 — the chart axis and the mood-list cards
   // share `MOOD_LABEL_KEYS` so a polishing-pass copy update lands in
   // both surfaces. The shared resolver maps a numeric score back to
   // the canonical key set under `mood.level*`.
@@ -655,12 +599,12 @@ export function MoodChart({
   };
 
   const formatTooltipValue = (value: number): string => {
-    const rounded = Math.round(value * 10) / 10;
+    const rounded = fmt.number(Math.round(value * 10) / 10);
     const label = moodLabels[Math.round(value)];
-    return label ? `${rounded} (${label})` : String(rounded);
+    return label ? `${rounded} (${label})` : rounded;
   };
 
-  // v1.4.16 B1a — personal mood baseline (median over visible window).
+  // v1.4.16 — personal mood baseline (median over visible window).
   const personalBaseline = useMemo<number | null>(() => {
     if (!chartData?.length || chartData.length < 5) return null;
     const sorted = chartData.map((d) => d.score).sort((a, b) => a - b);
@@ -718,7 +662,7 @@ export function MoodChart({
     if (scores.length === 0) {
       return t("charts.a11y.noData", { metric });
     }
-    const fmtScore = (v: number) => String(Math.round(v * 10) / 10);
+    const fmtScore = (v: number) => fmt.number(Math.round(v * 10) / 10);
     const minVal = Math.min(...scores);
     const maxVal = Math.max(...scores);
     const latestVal = scores[scores.length - 1];
@@ -756,6 +700,7 @@ export function MoodChart({
     // v1.16.8 — a failed query paints as an ERROR with a retry
     // affordance instead of unmounting the card (see the gate above).
     <ChartErrorState
+      error={error}
       title={t("charts.errorTitle")}
       actionLabel={t("common.retry")}
       actionContext={displayTitle}
@@ -763,17 +708,15 @@ export function MoodChart({
       height={CHART_HEIGHT_PX}
     />
   ) : !chartData?.length ? (
-    <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
-      {t("charts.noData")}
-    </div>
+    <ChartEmptyState title={t("charts.noData")} height={192} />
   ) : chartData.length < 3 ? (
-    // v1.4.16 B1a — sparse-data placeholder consistent with the
+    // v1.4.16 — sparse-data placeholder consistent with the
     // BP/weight/pulse charts. Height tracks the chart strip's
     // shared CHART_HEIGHT_PX so the empty state preserves the
     // trend-row rhythm (v1.4.27 — was 280, now 240 to match every
     // other dashboard chart card).
     //
-    // v1.4.43 W2-CHART-GATE — split the copy on the raw mood-entry
+    // v1.4.43 — split the copy on the raw mood-entry
     // count. A user with 50 mood entries across 2 calendar days
     // sees `chartData.length = 2` (daily-aggregated) but the raw
     // count (sum of `samples`) is 50. Surface "need more days"
@@ -819,7 +762,7 @@ export function MoodChart({
           accessibilityLayer
           onClick={chartDays.onChartClick}
         >
-          {/* v1.4.25 W3 — the mood chart's YAxis is pinned to
+          {/* v1.4.25 — the mood chart's YAxis is pinned to
                     five mood-score ticks ([1,2,3,4,5]), which Recharts
                     syncs with CartesianGrid by default. That left the
                     mini variant painting five horizontal lines while
@@ -974,7 +917,7 @@ export function MoodChart({
                     delta = t("charts.deltaUnchanged");
                   } else {
                     const sign = diff > 0 ? "+" : "−";
-                    const formatted = `${sign}${Math.abs(diff).toFixed(1)}`;
+                    const formatted = `${sign}${fmt.number(Math.abs(diff), 1)}`;
                     delta = t(
                       effectiveCompareBaseline === "lastMonth"
                         ? "comparison.deltaVs.lastMonth"
@@ -987,7 +930,7 @@ export function MoodChart({
                     delta = t("charts.deltaUnchanged");
                   } else {
                     const sign = diff > 0 ? "+" : "−";
-                    const formatted = `${sign}${Math.abs(diff).toFixed(1)}`;
+                    const formatted = `${sign}${fmt.number(Math.abs(diff), 1)}`;
                     delta = t("charts.deltaVsBaseline").replace(
                       "{delta}",
                       formatted,
@@ -1064,7 +1007,7 @@ export function MoodChart({
               connectNulls
             />
           )}
-          {/* v1.4.16 B8 — comparison overlay (mood). Same
+          {/* v1.4.16 — comparison overlay (mood). Same
                     dimmed dashed treatment the BP/weight/pulse chart
                     uses; mood is a single metric so we only render
                     one overlay line. Suppressed when there's no prior
@@ -1112,7 +1055,7 @@ export function MoodChart({
   return (
     <Card>
       <CardHeader>
-        {/* v1.4.19 A2 — mobile-first header: stack title row above
+        {/* v1.4.19 — mobile-first header: stack title row above
             controls row on small viewports so the bucket / comparison
             chips never push the range tabs into a 2nd line. ≥sm goes
             back to side-by-side. */}
@@ -1128,8 +1071,8 @@ export function MoodChart({
                 )}
               </TagChip>
             )}
-            {/* v1.4.16 B8 — comparison caption (mood).
-                v1.4.19 A2 — hidden on mobile to free up the title row. */}
+            {/* v1.4.16 — comparison caption (mood).
+                v1.4.19 — hidden on mobile to free up the title row. */}
             {effectiveCompareBaseline !== "none" && hasComparisonData && (
               <span
                 className="text-dose-accent bg-dose-accent/10 text-2xs hidden rounded-md border border-current/30 px-1.5 py-0.5 font-medium tracking-wide uppercase sm:inline-flex"
@@ -1159,31 +1102,21 @@ export function MoodChart({
             className="flex flex-nowrap items-center justify-end gap-1 self-end sm:self-auto"
             data-slot="chart-header-controls"
           >
-            {TIME_RANGES_KEYS.map((r) => (
-              <Button
-                key={r.labelKey}
-                variant={rangePoints === r.days ? "default" : "ghost"}
-                aria-pressed={rangePoints === r.days}
-                size="sm"
-                className="min-h-11 px-2 text-xs sm:px-3"
-                onClick={() => {
-                  setRangeHydrated(true);
-                  setRangePoints(r.days);
-                  // v1.30.1 M2 — persist the pick per chart, same
-                  // model as the overlay toggles.
-                  if (chartKey && !windowOverride) {
-                    overlayPrefs.setPrefs({
-                      ...overlayPrefs.prefs,
-                      rangePoints: r.days,
-                    });
-                  }
-                }}
-                title={t(r.titleKey)}
-                data-slot="chart-range-tab"
-              >
-                {t(r.labelKey)}
-              </Button>
-            ))}
+            <ChartRangeTabs
+              value={rangePoints}
+              onChange={(days) => {
+                setRangeHydrated(true);
+                setRangePoints(days);
+                // v1.30.1 — persist the pick per chart, same
+                // model as the overlay toggles.
+                if (chartKey && !windowOverride) {
+                  overlayPrefs.setPrefs({
+                    ...overlayPrefs.prefs,
+                    rangePoints: days,
+                  });
+                }
+              }}
+            />
             {/* v1.4.18 — overlay-controls dropdown next to the
                 range tabs. Only painted when the chart is bound to
                 a persistent chartKey; ad-hoc usages (/insights mood

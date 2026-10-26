@@ -31,7 +31,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useTranslations } from "@/lib/i18n/context";
-import { apiGet, apiPost } from "@/lib/api/api-fetch";
+import { apiGetList, apiPost } from "@/lib/api/api-fetch";
 import { queryKeys, refetchInactiveDailyReads } from "@/lib/query-keys";
 import { INSTRUMENTS, INSTRUMENT_ORDER } from "@/lib/mental-health/instruments";
 import { PageHeader } from "@/components/ui/page-header";
@@ -45,10 +45,13 @@ import { InstrumentCard } from "./instrument-card";
 import { InstrumentDetail } from "./instrument-detail";
 import type {
   AssessmentRow,
+  AssessmentTrendDto,
+  CheckInAnswers,
   CreateResponse,
   InstrumentId,
   Phase,
 } from "./types";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
 
 export function MentalWellbeing() {
   const { t, locale } = useTranslations();
@@ -72,17 +75,20 @@ export function MentalWellbeing() {
   // assessments was told the assessments do not exist. Error is now rendered as
   // error, loading as loading, and only a genuinely empty result as empty.
   const {
-    data: history,
+    data: historyPage,
     isPending: historyPending,
     isError: historyError,
+    error: historyFailure,
     refetch: refetchHistory,
   } = useQuery({
     queryKey: queryKeys.mentalHealthAssessments(),
     queryFn: () =>
-      apiGet<{ assessments: AssessmentRow[] }>(
-        "/api/mental-health/assessments",
-      ),
+      apiGetList<{
+        assessments: AssessmentRow[];
+        trends?: AssessmentTrendDto[];
+      }>("/api/mental-health/assessments"),
   });
+  const history = historyPage?.data;
 
   const mutation = useMutation({
     mutationFn: (body: unknown) =>
@@ -128,16 +134,9 @@ export function MentalWellbeing() {
     setPhase("choose");
   }
 
-  // v1.27.8 — the PHQ-9 functional-impairment follow-up returned as the
-  // wizard's regular last question (optional, unscored); the value rides
-  // the existing `functionalDifficulty` field when the user answered it.
-  function submit(items: number[], functionalDifficulty?: number) {
-    mutation.mutate({
-      instrument,
-      items,
-      locale,
-      ...(functionalDifficulty !== undefined ? { functionalDifficulty } : {}),
-    });
+  // The server records the wording from `locale` and `englishOriginal`.
+  function submit(answers: CheckInAnswers) {
+    mutation.mutate({ instrument, locale, ...answers });
   }
 
   return (
@@ -166,6 +165,7 @@ export function MentalWellbeing() {
             <h2 className="sr-only">{t("mentalHealth.choosePrompt")}</h2>
             {historyError ? (
               <QueryErrorCard
+                error={historyFailure}
                 title={t("mentalHealth.historyLoadError")}
                 description={t("mentalHealth.historyLoadErrorHint")}
                 onRetry={() => void refetchHistory()}
@@ -197,11 +197,7 @@ export function MentalWellbeing() {
             )}
           </section>
 
-          {/* The pointer to mood history that used to sit here is gone. The
-              cross-link on `/mood` still points at this page, which is the
-              direction that earns its keep — someone logging a mood may not
-              know the screeners exist, while someone who came here for a
-              screener already knows where their mood diary is. */}
+          {/* No mood pointer here: `/mood` links to this page instead. */}
 
           {/* Per-instrument detail, opened from a card body: last result,
               trend chart, dated history, Start — the Verlauf lives here,
@@ -225,9 +221,13 @@ export function MentalWellbeing() {
               <InstrumentDetail
                 instrument={detailInstrument}
                 rows={history?.assessments ?? []}
+                trend={history?.trends?.find(
+                  (trend) => trend.instrument === detailInstrument,
+                )}
                 onStart={() => begin(detailInstrument)}
               />
             )}
+            <ListCapNotice cap={historyPage?.cap} className="mt-3" />
           </ResponsiveSheet>
         </>
       )}
@@ -245,6 +245,9 @@ export function MentalWellbeing() {
       {phase === "result" && result && (
         <AssessmentResult
           result={result}
+          trend={history?.trends?.find(
+            (trend) => trend.instrument === result.assessment.instrument,
+          )}
           onTakeAnother={backToLanding}
           onBack={backToLanding}
         />

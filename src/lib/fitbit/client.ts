@@ -36,18 +36,15 @@
  * self-serve Google path exists, the classic API is the only viable transport
  * for self-hosters; the card keeps its experimental badge.
  */
-import { createHash, randomBytes } from "node:crypto";
 import { getEvent } from "@/lib/logging/context";
 import { safeFetch } from "@/lib/safe-fetch";
 import { canonicalDailyTimestamp } from "@/lib/measurements/consolidation-tz";
 import { zonedWallClockToUtc } from "@/lib/tz/wall-clock";
 import { FitbitApiError, classifyFitbitResponse } from "./response-classifier";
-import { envValue } from "@/lib/env";
+import { importValue } from "@/lib/integrations/import-value";
 
 /** Classic Fitbit Web API base. */
 export const FITBIT_API_BASE = "https://api.fitbit.com";
-const FITBIT_OAUTH_AUTH_URL = "https://www.fitbit.com/oauth2/authorize";
-const FITBIT_OAUTH_TOKEN_URL = "https://api.fitbit.com/oauth2/token";
 
 /**
  * Fitbit returns body weight / distance in metric (kg / km) only when an
@@ -56,269 +53,6 @@ const FITBIT_OAUTH_TOKEN_URL = "https://api.fitbit.com/oauth2/token";
  * unit. (`en_GB` is metric for weight + distance.)
  */
 const FITBIT_METRIC_LOCALE = "en_GB";
-
-export interface FitbitCredentials {
-  clientId: string;
-  clientSecret: string;
-}
-
-/**
- * Resolve the OAuth `redirect_uri`, then assert it against an allowlist
- * (defence-in-depth; carried over from the prior transport).
- *
- * The value is operator-controlled config (`FITBIT_REDIRECT_URI`, else derived
- * from `NEXT_PUBLIC_APP_URL`), not user input, and Fitbit's registered-redirect
- * check is the real backstop. But a misconfigured or `Host`-coerced
- * `NEXT_PUBLIC_APP_URL` (a mis-deployed reverse proxy reflecting a forwarded
- * Host) would otherwise send the authorization code's landing URL off-origin.
- * Pin the target so a malformed origin fails fast at the handshake:
- *   - must be an absolute, parseable URL,
- *   - must be https (the one exception is a localhost/loopback dev host),
- *   - must land on the fixed `/api/fitbit/callback` path,
- *   - when derived from `NEXT_PUBLIC_APP_URL`, must stay same-origin with it.
- */
-export function getFitbitRedirectUri(): string {
-  // An empty or blank value counts as unset: the compose whitelist
-  // materialises an unset var as an empty string, which must fall through to
-  // the derived URI rather than read as "not configured".
-  const explicit = envValue("FITBIT_REDIRECT_URI");
-  const appUrl = envValue("NEXT_PUBLIC_APP_URL");
-  const raw =
-    explicit ?? (appUrl ? `${appUrl}/api/fitbit/callback` : undefined);
-
-  if (!raw) {
-    throw new Error(
-      "Fitbit redirect_uri is not configured — set FITBIT_REDIRECT_URI or NEXT_PUBLIC_APP_URL",
-    );
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error(`Fitbit redirect_uri is not an absolute URL: ${raw}`);
-  }
-
-  const isLoopback =
-    parsed.hostname === "localhost" ||
-    parsed.hostname === "127.0.0.1" ||
-    parsed.hostname === "[::1]" ||
-    parsed.hostname === "::1";
-  if (
-    parsed.protocol !== "https:" &&
-    !(parsed.protocol === "http:" && isLoopback)
-  ) {
-    throw new Error(
-      `Fitbit redirect_uri must be https (or http on localhost): ${parsed.origin}`,
-    );
-  }
-
-  if (parsed.pathname !== "/api/fitbit/callback") {
-    throw new Error(
-      `Fitbit redirect_uri must target /api/fitbit/callback, got ${parsed.pathname}`,
-    );
-  }
-
-  // When an explicit FITBIT_REDIRECT_URI is set alongside NEXT_PUBLIC_APP_URL,
-  // require them to share an origin so the pinned value can't drift to an
-  // unexpected host relative to the app's own base URL.
-  if (explicit && appUrl) {
-    let appOrigin: string;
-    try {
-      appOrigin = new URL(appUrl).origin;
-    } catch {
-      throw new Error(`NEXT_PUBLIC_APP_URL is not an absolute URL: ${appUrl}`);
-    }
-    if (parsed.origin !== appOrigin) {
-      throw new Error(
-        `Fitbit redirect_uri origin ${parsed.origin} does not match NEXT_PUBLIC_APP_URL origin ${appOrigin}`,
-      );
-    }
-  }
-
-  return parsed.toString();
-}
-
-/**
- * Classic Fitbit OAuth scopes HealthLog requests (space-separated on the wire).
- * Each is independently self-serve grantable at the consent screen and the
- * `temperature` set is omitted on purpose (see the skin-temperature note in
- * `mapping.md` — the classic skin-temp reading is a baseline DELTA, not an
- * absolute reading, so it has no honest canonical slot here). The launch bundle
- * covers every metric the v1.20.0 mappers extract.
- */
-export const FITBIT_OAUTH_SCOPE = [
-  "activity",
-  "cardio_fitness",
-  "heartrate",
-  "oxygen_saturation",
-  "profile",
-  "respiratory_rate",
-  "sleep",
-  "weight",
-].join(" ");
-
-// ─── PKCE ──────────────────────────────────────────────────────
-//
-// Fitbit recommends PKCE (S256). The verifier is a high-entropy random string;
-// the challenge is BASE64URL(SHA256(verifier)). The verifier is stashed on the
-// OAuth-state row at connect and presented on the token exchange at callback.
-
-export interface FitbitPkcePair {
-  verifier: string;
-  challenge: string;
-}
-
-/**
- * Mint a PKCE verifier + S256 challenge. 64 random bytes → 86 base64url chars,
- * comfortably inside Fitbit's 43–128 char verifier range and well past the
- * 256-bit entropy floor.
- */
-export function generatePkcePair(): FitbitPkcePair {
-  const verifier = randomBytes(64).toString("base64url");
-  const challenge = createHash("sha256").update(verifier).digest("base64url");
-  return { verifier, challenge };
-}
-
-/**
- * Build the Fitbit authorization URL (a browser redirect, not a fetch). `state`
- * is the opaque CSRF nonce minted by `oauth-state.ts`; `codeChallenge` is the
- * S256 PKCE challenge whose verifier the callback presents on token exchange.
- */
-export function getAuthorizationUrl(
-  state: string,
-  creds: FitbitCredentials,
-  codeChallenge: string,
-): string {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: creds.clientId,
-    redirect_uri: getFitbitRedirectUri(),
-    scope: FITBIT_OAUTH_SCOPE,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
-    state,
-  });
-  return `${FITBIT_OAUTH_AUTH_URL}?${params}`;
-}
-
-export interface FitbitTokenResponse {
-  access_token: string;
-  /**
-   * Classic Fitbit refresh tokens ROTATE (one-time use) — every token response
-   * (initial exchange AND every refresh) carries a fresh `refresh_token` that
-   * MUST replace the stored one. Typed optional only to guard a malformed
-   * response defensively; the callers treat an absent value as a hard error /
-   * keep-existing fallback.
-   */
-  refresh_token?: string;
-  expires_in: number;
-  scope?: string;
-  token_type?: string;
-  user_id?: string;
-}
-
-/** Basic-auth header carrying the confidential client credentials. */
-function basicAuthHeader(creds: FitbitCredentials): string {
-  const raw = `${creds.clientId}:${creds.clientSecret}`;
-  return `Basic ${Buffer.from(raw, "utf8").toString("base64")}`;
-}
-
-async function postToken(
-  params: URLSearchParams,
-  creds: FitbitCredentials,
-  verb: string,
-): Promise<FitbitTokenResponse> {
-  const start = performance.now();
-  const res = await safeFetch(FITBIT_OAUTH_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: basicAuthHeader(creds),
-    },
-    body: params.toString(),
-  });
-
-  const json = await res.json().catch(() => null);
-  const verdict = classifyFitbitResponse(res.status);
-  getEvent()?.addExternalCall({
-    service: "fitbit",
-    method: verb,
-    duration_ms: Math.round(performance.now() - start),
-    status: res.status,
-    error: verdict.classification === "success" ? undefined : verdict.reason,
-  });
-  if (verdict.classification !== "success") {
-    throw new FitbitApiError({
-      verb,
-      classification: verdict.classification,
-      httpStatus: verdict.httpStatus,
-      reason: verdict.reason,
-      upstreamError:
-        typeof json?.errors?.[0]?.errorType === "string"
-          ? json.errors[0].errorType
-          : typeof json?.error === "string"
-            ? json.error
-            : undefined,
-    });
-  }
-  // A 2xx with an empty or non-JSON body (captive portal, gateway 200, 204)
-  // leaves `json` null. Casting it straight to the token type handed callers a
-  // null they then dereferenced, surfacing an unclassified TypeError instead of
-  // a handled integration error. Narrow explicitly and classify as transient.
-  if (json === null || typeof json !== "object") {
-    throw new FitbitApiError({
-      verb,
-      classification: "transient",
-      httpStatus: res.status,
-      reason: "empty_token_body",
-    });
-  }
-  return json as FitbitTokenResponse;
-}
-
-/**
- * Exchange an authorization code for the initial token pair, presenting the PKCE
- * verifier. `redirect_uri` must exactly match the one sent to the authorize
- * endpoint.
- */
-export async function exchangeCode(
-  code: string,
-  codeVerifier: string,
-  creds: FitbitCredentials,
-): Promise<FitbitTokenResponse> {
-  return postToken(
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      client_id: creds.clientId,
-      redirect_uri: getFitbitRedirectUri(),
-      code_verifier: codeVerifier,
-    }),
-    creds,
-    "exchangeCode",
-  );
-}
-
-/**
- * Refresh an expired access token. Classic Fitbit ROTATES the refresh token:
- * the response carries a fresh `access_token` AND a fresh `refresh_token`; the
- * caller MUST persist the new refresh token (the old one is now invalid). The
- * grant's scope is preserved, so no `scope` param is re-sent.
- */
-export async function refreshAccessToken(
-  refreshToken: string,
-  creds: FitbitCredentials,
-): Promise<FitbitTokenResponse> {
-  return postToken(
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-    }),
-    creds,
-    "refreshAccessToken",
-  );
-}
 
 /**
  * The Fitbit profile carries the stable external user id (`encodedId`) used as
@@ -505,10 +239,6 @@ async function fitbitGet(
 // `FitbitMappedMeasurement[]` (the source + final externalId are stamped by the
 // sync layer).
 
-function round2(n: number): number {
-  return parseFloat(n.toFixed(2));
-}
-
 /** Finite + strictly-positive guard. */
 function positive(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n > 0;
@@ -637,7 +367,7 @@ export function mapWeight(
     if (!positive(e.weight)) continue;
     out.push({
       type: "WEIGHT",
-      value: round2(e.weight),
+      value: importValue(e.weight),
       unit: "kg",
       measuredAt: bodyLogInstant(e, tz),
       fieldTag: `${bodyLogAnchor(e)}:weight`,
@@ -657,7 +387,7 @@ export function mapBodyFat(
     if (!positive(e.fat)) continue;
     out.push({
       type: "BODY_FAT",
-      value: round2(e.fat),
+      value: importValue(e.fat),
       unit: "%",
       measuredAt: bodyLogInstant(e, tz),
       fieldTag: `${bodyLogAnchor(e)}:body_fat`,
@@ -703,7 +433,7 @@ function mapDailySummary(
     const scaled = spec.factor ? value * spec.factor : value;
     out.push({
       type: spec.type,
-      value: round2(scaled),
+      value: importValue(scaled),
       unit: spec.unit,
       measuredAt: canonicalDailyTimestamp(day, tz),
       fieldTag: `${day}:${spec.fieldTag}`,
@@ -744,15 +474,16 @@ export function mapHeartRateVariability(
   body: unknown,
   tz?: string,
 ): FitbitMappedMeasurement[] {
-  // Fitbit's HRV summary is an RMSSD estimator (`value.dailyRmssd`). It lands in
-  // the canonical `HEART_RATE_VARIABILITY` slot that FITBIT occupies in the
-  // source-priority `hrv` ladder (alongside Apple / Oura), keeping cross-source
-  // comparison on one axis. (`HRV_RMSSD` is reserved for the WHOOP-native slot.)
+  // Fitbit's HRV summary is an RMSSD estimator (`value.dailyRmssd`), so it lands
+  // in `HRV_RMSSD` beside WHOOP / Oura / Polar. `HEART_RATE_VARIABILITY` is the
+  // SDNN series; the two estimators are not interchangeable, and a Fitbit night
+  // ranked into the SDNN ladder used to splice RMSSD values into an Apple
+  // Watch SDNN series day by day.
   const rows = readArray(body, "hrv") as FitbitDailyRow[];
   return mapDailySummary(
     rows,
     {
-      type: "HEART_RATE_VARIABILITY",
+      type: "HRV_RMSSD",
       unit: "ms",
       fieldTag: "hrv",
       leaves: ["dailyRmssd"],
@@ -822,7 +553,7 @@ export function mapVo2Max(
     if (v === null || !positive(v)) continue;
     out.push({
       type: "VO2_MAX",
-      value: round2(v),
+      value: importValue(v),
       unit: "mL/(kg·min)",
       measuredAt: canonicalDailyTimestamp(day, tz),
       fieldTag: `vo2_max:${day}`,
@@ -880,7 +611,7 @@ function mapActivitySeries(
     const scaled = spec.factor ? n * spec.factor : n;
     out.push({
       type: spec.type,
-      value: round2(scaled),
+      value: importValue(scaled),
       unit: spec.unit,
       measuredAt: canonicalDailyTimestamp(day, tz),
       fieldTag: `${spec.fieldTag}:${day}`,
@@ -990,9 +721,9 @@ export const FITBIT_FIELD_MAP: Record<
     note: "spo2 summary value.avg",
   },
   heartRateVariability: {
-    type: "HEART_RATE_VARIABILITY",
+    type: "HRV_RMSSD",
     unit: "ms",
-    note: "hrv summary value.dailyRmssd (RMSSD estimator); canonical HRV slot",
+    note: "hrv summary value.dailyRmssd (RMSSD estimator), apart from SDNN",
   },
   restingHeartRate: {
     type: "RESTING_HEART_RATE",
@@ -1221,7 +952,7 @@ export function mapSleepSessionDetailed(
     if (!windowEnd || end > windowEnd) windowEnd = end;
     rows.push({
       type: "SLEEP_DURATION",
-      value: round2(minutes),
+      value: importValue(minutes),
       unit: "minutes",
       measuredAt: end,
       fieldTag: `${anchor}:sleep:${start.toISOString()}`,
@@ -1359,7 +1090,7 @@ export function mapWorkout(
   // distance is km under the metric locale → metres.
   const distanceM =
     typeof entry.distance === "number" && entry.distance >= 0
-      ? round2(entry.distance * 1000)
+      ? importValue(entry.distance * 1000)
       : null;
   const avgHr = positive(entry.averageHeartRate)
     ? Math.round(entry.averageHeartRate)

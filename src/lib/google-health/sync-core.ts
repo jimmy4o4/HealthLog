@@ -18,9 +18,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { prisma } from "@/lib/db";
 import type { MeasurementType } from "@/generated/prisma/client";
-import { encrypt, decrypt } from "@/lib/crypto";
 import { annotate, getEvent } from "@/lib/logging/context";
 import type { GoogleHealthCollectionKey } from "./collection-keys";
+import {
+  googleHealthBackfillEndIsFinal,
+  googleHealthBackfillEndRetryAt,
+  type GoogleHealthBackfillEnd,
+} from "./backfill-bounds";
+import {
+  googleHealthBackfillProgressJson,
+  type GoogleHealthBackfillCursor,
+} from "./backfill-progress";
 import { userDayKey } from "@/lib/tz/format";
 import { isP2002 } from "@/lib/prisma-errors";
 import {
@@ -30,11 +38,10 @@ import {
 import { dropImplausibleMeasurements } from "@/lib/measurements/plausibility-gate";
 import { emitInsertedMeasurementArrivals } from "@/lib/arrivals/measurement-emit";
 import { recordSyncFailure, type FailureKind } from "@/lib/integrations/status";
-import {
-  collapseToTypeDayKeys,
-  recomputeBucketsForMeasurement,
-} from "@/lib/rollups/measurement-rollups";
-import { invalidateStatusInsightsForTypes } from "@/lib/insights/comprehensive-generate";
+import { collapseToTypeDayKeys } from "@/lib/rollups/measurement-rollups";
+import { afterProviderWrite } from "@/lib/integrations/sync-kit/after-write";
+import { type GoogleHealthResumePoint } from "./data-points";
+import { type GoogleHealthTokenSource } from "./request";
 import {
   googleHealthOutcomeTruncated,
   googleHealthSliceExhausted,
@@ -43,11 +50,12 @@ import {
   noteGoogleHealthMapped,
   noteGoogleHealthOutcomeFailure,
   noteGoogleHealthWritten,
-  refreshAccessToken,
-  type GoogleHealthResumePoint,
-  type GoogleHealthTokenSource,
-} from "./client";
-import { getUserGoogleHealthCredentials } from "./credentials";
+} from "./budget";
+import {
+  GOOGLE_HEALTH_TOKEN_REFRESH_BUFFER_MS,
+  googleHealthTokenDescriptor,
+} from "./oauth-descriptor";
+import { obtainAccessToken } from "@/lib/integrations/oauth-kit/token";
 import {
   GoogleHealthApiError,
   classifyGoogleHealthError,
@@ -60,9 +68,6 @@ import {
  * `"fitbit"` key so the two coexisting providers keep independent status rows.
  */
 export const GOOGLE_HEALTH_INTEGRATION_KEY = "google-health";
-
-/** Refresh the access token this many ms before `tokenExpiresAt`. */
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 /**
  * Overlap window for the incremental sync, in ms. Google re-rolls daily
@@ -133,104 +138,72 @@ export async function getValidToken(
 ): Promise<GoogleHealthTokenInfo | null> {
   const connection = await prisma.googleHealthConnection.findUnique({
     where: { userId },
+    select: { id: true, googleUserId: true },
   });
   if (!connection) return null;
 
-  const accessToken = decrypt(connection.accessToken);
-  const refreshToken = decrypt(connection.refreshToken);
-
-  if (
-    opts.forceRefresh === true ||
-    connection.tokenExpiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS < Date.now()
-  ) {
-    try {
-      const creds = await getUserGoogleHealthCredentials(userId);
-      if (!creds) {
-        getEvent()?.addWarning(
-          `No Google Health credentials found for user ${userId} during token refresh`,
-        );
-        await recordSyncFailure({
-          userId,
-          integration: GOOGLE_HEALTH_INTEGRATION_KEY,
-          kind: "reauth_required",
-          message: "Google Health credentials missing — token refresh skipped",
-          errorCode: "credentials_missing",
-        });
-        // A dead token means every resource "succeeds" with 0 rows — without a
-        // ledger entry the cycle would read as clean, stamp `markSynced`, and
-        // `recordSyncSuccess` would flip a parked connection back to connected
-        // (an hourly invalid-refresh hammer with an advancing watermark). Fail
-        // the cycle's verdict so the park holds.
-        noteHardFailure(GOOGLE_HEALTH_TOKEN_HARD_FAIL);
-        return null;
-      }
-
-      const newTokens = await refreshAccessToken(refreshToken, creds);
-      const expiresAt = new Date(Date.now() + newTokens.expires_in * 1000);
-
-      // Google does NOT rotate refresh tokens: a routine refresh returns a new
-      // access token but usually omits `refresh_token`. Persist the new access
-      // token + expiry and only overwrite the stored refresh token when the
-      // response actually carries a fresh one — otherwise keep the existing one.
-      await prisma.googleHealthConnection.update({
-        where: { id: connection.id },
-        data: {
-          accessToken: encrypt(newTokens.access_token),
-          tokenExpiresAt: expiresAt,
-          ...(newTokens.refresh_token
-            ? { refreshToken: encrypt(newTokens.refresh_token) }
-            : {}),
-        },
-      });
-
+  try {
+    const result = await obtainAccessToken(
+      googleHealthTokenDescriptor,
+      userId,
+      { force: opts.forceRefresh === true },
+    );
+    if (result.kind === "token") {
       return {
-        accessToken: newTokens.access_token,
-        expiresAt,
-        connection: {
-          id: connection.id,
-          googleUserId: connection.googleUserId,
-        },
+        accessToken: result.accessToken,
+        // Google always stores an expiry; the fallback only satisfies the type.
+        expiresAt: result.expiresAt ?? new Date(),
+        connection,
       };
-    } catch (err) {
-      getEvent()?.addWarning(
-        `Google Health token refresh failed for user ${userId}: ${err}`,
-      );
-      // A revoked / expired refresh token (`invalid_grant` / 401 — the 7-day
-      // Testing-mode refresh expiry, or a user-revoked grant) is a SOFT
-      // disconnect: flag `needsReauth` on the connection so the card surfaces a
-      // "reconnect" CTA rather than a hard error. The callback clears it on a
-      // fresh consent. A transient refresh failure (network blip, 5xx) leaves
-      // the flag untouched so we don't nag the user to reconnect needlessly.
-      if (isGoogleHealthReauthRequired(err)) {
-        await prisma.googleHealthConnection
-          .update({
-            where: { id: connection.id },
-            data: { needsReauth: true },
-          })
-          .catch((e) =>
-            getEvent()?.addWarning(
-              `google-health: needsReauth flag write failed for ${userId}: ${e}`,
-            ),
-          );
-      }
-      await recordGoogleHealthSyncFailure(userId, err);
-      // Same verdict rule as the credentials-missing branch above: a refresh
-      // failure must fail the cycle, or the all-zeros run stamps success,
-      // un-parks `error_reauth`, and the hourly cohort retries the dead
-      // refresh token forever while `lastSyncedAt` advances past real data.
-      noteHardFailure(GOOGLE_HEALTH_TOKEN_HARD_FAIL);
-      return null;
     }
+    if (result.kind === "none") return null;
+    getEvent()?.addWarning(
+      `No Google Health credentials found for user ${userId} during token refresh`,
+    );
+    await recordSyncFailure({
+      userId,
+      integration: GOOGLE_HEALTH_INTEGRATION_KEY,
+      kind: "reauth_required",
+      message: "Google Health credentials missing — token refresh skipped",
+      errorCode: "credentials_missing",
+    });
+    // A dead token means every resource "succeeds" with 0 rows — without a
+    // ledger entry the cycle would read as clean, stamp `markSynced`, and
+    // `recordSyncSuccess` would flip a parked connection back to connected
+    // (an hourly invalid-refresh hammer with an advancing watermark). Fail
+    // the cycle's verdict so the park holds.
+    noteHardFailure(GOOGLE_HEALTH_TOKEN_HARD_FAIL);
+    return null;
+  } catch (err) {
+    getEvent()?.addWarning(
+      `Google Health token refresh failed for user ${userId}: ${err}`,
+    );
+    // A revoked / expired refresh token (`invalid_grant` / 401 — the 7-day
+    // Testing-mode refresh expiry, or a user-revoked grant) is a SOFT
+    // disconnect: flag `needsReauth` on the connection so the card surfaces a
+    // "reconnect" CTA rather than a hard error. The callback clears it on a
+    // fresh consent. A transient refresh failure (network blip, 5xx) leaves
+    // the flag untouched so we don't nag the user to reconnect needlessly.
+    if (isGoogleHealthReauthRequired(err)) {
+      await prisma.googleHealthConnection
+        .update({
+          where: { id: connection.id },
+          data: { needsReauth: true },
+        })
+        .catch((e) =>
+          getEvent()?.addWarning(
+            `google-health: needsReauth flag write failed for ${userId}: ${e}`,
+          ),
+        );
+    }
+    await recordGoogleHealthSyncFailure(userId, err);
+    // Same verdict rule as the credentials-missing branch above: a refresh
+    // failure must fail the cycle, or the all-zeros run stamps success,
+    // un-parks `error_reauth`, and the hourly cohort retries the dead
+    // refresh token forever while `lastSyncedAt` advances past real data.
+    noteHardFailure(GOOGLE_HEALTH_TOKEN_HARD_FAIL);
+    return null;
   }
-
-  return {
-    accessToken,
-    expiresAt: connection.tokenExpiresAt,
-    connection: {
-      id: connection.id,
-      googleUserId: connection.googleUserId,
-    },
-  };
 }
 
 /**
@@ -268,7 +241,8 @@ export function googleHealthTokenSource(
   return async ({ forceRefresh }) => {
     if (
       forceRefresh ||
-      current.expiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS < Date.now()
+      current.expiresAt.getTime() - GOOGLE_HEALTH_TOKEN_REFRESH_BUFFER_MS <
+        Date.now()
     ) {
       const next = await getValidToken(userId, { forceRefresh });
       if (!next) throw new GoogleHealthTokenUnavailableError();
@@ -405,53 +379,6 @@ export async function runWithGoogleHealthSyncCycle<T>(
   };
 }
 
-/**
- * How far a full-history backfill has got, carried from one attempt of the
- * backfill to the next.
- *
- * Two grains. A collection walked to the end is noted in `done`, and the next
- * attempt skips it. A collection read page by page (the spot readings: heart
- * rate, weight, glucose, ...) also notes, after every page it writes, the
- * edge it has reached: the oldest sample written so far when the walk runs
- * newest first, as Google's list does. The next attempt asks Google only for
- * the samples at or beyond that edge, so a collection that does not fit into
- * one attempt is worked through over several instead of being read from its
- * first page every time.
- *
- * The edge is a sample time, not Google's page token: page tokens are not
- * documented to outlive the walk that received them, a sample time is a
- * filter Google documents. The one sample on the edge itself is read twice
- * and overwrites its own row.
- *
- * Before the edge existed only `done` was kept, and a heart-rate history of
- * years that one attempt could not finish (its budget, a rate limit, one
- * failed page among thousands) started again from the newest page on every
- * attempt and never reached the end (#1220).
- *
- * The upper bound (`<=`) a newest-first walk resumes with is valid filter
- * grammar but has not been seen working against the live API. A collection
- * whose resumed request Google refuses with a 400 is noted in
- * `edgeFilterUnsupported`, and its walks from then on read without the bound
- * and pass over the samples beyond the edge themselves (see
- * `forEachDataPointPage`).
- */
-export interface GoogleHealthBackfillCursor {
-  /** The edge: the sample instant (ISO 8601) the walk has written up to. */
-  at: string;
-  /** The order the walk returned samples in: newest first, or oldest first. */
-  order: "desc" | "asc";
-  /** Pages this collection has read across every attempt so far. */
-  pages: number;
-  /**
-   * Only for a collection read without the edge bound: where its last walk
-   * stopped in the unbounded list (see `GoogleHealthResumePoint`), and the
-   * furthest position any walk of it has saved. A saved place counts as the
-   * slice's progress only when it is further than every one before it, so a
-   * chain of slices that keep passing over the same pages ends.
-   */
-  resume?: { token: string; page: number; reached: number };
-}
-
 /** What one collection came to in one backfill attempt. */
 export interface GoogleHealthBackfillCollectionReport {
   key: string;
@@ -480,78 +407,16 @@ interface BackfillResumeTracker {
   collections: GoogleHealthBackfillCollectionReport[];
   /** Collections whose resumed request Google refused the edge filter on. */
   edgeFilterUnsupported: Set<string>;
+  /** Collections whose walk ended short of the history's start, and where. */
+  ended: Map<string, GoogleHealthBackfillEnd>;
+  /**
+   * Collections walked again this attempt after an earlier one ended without
+   * progress, with how many attempts in a row had ended that way and the edge
+   * they ended at.
+   */
+  retrying: Map<string, { attempts: number; at: string }>;
 }
 const backfillResumeStorage = new AsyncLocalStorage<BackfillResumeTracker>();
-
-function progressRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-/** Read the `backfillProgress` column into the set of finished collections. */
-export function readGoogleHealthBackfillDone(value: unknown): Set<string> {
-  const done = progressRecord(value).done;
-  return new Set(
-    Array.isArray(done)
-      ? done.filter(
-          (key): key is string => typeof key === "string" && key.length <= 64,
-        )
-      : [],
-  );
-}
-
-/** Read the `backfillProgress` column into the per-collection edges. */
-export function readGoogleHealthBackfillCursors(
-  value: unknown,
-): Map<string, GoogleHealthBackfillCursor> {
-  const out = new Map<string, GoogleHealthBackfillCursor>();
-  const cursors = progressRecord(progressRecord(value).cursors);
-  for (const [key, raw] of Object.entries(cursors)) {
-    if (key.length > 64) continue;
-    const c = progressRecord(raw);
-    const at = typeof c.at === "string" ? c.at : null;
-    if (!at || Number.isNaN(Date.parse(at))) continue;
-    const r = progressRecord(c.resume);
-    const count = (v: unknown): number =>
-      typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0;
-    const resume =
-      typeof r.token === "string" &&
-      r.token.length > 0 &&
-      r.token.length <= 4096 &&
-      count(r.page) > 0
-        ? {
-            token: r.token,
-            page: count(r.page),
-            reached: Math.max(count(r.reached), count(r.page)),
-          }
-        : undefined;
-    out.set(key, {
-      at: new Date(at).toISOString(),
-      order: c.order === "asc" ? "asc" : "desc",
-      pages: count(c.pages),
-      ...(resume ? { resume } : {}),
-    });
-  }
-  return out;
-}
-
-/**
- * Read the `backfillProgress` column into the collections Google refused the
- * edge filter on.
- */
-export function readGoogleHealthBackfillEdgeFilterUnsupported(
-  value: unknown,
-): Set<string> {
-  const keys = progressRecord(value).edgeFilterUnsupported;
-  return new Set(
-    Array.isArray(keys)
-      ? keys.filter(
-          (key): key is string => typeof key === "string" && key.length <= 64,
-        )
-      : [],
-  );
-}
 
 /**
  * Write the tracker's progress with one change applied, and apply it to the
@@ -564,36 +429,28 @@ async function persistBackfillProgress(
     done: Set<string>;
     cursors: Map<string, GoogleHealthBackfillCursor>;
     edgeFilterUnsupported?: Set<string>;
+    ended?: Map<string, GoogleHealthBackfillEnd>;
   },
 ): Promise<void> {
   const unsupported =
     next.edgeFilterUnsupported ?? tracker.edgeFilterUnsupported;
+  const ended = next.ended ?? tracker.ended;
   await prisma.googleHealthConnection.update({
     where: { userId: tracker.userId },
     data: {
-      backfillProgress: {
-        done: [...next.done],
-        cursors: Object.fromEntries(
-          [...next.cursors].map(([key, c]) => [
-            key,
-            {
-              at: c.at,
-              order: c.order,
-              pages: c.pages,
-              ...(c.resume ? { resume: c.resume } : {}),
-            },
-          ]),
-        ),
-        // Only once there is something to say, so a backfill that never met
-        // the refusal keeps the shape it always had.
-        ...(unsupported.size > 0
-          ? { edgeFilterUnsupported: [...unsupported] }
-          : {}),
-      },
+      backfillProgress: googleHealthBackfillProgressJson({
+        done: next.done,
+        cursors: next.cursors,
+        edgeFilterUnsupported: unsupported,
+        ended,
+      }),
     },
   });
   if (unsupported !== tracker.edgeFilterUnsupported) {
     for (const key of unsupported) tracker.edgeFilterUnsupported.add(key);
+  }
+  if (ended !== tracker.ended) {
+    for (const [key, e] of ended) tracker.ended.set(key, e);
   }
   // `next` may be the tracker's own collections: copy before clearing.
   const done = [...next.done];
@@ -611,6 +468,8 @@ export interface GoogleHealthBackfillAttempt<T> {
   /** Collections whose edge moved, each with the edge it started from. */
   advanced: Map<string, string | null>;
   collections: GoogleHealthBackfillCollectionReport[];
+  /** Every collection ended short so far, this attempt's and earlier ones. */
+  ended: Map<string, GoogleHealthBackfillEnd>;
 }
 
 /**
@@ -625,6 +484,7 @@ export async function runWithGoogleHealthBackfillResume<T>(
   fn: () => Promise<T>,
   cursors: Map<string, GoogleHealthBackfillCursor> = new Map(),
   edgeFilterUnsupported: Set<string> = new Set(),
+  ended: Map<string, GoogleHealthBackfillEnd> = new Map(),
 ): Promise<GoogleHealthBackfillAttempt<T>> {
   const tracker: BackfillResumeTracker = {
     userId,
@@ -634,6 +494,8 @@ export async function runWithGoogleHealthBackfillResume<T>(
     advanced: new Map(),
     collections: [],
     edgeFilterUnsupported,
+    ended,
+    retrying: new Map(),
   };
   const result = await backfillResumeStorage.run(tracker, fn);
   return {
@@ -641,15 +503,16 @@ export async function runWithGoogleHealthBackfillResume<T>(
     skipped: tracker.skipped,
     advanced: tracker.advanced,
     collections: tracker.collections,
+    ended: tracker.ended,
   };
 }
 
 /**
  * Where a resumable collection's walk starts in this backfill attempt: the
- * edge an earlier attempt recorded (if any), whether Google may be asked for
- * it with a filter (false once Google refused that filter for the
- * collection), and the pages it has already read. Null outside a backfill,
- * where every walk reads its whole window.
+ * edge an earlier attempt recorded (if any), and whether Google may be asked
+ * for it with a filter (false once Google refused that filter for the
+ * collection). Null outside a backfill, where every walk reads its whole
+ * window.
  */
 export function googleHealthBackfillCursor(key: GoogleHealthCollectionKey): {
   edge?: {
@@ -658,7 +521,6 @@ export function googleHealthBackfillCursor(key: GoogleHealthCollectionKey): {
     filter: boolean;
     resumeFrom?: GoogleHealthResumePoint;
   };
-  pagesSoFar: number;
 } | null {
   const resume = backfillResumeStorage.getStore();
   if (!resume) return null;
@@ -679,9 +541,76 @@ export function googleHealthBackfillCursor(key: GoogleHealthCollectionKey): {
               }
             : {}),
         },
-        pagesSoFar: cursor.pages,
       }
-    : { pagesSoFar: 0 };
+    : {};
+}
+
+/**
+ * Record that a collection's backfill ended short of the start of its
+ * history, at `at`, because of `reason` (see `backfill-bounds.ts`). A final
+ * end (`googleHealthBackfillEndIsFinal`) counts the collection as finished
+ * for this backfill (`runGoogleHealthCollection`) and outlives the
+ * completion stamp, so the card can say where the history ends. A first end
+ * without progress parks the collection with its edge until its next
+ * attempt is due. Outside a backfill this does nothing.
+ */
+export async function recordGoogleHealthBackfillEnd(
+  key: GoogleHealthCollectionKey,
+  end: Pick<GoogleHealthBackfillEnd, "type" | "at" | "reason">,
+): Promise<void> {
+  const resume = backfillResumeStorage.getStore();
+  if (!resume) return;
+  const ended = new Map(resume.ended);
+  // Counted across attempts that end at the same edge: a walk that got
+  // further back before it stalled again made progress, and its count starts
+  // over. Only attempts in a row that reach nowhere make the end final.
+  const parked = resume.retrying.get(key);
+  const sameEdge =
+    parked !== undefined && Date.parse(parked.at) === Date.parse(end.at);
+  ended.set(
+    key,
+    end.reason === "no_progress"
+      ? {
+          ...end,
+          attempts: sameEdge ? parked.attempts + 1 : 1,
+          endedAt: new Date().toISOString(),
+        }
+      : end,
+  );
+  // A fixed shape, not the whole note: the slice report carries every end in
+  // full (`googleHealth.backfill.slice`). This names the one that just ended
+  // and counts the rest. It is meta, not the event's action, because the job
+  // names the action once the slice is over and that would replace it.
+  const recorded = ended.get(key)!;
+  const final = [...ended.values()].filter(googleHealthBackfillEndIsFinal);
+  annotate({
+    meta: {
+      "googleHealth.backfill.ended": {
+        collection: key,
+        type: recorded.type,
+        reason: recorded.reason,
+        final: googleHealthBackfillEndIsFinal(recorded),
+        endedCount: ended.size,
+        finalCount: final.length,
+        types: [...new Set([...ended.values()].map((e) => e.type))].sort(),
+      },
+    },
+  });
+  try {
+    await persistBackfillProgress(resume, {
+      done: resume.done,
+      cursors: resume.cursors,
+      ended,
+    });
+  } catch (err) {
+    // Not ended, then: the next slice walks it again and meets the same end.
+    getEvent()?.addWarning(
+      `google-health: backfill progress write failed for ${key}: ${err}`,
+    );
+    annotate({
+      meta: { "googleHealth.backfill.progressWriteFailed": key },
+    });
+  }
 }
 
 /**
@@ -845,7 +774,13 @@ export async function runGoogleHealthCollection(
 ): Promise<number> {
   const resume = backfillResumeStorage.getStore();
   if (!resume) return fn();
-  if (resume.done.has(key)) {
+  const parked = resume.ended.get(key);
+  if (
+    resume.done.has(key) ||
+    (parked &&
+      (googleHealthBackfillEndIsFinal(parked) ||
+        googleHealthBackfillEndRetryAt(parked)! > Date.now()))
+  ) {
     resume.skipped.push(key);
     return 0;
   }
@@ -859,6 +794,17 @@ export async function runGoogleHealthCollection(
     });
     return 0;
   }
+  if (parked) {
+    // Its earlier attempt ended without progress and its wait is over: walk
+    // it again from its edge. The note goes with the next write; the count
+    // and the edge stay with the attempt, so a second end at the same edge
+    // is final.
+    resume.retrying.set(key, {
+      attempts: parked.attempts ?? 1,
+      at: parked.at,
+    });
+    resume.ended.delete(key);
+  }
   const startedAt = performance.now();
   const pagesBefore = googleHealthSlicePagesRead();
   const edgeFrom = resume.cursors.get(key)?.at ?? null;
@@ -870,7 +816,13 @@ export async function runGoogleHealthCollection(
     (hardFailStorage.getStore()?.failures.length ?? 0) !== hardBefore ||
     (softSkipStorage.getStore()?.count ?? 0) !== softBefore;
   const truncated = truncatedBefore || googleHealthOutcomeTruncated();
-  const clean = !failedHard && !truncated;
+  // A walk that ended short for good (the horizon, or no progress on its
+  // last attempt) has read all it is going to: finished, though the walk may
+  // report itself truncated. One that ended without progress for the first
+  // time is not: it keeps its edge and waits for its next attempt.
+  const end = resume.ended.get(key);
+  const endedFinal = end !== undefined && googleHealthBackfillEndIsFinal(end);
+  const clean = !failedHard && (endedFinal || (!truncated && !end));
   let finished = false;
   if (clean) {
     // The collection counts as finished only once the note says so. The job
@@ -1598,26 +1550,14 @@ export async function upsertGoogleHealthMeasurements(
     return { imported, touched, inserted: insertedRows };
   }
 
-  try {
-    const keys = collapseToTypeDayKeys(touched);
-    for (const k of keys) {
-      await recomputeBucketsForMeasurement(userId, k.type, k.measuredAt);
-    }
-    invalidateStatusInsightsForTypes(
-      userId,
-      keys.map((k) => k.type),
-      { source: "sync" },
-    ).catch((err) => {
-      getEvent()?.addWarning(
-        `google-health: status-insight invalidate failed for ${userId}: ${err}`,
-      );
-    });
-  } catch (err) {
-    getEvent()?.addWarning(
-      `google-health: rollup recompute failed for ${userId}: ${err}`,
-    );
-    noteHardFailure("rollup");
-  }
+  // The arrivals went out per chunk above; the shared tail folds, marks the
+  // caches and re-warms the status cards. A failed fold fails the verdict.
+  const { rollupFailed } = await afterProviderWrite({
+    userId,
+    provider: "google-health",
+    touched,
+  });
+  if (rollupFailed) noteHardFailure("rollup");
 
   noteGoogleHealthWritten(imported);
   return { imported, touched, inserted: insertedRows };

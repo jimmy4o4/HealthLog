@@ -1,14 +1,8 @@
 import type { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  apiValidationError,
-  getClientIp,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
@@ -19,7 +13,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { recommendationFeedbackRequestSchema } from "@/lib/validations/recommendation-feedback";
 
 /**
- * v1.4.16 phase B5e — POST /api/insights/feedback.
+ * v1.4.16 — POST /api/insights/feedback.
  *
  * Per-recommendation thumbs-up / thumbs-down. The body contains the
  * rec id + snapshot text + severity + metric-source attributes the
@@ -38,7 +32,7 @@ import { recommendationFeedbackRequestSchema } from "@/lib/validations/recommend
 async function handlePost(request: NextRequest) {
   const { user } = await requireAuth();
 
-  // v1.4.16 phase D reconcile (code-review H5 / security M1) — bound
+  // v1.4.16 (code-review H5 / security M1) — bound
   // the per-user write rate. Without this, a single client can
   // distort the daily aggregator's bucket slice by varying
   // recommendationId/text per request (the unique index only catches
@@ -57,23 +51,17 @@ async function handlePost(request: NextRequest) {
     return apiError("Too many feedback submissions, try again later", 429);
   }
 
-  const { data: rawBody, error } = await safeJson<unknown>(request, {
-    maxBytes: 64 * 1024,
-  });
-  if (error) return error;
-
-  const parsed = recommendationFeedbackRequestSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "insights.recommendation.feedback" },
+  const parsed = await parseJsonBody(
+    request,
+    recommendationFeedbackRequestSchema,
+    {
+      maxBytes: 64 * 1024,
+      action: "insights.recommendation.feedback",
       meta: { outcome: "validation_failed" },
-    });
-    return apiValidationError(
-      "Invalid feedback payload",
-      sanitiseZodIssues(parsed.error.issues),
-      422,
-    );
-  }
+      message: "Invalid feedback payload",
+    },
+  );
+  if (!parsed.ok) return parsed.error;
   const body = parsed.data;
 
   const attribution = await resolveFeedbackAttribution(user.id);

@@ -238,13 +238,18 @@ async function buildCorrelationsResponse(
       emerging_window_days: emerging.windowDays,
       lab_draws: labDraws.length,
       lab_correlations: labCorrelations.discovered.length,
-      // v1.25 (W-ENV) — env channel reach (sum of stored daily points across
+      // v1.25 — env channel reach (sum of stored daily points across
       // the exposure channels) so a dashboard can see whether weather was
       // available for the scan.
       environment_days: diagnostics.environmentDays,
       custom_metric_channels: diagnostics.customMetricChannels,
       symptom_event_channels: diagnostics.symptomEventChannels,
       custom_metric_days: diagnostics.customMetricDays,
+      // v1.44 — reach of the extended families.
+      nutrient_days: diagnostics.nutrientDays,
+      alcohol_days: diagnostics.alcoholDays,
+      training_days: diagnostics.trainingDays,
+      indoor_nights: diagnostics.indoorNights,
     },
   });
 

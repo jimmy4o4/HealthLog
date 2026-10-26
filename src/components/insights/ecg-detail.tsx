@@ -45,24 +45,18 @@ export function EcgDetail({ recordingId }: { recordingId: string }) {
   const { t } = useTranslations();
   const fmt = useFormatters();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.insightsEcgDetail(recordingId, false),
-    queryFn: async () => {
-      try {
-        return await apiGet<EcgDetailResponse>(
-          `/api/insights/ecg/${recordingId}`,
-        );
-      } catch {
-        throw new Error(t("insights.ecg.loadError"));
-      }
-    },
+    queryFn: () =>
+      apiGet<EcgDetailResponse>(`/api/insights/ecg/${recordingId}`),
   });
 
   if (isError) {
-    // A failed read must never read as "no data" (UI-STANDARDS §6), and the
+    // A failed read must never read as "no data" (ui-standards.md §6), and the
     // alert is content, not muted meta — it also has to be recoverable.
     return (
       <QueryErrorCard
+        error={error}
         title={t("insights.ecg.loadError")}
         onRetry={() => refetch()}
       />

@@ -1,5 +1,5 @@
 /**
- * v1.4.34 IW-G — in-process LRU + single-flight server cache.
+ * v1.4.34 — in-process LRU + single-flight server cache.
  *
  * Generalises the v1.4.33 Coach snapshot cache shape
  * (`src/lib/ai/coach/snapshot.ts:292-336`, commit `af17db5d`) into a
@@ -36,6 +36,7 @@
  */
 
 import { trackBackgroundTask } from "@/lib/logging/background-tasks";
+import { runDetached } from "@/lib/logging/detached";
 import type { WorkoutsProjection } from "@/lib/workouts/list-read";
 
 export interface ServerCacheOptions<T = unknown> {
@@ -88,15 +89,15 @@ export interface ServerCacheStats {
  * fence — invalidation flips `invalidated` and detaches the slot from
  * `pending`, so (a) the builder's `.then` skips the `set()` and (b) the
  * next read starts a fresh build instead of joining the stale one.
- * Callers already awaiting the detached promise still receive its value
- * (equivalent to having read a moment before the write); it just never
- * enters the cache.
+ * Callers already awaiting the detached promise still get its value (as
+ * if read just before the write); it never enters the cache.
  */
 interface PendingBuild<T> {
   promise: Promise<T>;
   invalidated: boolean;
 }
 
+type KeyFilter = (key: string) => boolean; // closed blocks, `invalidate.ts`
 export class ServerCache<T> {
   private readonly map = new Map<
     string,
@@ -124,9 +125,9 @@ export class ServerCache<T> {
   }
 
   /** Fence + detach every in-flight builder under `prefix`. */
-  private detachPendingByPrefix(prefix: string): void {
+  private detachPendingByPrefix(prefix: string, spare?: KeyFilter): void {
     for (const [key, slot] of this.pending) {
-      if (key.startsWith(prefix)) {
+      if (key.startsWith(prefix) && !spare?.(key)) {
         slot.invalidated = true;
         this.pending.delete(key);
       }
@@ -283,17 +284,17 @@ export class ServerCache<T> {
    * so the next read is a clean miss — identical to the old evict
    * behaviour).
    */
-  markStaleByPrefix(prefix: string): number {
+  markStaleByPrefix(prefix: string, spare?: KeyFilter): number {
     // v1.16.9 — fence in-flight builders too: a refresh that started
     // before the write would otherwise complete after this mark and
     // re-cache the pre-write body as FRESH for the full TTL. Detaching
     // keeps the SWR contract — the marked entry still serves stale, and
     // the next read kicks off a fresh (post-write) recompute.
-    this.detachPendingByPrefix(prefix);
+    this.detachPendingByPrefix(prefix, spare);
     let marked = 0;
     const now = Date.now();
     for (const [key, entry] of this.map) {
-      if (key.startsWith(prefix)) {
+      if (key.startsWith(prefix) && !spare?.(key)) {
         entry.expiresAt = now;
         marked += 1;
       }
@@ -320,12 +321,12 @@ export class ServerCache<T> {
    * entire user-bucket from a cache without having to enumerate every
    * possible cache-key variant the user might have warmed.
    */
-  deleteByPrefix(prefix: string): number {
+  deleteByPrefix(prefix: string, spare?: KeyFilter): number {
     // v1.16.9 — fence in-flight builders under the prefix (see `delete`).
-    this.detachPendingByPrefix(prefix);
+    this.detachPendingByPrefix(prefix, spare);
     let removed = 0;
     for (const key of this.map.keys()) {
-      if (key.startsWith(prefix)) {
+      if (key.startsWith(prefix) && !spare?.(key)) {
         const entry = this.map.get(key);
         this.map.delete(key);
         this.totalWeight -= entry?.weight ?? 0;
@@ -406,23 +407,19 @@ export class ServerCache<T> {
         // single-flight slot as `wrap`, so an invalidation that lands
         // while it is in flight discards its (pre-write) result instead
         // of re-caching it as fresh.
-        const refresh = this.startBuild(key, builder, ttlMsOverride).promise;
-        // Detach: the foreground caller does not await the rebuild.
-        // Handle the rejection on the detached handle so an
-        // unhandled-rejection warning never fires — but never silently:
-        // a refresh that keeps failing means the bucket serves an
-        // ever-older stale value until the SWR window finally lapses,
-        // so the failure must reach the logs. There is no request
-        // context here (the caller already returned), so a structured
-        // console.error stands in for the wide-event annotation; the
-        // key is logged as its djb2 hash, matching the cache-outcome
-        // meta convention, so the userId segment never reaches stdout.
-        // Registered so the test suite can await it: the error below is a
-        // console write on a detached handle, and one that lands while a
-        // vitest worker is closing its RPC channel fails the whole run.
-        // No-op outside test.
+        // Detached (`runDetached`): the caller does not await the rebuild,
+        // and the rebuild cannot rename the caller's event. Its rejection is
+        // handled, but never silently: a refresh that keeps failing serves
+        // an ever-older value until the SWR window lapses. It may outlive
+        // the event, so a structured console.error carries it, the key as
+        // its djb2 hash (the cache-outcome meta convention) so the userId
+        // segment never reaches stdout. Registered so the test suite can
+        // await it: a console write landing while a vitest worker closes
+        // its RPC channel fails the whole run. No-op outside test.
         trackBackgroundTask(
-          refresh.catch((err) => {
+          runDetached(
+            () => this.startBuild(key, builder, ttlMsOverride).promise,
+          ).catch((err) => {
             console.error(
               `cache.${this.opts.name ?? "unnamed"}.refresh_failed`,
               JSON.stringify({
@@ -535,7 +532,7 @@ function createServerCaches() {
       staleTtlMs: 600_000,
     }),
     /**
-     * v1.18.11 (W5 perf) — stale-while-revalidate window. The
+     * v1.18.11 — stale-while-revalidate window. The
      * `AchievementUnlockNotifier` is mounted on every authenticated page and
      * polls this endpoint every 2 minutes. Against a 60 s hard-TTL bucket
      * that poll always landed on an expired entry, firing a cold ~400 ms
@@ -637,7 +634,7 @@ function createServerCaches() {
       staleTtlMs: 600_000,
     }),
     /**
-     * v1.4.36 W1 — `/api/insights/targets` is read on every Insights
+     * v1.4.36 — `/api/insights/targets` is read on every Insights
      * mount and runs >1 s cold (it pulls 30-day measurements for every
      * type + medications + intakes + mood + glucose). 60 s TTL matches
      * the analytics cache so multiple sub-page mounts inside a minute

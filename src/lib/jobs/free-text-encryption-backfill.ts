@@ -22,6 +22,10 @@
  * column holds a JSON null rather than SQL NULL has nothing to seal; it is set
  * to SQL NULL so discovery stops finding it.
  *
+ * v1.43.7 sealed the cached AI insights payload on the user row the same
+ * way; v1.44.0 dropped its readable column (migration 0430), so that part of
+ * the pass is gone too.
+ *
  * v1.42 (#615) added the environment module's coarse locations (home, dated
  * location periods, stored days). v1.43 dropped their readable columns
  * (migration 0409, which refuses to run while one still holds a value), so
@@ -60,6 +64,7 @@
  * (`src/lib/jobs/reminder/register-maintenance.ts`) so pg-boss provisions it at
  * boot; an unregistered queue silently never drains.
  */
+// account-deletion(file): encrypts existing rows at rest; it changes how a row is stored, not what the record holds, and a pending account's rows are erased or kept as they are either way.
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { annotate } from "@/lib/logging/context";

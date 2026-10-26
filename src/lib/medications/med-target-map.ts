@@ -1,5 +1,5 @@
 /**
- * v1.22 (W9, B5) — closed medication-class → target-vital map.
+ * v1.22 — closed medication-class → target-vital map.
  *
  * The adherence→symptom storyline needs to know which VITAL a medication is
  * meant to move, so the Coach can say "the vital this drug targets drifted",
@@ -28,7 +28,7 @@
  */
 import type { MeasurementType } from "@/generated/prisma/client";
 import { findDrugIdByBrand } from "@/lib/medications/glp1-knowledge";
-import { foldLabel } from "@/lib/i18n/localised-label-index";
+import { foldLabel } from "@/lib/i18n/fold-label";
 
 /** The medication classes the storyline can reason about (closed set). */
 export type MedTargetClass = "antihypertensive" | "antidiabetic" | "glp1";

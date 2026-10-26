@@ -1,5 +1,5 @@
 /**
- * v1.39 (C1) — `POST /api/onboarding/restart`.
+ * v1.39 — `POST /api/onboarding/restart`.
  *
  * "Set up again", from Settings. It puts the nine steps back to `pending`,
  * clears the flow's completion stamp and clears the derivation marker so the
@@ -31,13 +31,8 @@
 import type { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma, toJson } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
@@ -74,21 +69,14 @@ export const POST = apiHandler(async (request: NextRequest) => {
     });
   }
 
-  const { data: body, error: jsonError } = await safeJson<unknown>(request, {
+  const parsed = await parseJsonBody(request, onboardingRestartSchema, {
     maxBytes: 4 * 1024,
+    input: (body) => body ?? {},
+    action: "onboarding.needs.restart",
+    meta: { outcome: "validation_failed" },
+    errorCode: "onboarding.restart.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = onboardingRestartSchema.safeParse(body ?? {});
-  if (!parsed.success) {
-    annotate({
-      action: { name: "onboarding.needs.restart" },
-      meta: { outcome: "validation_failed" },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "onboarding.restart.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const steps = defaultOnboardingSteps();
   const written = await prisma.onboardingRecord.upsert({

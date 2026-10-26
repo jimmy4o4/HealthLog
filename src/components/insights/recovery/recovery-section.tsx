@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Activity,
   Battery,
@@ -14,7 +15,13 @@ import { useInsightsAnalytics } from "@/hooks/use-insights-analytics";
 import { useAnalyticsQuery } from "@/lib/queries/use-analytics-query";
 import { useTranslations } from "@/lib/i18n/context";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Button } from "@/components/ui/button";
+import type {
+  RECOVERY_SUMMARY_TYPES,
+  RecoveryEmptyReason,
+} from "@/lib/insights/recovery-empty";
 import { ChartSkeleton } from "@/components/charts/chart-skeleton";
+import { QueryErrorCard } from "@/components/ui/query-error-card";
 import { RestModeBanner } from "@/components/insights/rest-mode-banner";
 import type { RestModeAnnotation } from "@/lib/analytics/score/types";
 import type { ChartOverlayKey } from "@/lib/dashboard-layout";
@@ -23,7 +30,8 @@ import { RecoveryMetricBlock } from "@/components/insights/recovery/recovery-met
 import { ResilienceTile } from "@/components/insights/recovery/resilience-tile";
 
 interface BlockSpec {
-  type: string;
+  /** One of the types the server's empty decision counts, by construction. */
+  type: (typeof RECOVERY_SUMMARY_TYPES)[number];
   chartKey: ChartOverlayKey;
   statusMetric: MetricStatusMetricId;
   title: string;
@@ -38,6 +46,16 @@ interface BlockGroup {
   key: string;
   blocks: BlockSpec[];
 }
+
+/**
+ * The empty note per server-resolved reason (`recoveryEmpty` on the
+ * analytics slice). The page never works the reason out itself.
+ */
+const EMPTY_COPY = {
+  general: "insights.recovery.empty",
+  oura_permission: "insights.recovery.emptyOuraPermission",
+  oura_no_resilience: "insights.recovery.emptyOuraNoResilience",
+} as const satisfies Record<RecoveryEmptyReason, string>;
 
 /**
  * v1.17.1 → rebuilt v1.18.1 (B1–B3) — body of the `/insights/recovery`
@@ -62,7 +80,8 @@ interface BlockGroup {
  */
 export function RecoverySection() {
   const { t } = useTranslations();
-  const { data, isLoading } = useInsightsAnalytics("SLEEP_DURATION");
+  const { data, isLoading, error, refetch } =
+    useInsightsAnalytics("SLEEP_DURATION");
   // v1.18.1 — Rest Mode parity. The annotation rides the thick analytics
   // payload's `healthScore` block (server-authoritative; iOS mirrors it). We
   // read it off the same `["analytics"]` cache the insights mother page
@@ -169,17 +188,20 @@ export function RecoverySection() {
     },
   ];
 
-  // v1.19.2 — resilience is an ordinal band (limited … exceptional), surfaced
-  // as a calm dedicated tile rather than a chart block, so it counts toward the
-  // data gate independently of `groups` (a chart-block list).
-  const hasResilience = (summaries?.["RESILIENCE"]?.count ?? 0) > 0;
+  // Whether the page has anything to show, and why not, is the server's
+  // answer (`recoveryEmpty`), so web and iOS read one decision.
+  const emptyReason = data?.recoveryEmpty ?? null;
 
-  const hasAny =
-    summaries != null &&
-    (hasResilience ||
-      groups.some((group) =>
-        group.blocks.some((block) => (summaries[block.type]?.count ?? 0) > 0),
-      ));
+  // A failed read is said, never left as a skeleton that loads forever.
+  if (error && summaries == null) {
+    return (
+      <QueryErrorCard
+        error={error}
+        title={t("insights.recovery.loadError")}
+        onRetry={refetch}
+      />
+    );
+  }
 
   if (isLoading || summaries == null) {
     return (
@@ -189,13 +211,25 @@ export function RecoverySection() {
     );
   }
 
-  if (!hasAny) {
+  if (emptyReason) {
     return (
       <EmptyState
         data-slot="recovery-empty"
+        data-empty-case={emptyReason}
         icon={<Heart className="size-6" />}
         title={t("insights.recovery.emptyTitle")}
-        description={t("insights.recovery.empty")}
+        description={t(EMPTY_COPY[emptyReason])}
+        action={
+          // Waiting for a first resilience level has nothing to open: the
+          // connection is fine, the level simply has not arrived.
+          emptyReason === "oura_no_resilience" ? undefined : (
+            <Button size="sm" variant="outline" asChild>
+              <Link href="/settings/integrations">
+                {t("insights.recovery.emptyAction")}
+              </Link>
+            </Button>
+          )
+        }
       />
     );
   }

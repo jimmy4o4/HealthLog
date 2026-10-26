@@ -8,7 +8,7 @@ import { settleBeforeMeasure } from "./utils/settle";
  * v1.25.11 settings fix): the scroll viewport must never extend far past
  * the last content element. The rule the guard pins is structural — only
  * the AuthShell owns the scroll height and the bottom padding
- * (`pt-6 pb-20` on the wrapper, plus the `<md` bottom-nav clearance on
+ * (`pt-6 pb-20` on the wrapper, `pb-24` in the desktop shell, plus the `<md` bottom-nav clearance on
  * `<main>`); a page/section must never add its own viewport-height
  * reserve or bottom gutter, because every such nested reserve stacks on
  * the shell's own budget and reopens the dark-band-below-the-last-card
@@ -33,7 +33,7 @@ const ROUTES = [
   // one-scroll-floor assertion below).
   "/settings/layout/insights",
   "/settings/layout/medications",
-  "/settings/layout/mood",
+  "/settings/modules/mood",
   "/settings/modules",
   "/settings/account",
   "/settings/notifications",
@@ -45,7 +45,7 @@ const ROUTES = [
 ] as const;
 
 const VIEWPORTS = [
-  { name: "desktop", width: 1440, height: 900, expectedPad: 80 }, // wrapper pb-20
+  { name: "desktop", width: 1440, height: 900, expectedPad: 96 }, // wrapper shell-desktop:pb-24
   { name: "phone", width: 390, height: 844, expectedPad: 144 }, // pb-20 + main pb-16
 ] as const;
 
@@ -135,7 +135,7 @@ test.describe("settings + admin vertical over-scroll guard", () => {
         expect(dims, "main-content / wrapper present").not.toBeNull();
         if (!dims) return;
 
-        // One-scroll-floor (UI-STANDARDS §9), structural half. `<main>` may
+        // One-scroll-floor (ui-standards.md §9), structural half. `<main>` may
         // only be the ONLY vertical scroll surface if it also OWNS the
         // containing block of its absolutely-positioned descendants: an
         // abspos box with no positioned ancestor resolves against the

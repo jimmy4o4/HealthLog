@@ -7,6 +7,10 @@ import {
   GrantActionAlert,
   grantActionErrorKey,
 } from "@/components/settings/access/grant-action-error";
+import {
+  ReproofCancelledError,
+  useRecentProof,
+} from "@/components/settings/security-section/use-recent-proof";
 import { ManagedProfileCreateForm } from "@/components/settings/access/managed-profile-create-form";
 import { ManagedProfileEditForm } from "@/components/settings/access/managed-profile-edit-form";
 import { ManagedProfileGuardians } from "@/components/settings/access/managed-profile-guardians";
@@ -27,6 +31,7 @@ import {
   accountLabel,
   type AccountAccessEntry,
 } from "@/lib/sharing/account-access-view";
+import { useAccountDeletionGrace } from "@/lib/queries/use-privacy-summary";
 
 /**
  * v1.37.0 — the records this account looks after.
@@ -69,11 +74,17 @@ import {
 export function ManagedProfileCard() {
   const { t } = useTranslations();
   const { user } = useAuth();
-  const remove = useDeleteManagedProfile();
+  // Ending a record is gated on a fresh second factor; the dialog collects it
+  // and the deletion goes out once more.
+  const recentProof = useRecentProof({
+    description: t("settings.reproof.descriptionChange"),
+  });
+  const remove = useDeleteManagedProfile(recentProof.run);
   const profiles = managedProfilesOf(user?.accountAccess?.accounts);
 
   return (
     <SettingsCard data-slot="managed-profile-card">
+      {recentProof.dialog}
       <SettingsCardHeader
         anchor="managed-profiles"
         icon={UserRoundCog}
@@ -82,7 +93,7 @@ export function ManagedProfileCard() {
       />
       <div className="space-y-4">
         {/* Content, not meta: this is what somebody is consenting to take on,
-            and UI-STANDARDS §3 reserves muted for the incidental. */}
+            and ui-standards.md §3 reserves muted for the incidental. */}
         <p data-slot="managed-profile-explainer" className="text-sm">
           {t("recordSharing.managed.explainer")}
         </p>
@@ -130,8 +141,12 @@ function ManagedProfileRow({
 }) {
   const { t, tCount } = useTranslations();
   const guardians = useManagedProfileGuardians(profile.accountId);
+  const grace = useAccountDeletionGrace();
   const name = accountLabel(profile);
-  const failed = remove.isError && remove.variables === profile.accountId;
+  const failed =
+    remove.isError &&
+    !(remove.error instanceof ReproofCancelledError) &&
+    remove.variables === profile.accountId;
   // Per row, not per card. The edit form reads the record's identity when it
   // opens, so one shared flag would put every row's form on the wire the
   // moment any of them was opened.
@@ -146,7 +161,7 @@ function ManagedProfileRow({
       data-managed-profile-id={profile.accountId}
       className="space-y-2 py-3 first:pt-0 last:pb-0"
     >
-      {/* UI-STANDARDS §11 inline action row. */}
+      {/* ui-standards.md §11 inline action row. */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {/* A person's name is user data and stays content. */}
@@ -155,7 +170,7 @@ function ManagedProfileRow({
             {t("recordSharing.lookingAfter.kindManaged")}
           </p>
         </div>
-        {/* UI-STANDARDS §11: the actions stay beside the name, never below it.
+        {/* ui-standards.md §11: the actions stay beside the name, never below it.
             Edit is offered without waiting for the roster — it changes what the
             record IS and does not depend on how many people look after it,
             unlike the deletion beside it, whose confirm copy states that
@@ -172,9 +187,10 @@ function ManagedProfileRow({
           >
             {t("recordSharing.managed.edit")}
           </Button>
-          {guardians.data && (
+          {guardians.data && !grace.pending && (
             <ConfirmButton
               slot="managed-profile-delete"
+              destructive
               size="sm"
               className="min-h-11 sm:min-h-9"
               label={t("recordSharing.managed.delete")}
@@ -184,6 +200,7 @@ function ManagedProfileRow({
                 tCount,
                 name,
                 activeGuardians: activeGuardianCount(guardians.data),
+                graceDays: grace.days ?? 0,
               })}
               confirmLabel={t("recordSharing.managed.deleteConfirm")}
               pending={remove.isPending}
@@ -209,13 +226,14 @@ function ManagedProfileRow({
       {/* A failed roster read is not an absent roster.
           Without this branch a 500 renders exactly as a still-loading one —
           the row with no guardian panel and no delete control — and the person
-          waits for something that is never coming. UI-STANDARDS §6: a read
+          waits for something that is never coming. ui-standards.md §6: a read
           that failed says so and offers the way back. It is deliberately NOT
           the same as the 404 arm: a 404 means this account is no longer a
           Guardian of that profile, which is an answer, and the row correctly
           shows no destructive control for it. */}
       {guardians.isError && (
         <QueryErrorCard
+          error={guardians.error}
           title={t("recordSharing.managed.rosterLoadError")}
           onRetry={() => void guardians.refetch()}
         />
@@ -320,6 +338,7 @@ export function deleteProfileBody({
   tCount,
   name,
   activeGuardians,
+  graceDays = 0,
 }: {
   t: (key: string, params?: Record<string, string | number>) => string;
   tCount: (
@@ -330,9 +349,17 @@ export function deleteProfileBody({
   name: string;
   /** Taken from the roster read, never from a local counter. */
   activeGuardians: number;
+  /**
+   * The deletion grace window (`GET /api/settings/privacy-summary`). Above 0
+   * the profile is locked and erased when it ends, and an admin can undo it
+   * until then; 0 erases it at once.
+   */
+  graceDays?: number;
 }): string {
   return [
-    t("recordSharing.managed.deleteBody", { name }),
+    graceDays > 0
+      ? t("recordSharing.managed.deleteBodyGrace", { name, days: graceDays })
+      : t("recordSharing.managed.deleteBody", { name }),
     tCount("recordSharing.managed.deleteGuardians", activeGuardians, {
       count: activeGuardians,
     }),

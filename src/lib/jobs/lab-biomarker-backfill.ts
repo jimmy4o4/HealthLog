@@ -24,6 +24,7 @@
  * or pg-boss never provisions it and the boot enqueue silently never drains
  * (the v1.4.37 dead-queue class).
  */
+import { activeAccountSql } from "@/lib/account-deletion/active-account";
 import { prisma } from "@/lib/db";
 import { invalidateUserHealthScore } from "@/lib/cache/invalidate";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
@@ -206,14 +207,15 @@ export async function enqueueBootTimeLabBiomarkerBackfill(
   }
 
   try {
-    // v1.28.46 perf (H4) — DB-level SELECT DISTINCT, not Prisma `distinct`
+    // v1.28.46 — DB-level SELECT DISTINCT, not Prisma `distinct`
     // (which fetches every matching row then de-dupes in JS at boot). The
     // migration-0243 partial index over `(user_id) WHERE deleted_at IS NULL
     // AND biomarker_id IS NULL` makes this an index-only scan that converges
     // to empty as rows are linked.
     const rows = await prisma.$queryRaw<{ user_id: string }[]>`
       SELECT DISTINCT user_id FROM lab_results
-      WHERE deleted_at IS NULL AND biomarker_id IS NULL`;
+      WHERE deleted_at IS NULL AND biomarker_id IS NULL
+        AND ${activeAccountSql("user_id")}`;
 
     if (rows.length === 0) {
       return { enqueued: 0, skipped: 0, error: null };

@@ -14,8 +14,9 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { PDFParse } from "pdf-parse";
 import { unzipSync } from "fflate";
+
+import { readPdfText } from "@/lib/documents/pdfjs";
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -37,7 +38,14 @@ vi.mock("@/lib/db", () => ({
     userHealthProfile: { findUnique: vi.fn() },
     healthProfileFactRevision: { findMany: vi.fn() },
     // v1.43 — the anamnesis leaf also carries the newest AUDIT-C entry.
-    mentalHealthAssessment: { findMany: vi.fn(async () => []) },
+    // `groupBy` counts the screener totals answered in an unvalidated
+    // translation once a screener leaf is in the report.
+    mentalHealthAssessment: {
+      findMany: vi.fn(async () => []),
+      groupBy: vi.fn(async () => []),
+    },
+    // v1.44 — the per-sport workout block.
+    workout: { findMany: vi.fn(async () => []) },
     user: { findUnique: vi.fn(), update: vi.fn() },
     // The whole-record gate reads the session's own stamps: a sign-in a
     // moment ago is the proof, on an account without a second factor.
@@ -148,22 +156,11 @@ function mkReq(
 }
 
 async function pdfText(res: Response): Promise<string> {
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const parser = new PDFParse({ data: bytes });
-  try {
-    return (await parser.getText()).text;
-  } finally {
-    await parser.destroy();
-  }
+  return readPdfText(new Uint8Array(await res.arrayBuffer()));
 }
 
-async function pdfBytesText(bytes: Uint8Array): Promise<string> {
-  const parser = new PDFParse({ data: bytes });
-  try {
-    return (await parser.getText()).text;
-  } finally {
-    await parser.destroy();
-  }
+function pdfBytesText(bytes: Uint8Array): Promise<string> {
+  return readPdfText(bytes);
 }
 
 beforeEach(() => {
@@ -206,7 +203,7 @@ beforeEach(() => {
     fullName: null,
     insurerName: null,
     insuranceNumberEncrypted: null,
-    insightsCachedText: null,
+    insightsCachedTextEncrypted: null,
   } as never);
 });
 

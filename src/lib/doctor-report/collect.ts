@@ -15,7 +15,11 @@
  *
  * Pure data assembly — no auth, no rate limit, no audit. Idempotent.
  */
-import { courseStatusOn, dayKeyOfDate } from "@/lib/medications/course-window";
+import {
+  courseStatusOn,
+  dayKeyOfDate,
+  medicationWindow,
+} from "@/lib/medications/course-window";
 import { prisma } from "@/lib/db";
 import {
   getEffectiveRange,
@@ -42,7 +46,6 @@ import {
 import { MEASUREMENT_LEAF_IDS } from "@/lib/report-selection/catalogue";
 import type { ReportSelection } from "@/lib/report-selection/selection";
 import {
-  WELLNESS_SCORE_REPORT_TYPES,
   type CollectDoctorReportOptions,
   type DoctorReportData,
   type DoctorReportMood,
@@ -54,7 +57,7 @@ import {
   collapseMeasurementsToCanonical,
   minMaxOf,
   sanitisePracticeName,
-  summariseCanonicalRecovery,
+  summariseWellnessScores,
 } from "@/lib/doctor-report-helpers";
 import {
   excludedMeasurementTypes,
@@ -65,6 +68,8 @@ import { loadDenseMeasurementBuckets } from "./dense-buckets";
 import { summariseDenseBuckets } from "./measurement-series";
 import { emptyGlucoseClinical } from "./glucose-panel";
 import { buildAdministrationLedger, buildGlp1Block } from "./medications";
+import { loadReportWorkouts } from "./workouts";
+import { loadReportMedicationEffects } from "./medication-effects";
 import { userDayKey, validTimezoneOr, DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import {
   loadAllergies,
@@ -79,6 +84,7 @@ import {
 } from "./clinical-records";
 import { dayKeyAsUtcMidnight } from "@/lib/tz/date-only";
 import { readingsMean } from "@/lib/measurements/day-mean";
+import { loadScreenerUnvalidatedTranslations } from "./screener-translations";
 
 const DENSE_REPORT_RAW_WINDOW_DAYS = 90;
 
@@ -92,6 +98,9 @@ const DENSE_REPORT_RAW_WINDOW_DAYS = 90;
 const DENSE_STAT_TYPES = [
   "PULSE",
   "HEART_RATE_VARIABILITY",
+  // RMSSD arrives per night from most rings and bands, but some write it per
+  // five-minute window; the row cap below keeps the sparse case raw.
+  "HRV_RMSSD",
   "OXYGEN_SATURATION",
 ] as const satisfies readonly MeasurementType[];
 
@@ -114,6 +123,7 @@ const MEDICATION_LEAVES = [
   "MEDICATION_LIST",
   "MEDICATION_ADMINISTRATIONS",
   "MEDICATION_COMPLIANCE",
+  "MEDICATION_EFFECT",
   "GLP1_THERAPY",
 ] as const;
 
@@ -316,7 +326,7 @@ export async function collectDoctorReportData(
                 select: { ...SCHEDULE_COMPLIANCE_SELECT, label: true },
               },
               scheduleRevisions: {
-                orderBy: { validFrom: "asc" },
+                orderBy: [{ validFrom: "asc" }, { id: "asc" }],
                 select: {
                   id: true,
                   validFrom: true,
@@ -330,11 +340,11 @@ export async function collectDoctorReportData(
               courses: COURSES_COMPLIANCE_SELECT,
               doseChanges: {
                 where: { effectiveFrom: { lte: end } },
-                orderBy: { effectiveFrom: "asc" },
+                orderBy: [{ effectiveFrom: "asc" }, { id: "asc" }],
               },
               intakeEvents: {
                 where: { takenAt: { not: null, lte: end } },
-                orderBy: { takenAt: "desc" },
+                orderBy: [{ takenAt: "desc" }, { id: "desc" }],
                 take: 1,
                 select: { takenAt: true, injectionSite: true },
               },
@@ -361,7 +371,7 @@ export async function collectDoctorReportData(
                 },
               },
             },
-            orderBy: { scheduledFor: "asc" },
+            orderBy: [{ scheduledFor: "asc" }, { id: "asc" }],
           })
         : Promise.resolve([]),
       // Zero DB read when the mood leaf was not chosen: the payload reflects
@@ -478,8 +488,7 @@ export async function collectDoctorReportData(
       name: m.name,
       asNeeded: m.asNeeded,
       trackIntake: m.trackIntake,
-      startsOn: m.startsOn,
-      endsOn: m.endsOn,
+      ...medicationWindow(m),
       oneShot: m.oneShot,
       createdAt: m.createdAt,
       schedules: m.schedules,
@@ -614,36 +623,27 @@ export async function collectDoctorReportData(
       })
     : null;
 
-  // The wellness summary is filtered to the same score leaves the stats carry,
-  // so it cannot disagree with them. RECOVERY_SCORE carries both the native row
-  // and the computed proxy for one day; resolve to the canonical row so the PDF
-  // reads the SAME value the tile shows.
-  const wellnessScoreSummaries = WELLNESS_SCORE_REPORT_TYPES.flatMap((type) => {
-    if (!gate.admits(type)) return [];
-    if (type === "RECOVERY_SCORE") {
-      const summary = summariseCanonicalRecovery(measurements, reportTz);
-      return summary ? [summary] : [];
-    }
-    const s = stats[type];
-    const rows = byType[type];
-    if (!s || !rows || rows.length === 0) return [];
-    return [
-      {
-        type,
-        latest: Math.round(s.latest),
-        avg: Math.round(s.avg),
-        min: Math.round(s.min),
-        max: Math.round(s.max),
-        count: s.count,
-        latestAt: rows[rows.length - 1].measuredAt,
-      },
-    ];
+  // The wellness summary reads the same score leaves the stats carry.
+  const wellnessScores = summariseWellnessScores({
+    admits: (type) => gate.admits(type),
+    stats,
+    byType,
+    measurements,
+    timezone: reportTz,
   });
-  const wellnessScores =
-    wellnessScoreSummaries.length > 0 ? wellnessScoreSummaries : null;
+  // Screener totals answered in an unvalidated translation, per score type.
+  const screenerUnvalidatedTranslations =
+    await loadScreenerUnvalidatedTranslations(
+      userId,
+      filteredStats,
+      start,
+      end,
+    );
 
   // Each remaining structured block: read only when its leaf was chosen.
   const [
+    workouts,
+    medicationEffects,
     cycle,
     labResults,
     illnessEpisodes,
@@ -655,6 +655,30 @@ export async function collectDoctorReportData(
     anamnesis,
     emergency,
   ] = await Promise.all([
+    gate.admits("WORKOUTS")
+      ? loadReportWorkouts({
+          userId,
+          start,
+          end,
+          days,
+          sourcePriorityJson: userProfile?.sourcePriorityJson ?? null,
+        })
+      : Promise.resolve(null),
+    // The effect around each listed medication's start. Its own leaf AND the
+    // target's measurement leaf must both admit it; the loader asks the gate.
+    // The block names every medication it describes (and the confounders),
+    // so it also needs the medication list: an owner who withheld the list
+    // never releases the names through the effect block. Same rule as the
+    // clinician view's compliance rows, which are named from the list.
+    gate.admits("MEDICATION_EFFECT") && gate.admits("MEDICATION_LIST")
+      ? loadReportMedicationEffects({
+          userId,
+          medicationIds: medications.map((m) => m.id),
+          admitsMeasurement: (type) => gate.admits(type),
+          timezone: reportTz,
+          end,
+        })
+      : Promise.resolve(null),
     gate.admits("CYCLE")
       ? buildCycleExportSummary(userId, userDayKey(end, reportTz))
       : Promise.resolve(null),
@@ -755,6 +779,7 @@ export async function collectDoctorReportData(
     mood,
     glp1,
     wellnessScores,
+    screenerUnvalidatedTranslations,
     cycle,
     labResults,
     illnessEpisodes,
@@ -765,5 +790,7 @@ export async function collectDoctorReportData(
     familyHistory,
     anamnesis,
     emergency,
+    workouts,
+    medicationEffects,
   };
 }

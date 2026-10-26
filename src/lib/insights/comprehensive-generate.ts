@@ -1,5 +1,5 @@
 /**
- * v1.7.0 W6 — shared comprehensive-insight generator.
+ * v1.7.0 — shared comprehensive-insight generator.
  *
  * The on-demand `POST /api/insights/generate` route and the nightly
  * `insight-pregenerate` cron both need to run the same pipeline:
@@ -113,8 +113,14 @@ import { hashInsightSnapshot } from "@/lib/insights/snapshot-hash";
 import { annotate } from "@/lib/logging/context";
 import { AI_BUDGETS, resolveInsightsMaxTokens } from "@/lib/ai/ai-budgets";
 import { resolveEffectiveTimeoutMs } from "@/lib/ai/effective-timeout";
+import { providerFailureKind } from "@/lib/ai/failure-kind";
 import { recordBriefingFailure } from "@/lib/insights/briefing-failure-marker";
 import { cachedPayloadCarriesBriefing } from "@/lib/insights/briefing-payload";
+import {
+  INSIGHTS_CACHE_SELECT,
+  insightsCacheWrite,
+  openInsightsCachedText,
+} from "@/lib/insights/cached-text-cipher";
 
 // Scope invalidation + refill moved to a sibling module; re-exported so
 // every existing call site keeps importing from here.
@@ -212,7 +218,7 @@ async function rerollBriefingParagraph(args: {
   cachedText: string;
   locale: SupportedLocale;
   /**
-   * v1.18.10 (MEDIUM-3) — the pre-computed signals the briefing must match.
+   * v1.18.10 — the pre-computed signals the briefing must match.
    * The reroll runs at a higher, seedless temperature for phrasing variety,
    * which is exactly the path most prone to drifting a restated number; the
    * fresh paragraph is rejected (caller keeps the cached one) when a number in
@@ -238,6 +244,8 @@ async function rerollBriefingParagraph(args: {
    * slow-backend allowance the main generation does.
    */
   effectiveTimeoutMs: number;
+  /** The caller's bound: a re-roll it gave up on sends nothing more. */
+  signal?: AbortSignal;
 }): Promise<{ text: string; providerType: string } | null> {
   let cached: Record<string, unknown>;
   try {
@@ -271,6 +279,7 @@ async function rerollBriefingParagraph(args: {
       // generation is not clipped at the client's 60 s default mid-stream.
       // v1.25 — honours the per-user response-timeout setting (see caller).
       timeoutMs: args.effectiveTimeoutMs,
+      signal: args.signal,
       stage: "reroll",
       // v1.41 — the re-roll is a fresh pass at the paragraph, so it may think
       // like the generation it replaces; the operator's switch still wins.
@@ -306,7 +315,7 @@ async function rerollBriefingParagraph(args: {
     return null;
   }
 
-  // v1.18.10 (MEDIUM-3) — grounding gate on the rerolled paragraph. The higher
+  // v1.18.10 — grounding gate on the rerolled paragraph. The higher
   // seedless temperature can drift a restated figure ("+1.2 kg" → "+1.3 kg");
   // reject the reroll on any ungrounded number so the caller keeps the cached
   // (already-grounded) paragraph rather than swapping in a fabricated one.
@@ -336,8 +345,8 @@ async function rerollBriefingParagraph(args: {
 
 /**
  * Parse + (best-effort) validate a comprehensive provider reply. Returns the
- * parsed payload (validated when it matches `insightResultSchema`, else the
- * raw object so the richer optional blocks survive), or null when the reply
+ * parsed payload (validated when it matches `insightResultSchema`, which
+ * keeps the richer optional blocks, else the raw object), or null when the reply
  * is not valid JSON even after fence-stripping. Null signals the caller to
  * run its one corrective retry.
  */
@@ -710,13 +719,10 @@ interface GenerateOptions {
   /** Skip the 24 h cache short-circuit and force a fresh generation. */
   force?: boolean;
   /**
-   * v1.9.0 — abort the generation when the caller has given up on it.
-   *
-   * The on-demand `forceWarmUser` path bounds the comprehensive step with a
-   * timeout and then proceeds to warm the per-status caches itself. Without
-   * this signal a comprehensive that resolves AFTER the timeout would still
-   * write a cache row + timestamp the caller no longer expects. The signal
-   * lets the caller cut the generation off before the cache write.
+   * The caller's bound gave up on the generation (the warms bound it, then
+   * move on). Every provider call carries it, so the call in flight is torn
+   * down and no later one is sent (#1279), and a generation that still
+   * resolves writes no cache row the caller no longer expects.
    */
   signal?: AbortSignal;
 }
@@ -784,7 +790,7 @@ export async function generateComprehensiveInsight(
     select: {
       insightsPrivacyMode: true,
       insightsCachedAt: true,
-      insightsCachedText: true,
+      ...INSIGHTS_CACHE_SELECT,
       insightsCachedLocale: true,
       insightsExcludeMetrics: true,
       insightsSnapshotHash: true,
@@ -793,9 +799,9 @@ export async function generateComprehensiveInsight(
       // (see the hash construction below), so it must be readable BEFORE
       // the gate — the comparison snapshot itself is only built after.
       dashboardWidgetsJson: true,
-      // v1.18.11 P5 — gender feeds the cycle context block (phase contrast).
+      // v1.18.11 — gender feeds the cycle context block (phase contrast).
       gender: true,
-      // v1.22 (W6) — first name for the sparse, hash-gated briefing opener.
+      // v1.22 — first name for the sparse, hash-gated briefing opener.
       displayName: true,
       // v1.25 — per-user response-timeout (seconds). Threaded onto every
       // provider call below so a raised value for a slow self-hosted backend
@@ -807,6 +813,7 @@ export async function generateComprehensiveInsight(
       glucoseUnit: true,
     },
   });
+  const cachedText = openInsightsCachedText(dbUser);
 
   // Resolve the upstream provider timeout once from the user's setting,
   // falling back to the comprehensive budget. Every generation call in this
@@ -827,7 +834,7 @@ export async function generateComprehensiveInsight(
   if (
     !force &&
     dbUser?.insightsCachedAt &&
-    dbUser.insightsCachedText &&
+    cachedText &&
     cachedLocaleMatches &&
     Date.now() - dbUser.insightsCachedAt.getTime() < CACHE_TTL_MS
   ) {
@@ -884,20 +891,20 @@ export async function generateComprehensiveInsight(
   }
 
   const includeRaw = dbUser?.insightsPrivacyMode === "raw";
-  // v1.32.22 (M6) — capture the privacy-mode column value read here (a
+  // v1.32.22 — capture the privacy-mode column value read here (a
   // non-nullable String defaulting to "aggregated"), so every cache commit
   // below can guard on it. A `PUT /api/insights/settings` flip that lands
   // between this read and a commit advances the column ("aggregated" ⇄ "raw");
   // the guarded write then matches zero rows and the generation is skipped
   // rather than stamping an old-scope payload over the cache the flip nulled.
   const modeAtRead = dbUser?.insightsPrivacyMode ?? "aggregated";
-  // v1.18.11 P1 — bound the briefing's bulk feature read to a recent window
+  // v1.18.11 — bound the briefing's bulk feature read to a recent window
   // (all-time extremes are sourced separately, see features.ts). The downgrade
   // ladder below stays as the safety net for the rare oversize payload.
   const featureWindow = { sinceDays: BRIEFING_FEATURE_WINDOW_DAYS };
   let features: Awaited<ReturnType<typeof extractFeatures>>;
   try {
-    // v1.18.11 P3 — compute-once-per-scope. Inside the nightly-tick scope (or
+    // v1.18.11 — compute-once-per-scope. Inside the nightly-tick scope (or
     // the on-demand route scope) the bounded feature read is shared, so the
     // downgrade-ladder re-reads below and any sibling consumer in the same
     // scope reuse this object instead of re-querying.
@@ -1030,7 +1037,7 @@ export async function generateComprehensiveInsight(
       ? { planProgress: planProgressLines }
       : {}),
   });
-  // v1.12.7 (B5) — the curated SOURCES block for the metrics present, shared
+  // v1.12.7 — the curated SOURCES block for the metrics present, shared
   // by both the full generation below and the unchanged-data re-roll.
   const referenceMetrics = metricsFromPresentSections({
     bloodPressure: features.bloodPressure != null,
@@ -1064,7 +1071,7 @@ export async function generateComprehensiveInsight(
   if (aboutMe) {
     userPrompt += buildAboutMeInsightBlock(aboutMe, locale);
   }
-  // v1.18.11 P5 — illness + cycle context (same builders as the on-demand
+  // v1.18.11 — illness + cycle context (same builders as the on-demand
   // route + the Coach). Module-gated; null for users without either module.
   const illnessCycleCtx = await buildBriefingIllnessCycleContext(
     userId,
@@ -1075,7 +1082,7 @@ export async function generateComprehensiveInsight(
     userPrompt += buildBriefingIllnessCyclePrompt(illnessCycleCtx, locale);
   }
   userPrompt += buildBriefingPlanProgressBlock(planProgressLines, locale);
-  // v1.22 (W6) — opener-archetype rotation + sparse first-name personalization.
+  // v1.22 — opener-archetype rotation + sparse first-name personalization.
   // Both are deterministic per (user, day): the opener hint varies the briefing
   // lead day-over-day, and the name appears on roughly one day in three (never a
   // rote daily "Good morning, <name>"). The whole block is omitted when no
@@ -1099,12 +1106,10 @@ export async function generateComprehensiveInsight(
   // the briefing never came back — a permanent silent hole. Treating the
   // briefingless cache as "not unchanged" re-runs the full generation
   // (bounded by the nightly budget bucket + forced-warm caps).
-  const cachedCarriesBriefing = cachedPayloadCarriesBriefing(
-    dbUser?.insightsCachedText,
-  );
+  const cachedCarriesBriefing = cachedPayloadCarriesBriefing(cachedText);
   if (
-    dbUser?.insightsCachedText &&
-    dbUser.insightsSnapshotHash === snapshotHash &&
+    cachedText &&
+    dbUser?.insightsSnapshotHash === snapshotHash &&
     !cachedCarriesBriefing
   ) {
     annotate({
@@ -1113,29 +1118,30 @@ export async function generateComprehensiveInsight(
     });
   }
   if (
-    dbUser?.insightsCachedText &&
-    dbUser.insightsSnapshotHash === snapshotHash &&
+    cachedText &&
+    dbUser?.insightsSnapshotHash === snapshotHash &&
     cachedCarriesBriefing
   ) {
-    // v1.18.7 (MEDIUM-3) — findings are byte-stable, but re-roll the daily-
+    // v1.18.7 — findings are byte-stable, but re-roll the daily-
     // briefing PARAGRAPH once per calendar day so the prose reads fresh
     // day-over-day. Gated on `insightsBriefingRerollDate` so it costs at
     // most one extra call/day; the higher, seedless temperature varies the
     // phrasing while the structured findings are preserved verbatim from the
     // cached payload. Any miss falls through to the plain timestamp refresh.
     const todayKey = buildRerollDateKey();
-    if (dbUser.insightsBriefingRerollDate !== todayKey) {
+    if (dbUser?.insightsBriefingRerollDate !== todayKey) {
       const rerolled = await rerollBriefingParagraph({
         userId,
         chain,
         systemPrompt,
         userPrompt,
-        cachedText: dbUser.insightsCachedText,
+        cachedText,
         locale,
         signals: features.signalsOfDay ?? null,
         features,
         comparison: groundingExtra,
         effectiveTimeoutMs,
+        signal,
       });
       if (rerolled) {
         // The reroll rewrites content derived from the scope captured before
@@ -1150,7 +1156,7 @@ export async function generateComprehensiveInsight(
           rerolled.providerType,
           {
             insightsCachedAt: new Date(),
-            insightsCachedText: rerolled.text,
+            ...insightsCacheWrite(rerolled.text),
             insightsCachedLocale: locale,
             insightsBriefingRerollDate: todayKey,
           },
@@ -1227,6 +1233,7 @@ export async function generateComprehensiveInsight(
       // generation is not clipped at the client's 60 s default mid-stream.
       // v1.25 — honours the per-user response-timeout setting.
       timeoutMs: effectiveTimeoutMs,
+      signal,
       stage: "generate",
       // v1.41 — the briefing is one of the few background jobs that may
       // reason (medium on the person's own provider, low on the operator's,
@@ -1275,13 +1282,17 @@ export async function generateComprehensiveInsight(
     });
     // v1.25 — record a dated failure marker so the read path can surface a
     // discreet "couldn't refresh" hint alongside the preserved last-good
-    // briefing. No cache row is written here, so `insightsCachedText` (the
+    // briefing. No cache row is written here, so `insightsCachedTextEncrypted` (the
     // last good payload) stays intact and the surface never blanks.
     void recordBriefingFailure({
       userId,
       reason,
       locale,
       httpStatus: typeof err.httpStatus === "number" ? err.httpStatus : null,
+      failureKind:
+        e instanceof AllProvidersFailedError
+          ? (e.attempts?.[0]?.failureKind ?? null)
+          : providerFailureKind(e).failure,
     });
     const credentialExpired =
       e instanceof AllProvidersFailedError && e.primaryCredentialExpired;
@@ -1295,7 +1306,7 @@ export async function generateComprehensiveInsight(
   // Strip the fence before parsing; clean JSON passes through unchanged.
   let insights = parseComprehensiveResult(result.content);
   if (insights === null) {
-    // v1.18.7 (MEDIUM-5) — one corrective retry before declaring failure,
+    // v1.18.7 — one corrective retry before declaring failure,
     // reusing the same `buildRetryCorrectionMessage` the strict insight
     // wrapper uses next door. The comprehensive path previously failed cold
     // to `invalid-json` on a first-pass miss even though the recovery helper
@@ -1319,6 +1330,7 @@ export async function generateComprehensiveInsight(
         // v1.21.5 — wider upstream budget; see the first generation call.
         // v1.25 — honours the per-user response-timeout setting.
         timeoutMs: effectiveTimeoutMs,
+        signal,
         stage: "json-retry",
       });
       result = retry.result;
@@ -1377,7 +1389,7 @@ export async function generateComprehensiveInsight(
     }
   }
 
-  // v1.18.10 (HIGH-1) — daily-briefing number-grounding gate. The cron +
+  // v1.18.10 — daily-briefing number-grounding gate. The cron +
   // force-warm path produces the same briefing the POST route does, so it
   // enforces the same cross-check: every number the briefing restates must
   // trace to a `features.signalsOfDay` figure. One corrective retry, then strip
@@ -1412,6 +1424,7 @@ export async function generateComprehensiveInsight(
           // v1.21.5 — wider upstream budget; see the first generation call.
           // v1.25 — honours the per-user response-timeout setting.
           timeoutMs: effectiveTimeoutMs,
+          signal,
           stage: "grounding-retry",
         });
         const retryInsights = parseComprehensiveResult(retry.result.content);
@@ -1453,12 +1466,9 @@ export async function generateComprehensiveInsight(
       // giving them anything usable. A day-old grounded briefing beats a
       // vanished one on both paths, and the next successful run replaces it.
       let fallbackBriefing: unknown = null;
-      if (dbUser?.insightsCachedText) {
+      if (cachedText) {
         try {
-          const prev = JSON.parse(dbUser.insightsCachedText) as Record<
-            string,
-            unknown
-          >;
+          const prev = JSON.parse(cachedText) as Record<string, unknown>;
           fallbackBriefing = prev.dailyBriefing ?? null;
         } catch {
           // Unparseable previous payload — nothing safe to stand in.
@@ -1547,6 +1557,7 @@ export async function generateComprehensiveInsight(
         temperature: AI_BUDGETS.comprehensive.temperature,
         maxTokens: resolveInsightsMaxTokens(),
         timeoutMs: effectiveTimeoutMs,
+        signal,
         stage: "screen-retry",
       });
       const retryInsights = parseComprehensiveResult(retry.result.content);
@@ -1588,15 +1599,10 @@ export async function generateComprehensiveInsight(
     }
   }
 
-  // v1.9.0 — the caller abandoned this generation (its bounded timeout
-  // fired and it has moved on to warm the per-status caches itself). Bail
-  // out before the cache write so a late-resolving comprehensive cannot
-  // stamp a timestamp/text the caller no longer expects. The provider call
-  // already cost what it cost; what we must NOT do now is touch the cache.
+  // The caller abandoned this generation (its bound fired). Bail out before
+  // the cache write, annotated and marked like every other failure: an
+  // abandoned generation is a real "no fresh briefing tonight" outcome.
   if (signal?.aborted) {
-    // v1.28.30 — annotated + marked like every other failure: an abandoned
-    // generation is a real "no fresh briefing tonight" outcome, and the read
-    // path needs the marker to render an honest state instead of silence.
     return failBeforeProvider(userId, locale, "aborted");
   }
 
@@ -1617,8 +1623,8 @@ export async function generateComprehensiveInsight(
     workingProviderType,
     {
       insightsCachedAt: new Date(),
-      insightsCachedText: JSON.stringify(
-        withBriefingGeneratedAt(insights, new Date()),
+      ...insightsCacheWrite(
+        JSON.stringify(withBriefingGeneratedAt(insights, new Date())),
       ),
       insightsCachedLocale: locale,
       insightsSnapshotHash: snapshotHash,

@@ -21,6 +21,7 @@ import {
   moodPairsOf,
   type CorrelationDiscoveryResponse,
 } from "./mood-discovered-relations";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * v1.12.7 — the single "What stands out" card.
@@ -45,7 +46,7 @@ export function MoodWhatStandsOut({
   const { isAuthenticated } = useAuth();
   const { t } = useTranslations();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.insightsCorrelations(),
     queryFn: async () => {
       // Correlations are statistics, never gated on AI; a rejection is a
@@ -81,6 +82,8 @@ export function MoodWhatStandsOut({
         ) : null}
         {isError ? (
           <QueryErrorRow
+            inset
+            error={error}
             slot="mood-discovery-error"
             message={t("insights.pattern.loadError")}
             onRetry={() => void refetch()}
@@ -94,12 +97,12 @@ export function MoodWhatStandsOut({
           />
         ) : null}
         {!isLoading && !isError && data && !hasDiscovered ? (
-          <p
+          <EmptyState
+            variant="plain"
+            size="compact"
+            title={t("insights.pattern.empty")}
             data-slot="mood-discovery-empty"
-            className="text-muted-foreground text-sm"
-          >
-            {t("insights.pattern.empty")}
-          </p>
+          />
         ) : null}
         {hasDiscovered && (
           <MoodDiscoveredRelations

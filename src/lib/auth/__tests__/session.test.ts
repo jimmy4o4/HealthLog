@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const cookieState = vi.hoisted(() => ({
   sessionId: undefined as string | undefined,
+  /** The session cookie under the `__Host-` name, when the browser holds one. */
+  hostSessionId: undefined as string | undefined,
   delete: vi.fn(),
   set: vi.fn(),
 }));
@@ -71,10 +73,15 @@ vi.mock("@/lib/auth/hmac", () => ({
 
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({
-    get: (name: string) =>
-      name === "healthlog_session" && cookieState.sessionId
-        ? { value: cookieState.sessionId }
-        : undefined,
+    get: (name: string) => {
+      if (name === "healthlog_session" && cookieState.sessionId) {
+        return { value: cookieState.sessionId };
+      }
+      if (name === "__Host-healthlog_session" && cookieState.hostSessionId) {
+        return { value: cookieState.hostSessionId };
+      }
+      return undefined;
+    },
     set: cookieState.set,
     delete: cookieState.delete,
   })),
@@ -86,9 +93,27 @@ import {
   createSession,
   destroyAllSessions,
   destroySession,
+  validateSessionFromCookieValue,
+  validateSessionWithCreatedAt,
 } from "../session";
+import { SessionStoreUnavailableError } from "@/lib/api-errors";
+
+/** A cookie value in the shape `mintSessionSecret` produces. */
+const SECRET = `hls_${"a".repeat(64)}`;
+const FORGED_SECRET = `hls_${"b".repeat(64)}`;
+const UNKNOWN_SECRET = `hls_${"c".repeat(64)}`;
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Both session cookie names were expired, the `__Host-` one as `Secure`. */
+function expectSessionCookiesExpired() {
+  expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+  expect(cookieState.set).toHaveBeenCalledWith(
+    "__Host-healthlog_session",
+    "",
+    expect.objectContaining({ maxAge: 0, path: "/", secure: true }),
+  );
+}
 
 function seed(row: Partial<SessionRow> & { id: string }): SessionRow {
   const full: SessionRow = {
@@ -107,6 +132,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   store.sessions = [];
   cookieState.sessionId = "sess-expired";
+  cookieState.hostSessionId = undefined;
   // `clearAllMocks` drops recorded calls but keeps implementations, so a
   // rejection staged by one test would otherwise leak into the next. Re-arm
   // the write mocks with a benign default each time.
@@ -152,21 +178,21 @@ describe("createSession", () => {
 
 describe("getSession — cookie resolution", () => {
   it("resolves a modern cookie by its hash, not by primary key", async () => {
-    const row = seed({ id: "sess_cuid_1", tokenHash: "hash:hls_abc" });
-    cookieState.sessionId = "hls_abc";
+    const row = seed({ id: "sess_cuid_1", tokenHash: `hash:${SECRET}` });
+    cookieState.sessionId = SECRET;
 
     const result = await getSession();
 
     expect(result?.session.id).toBe(row.id);
     // The lookup went through the hash column.
     expect(prisma.session.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { tokenHash: "hash:hls_abc" } }),
+      expect.objectContaining({ where: { tokenHash: `hash:${SECRET}` } }),
     );
   });
 
   it("refuses a modern-shaped cookie whose hash matches nothing", async () => {
     seed({ id: "sess_cuid_1", tokenHash: "hash:hls_real" });
-    cookieState.sessionId = "hls_forged";
+    cookieState.sessionId = FORGED_SECRET;
 
     await expect(getSession()).resolves.toBeNull();
   });
@@ -195,14 +221,105 @@ describe("getSession — cookie resolution", () => {
   });
 });
 
+describe("the session cookie's name on a Secure install", () => {
+  // A cookie named `healthlog_session` can be planted by any host under the
+  // same registrable domain; one named `__Host-…` only by this host, and only
+  // when Secure, on Path=/, without Domain.
+  beforeEach(() => {
+    vi.stubEnv("SESSION_COOKIE_SECURE", "true");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("issues a new session as __Host-healthlog_session, Secure, on /, without Domain", async () => {
+    cookieState.sessionId = undefined;
+    await createSession("user-1", false);
+    const issued = cookieState.set.mock.calls.find(
+      (c) => c[0] === "__Host-healthlog_session",
+    );
+    expect(issued?.[1]).toMatch(/^hls_[0-9a-f]{64}$/);
+    expect(issued?.[2]).toMatchObject({ secure: true, path: "/" });
+    expect(issued?.[2]).not.toHaveProperty("domain");
+    expect(
+      cookieState.set.mock.calls.some((c) => c[0] === "healthlog_session"),
+    ).toBe(false);
+  });
+
+  it("keeps a session found under the old name, and re-issues it under the new one", async () => {
+    seed({ id: "sess_cuid_1", tokenHash: `hash:${SECRET}` });
+    cookieState.sessionId = SECRET;
+
+    const result = await getSession();
+
+    expect(result?.session.id).toBe("sess_cuid_1");
+    expect(cookieState.set).toHaveBeenCalledWith(
+      "__Host-healthlog_session",
+      SECRET,
+      expect.objectContaining({ secure: true, path: "/" }),
+    );
+    expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+  });
+
+  it("answers from the __Host- cookie when a planted old-name cookie rides along", async () => {
+    seed({ id: "sess_mine", tokenHash: `hash:${SECRET}` });
+    seed({
+      id: "sess_planted",
+      userId: "attacker",
+      tokenHash: `hash:${FORGED_SECRET}`,
+    });
+    cookieState.hostSessionId = SECRET;
+    cookieState.sessionId = FORGED_SECRET;
+
+    const result = await getSession();
+
+    expect(result?.session.id).toBe("sess_mine");
+  });
+
+  it("logs out both names", async () => {
+    seed({ id: "sess_cuid_1", tokenHash: `hash:${SECRET}` });
+    cookieState.hostSessionId = SECRET;
+    cookieState.sessionId = undefined;
+    await destroySession();
+    expect(prisma.session.delete).toHaveBeenCalledWith({
+      where: { id: "sess_cuid_1" },
+    });
+    expectSessionCookiesExpired();
+  });
+});
+
+describe("the session cookie's name on a plain-HTTP install", () => {
+  beforeEach(() => {
+    vi.stubEnv("SESSION_COOKIE_SECURE", "false");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps the old name, which a browser accepts without Secure", async () => {
+    cookieState.sessionId = undefined;
+    await createSession("user-1", false);
+    expect(
+      cookieState.set.mock.calls.some(
+        (c) => c[0] === "healthlog_session" && c[2]?.secure === false,
+      ),
+    ).toBe(true);
+    expect(
+      cookieState.set.mock.calls.some(
+        (c) => c[0] === "__Host-healthlog_session",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("getSession — sliding expiry", () => {
   it("extends a modern session and re-emits the same secret", async () => {
     seed({
       id: "sess_cuid_1",
-      tokenHash: "hash:hls_abc",
+      tokenHash: `hash:${SECRET}`,
       expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
     });
-    cookieState.sessionId = "hls_abc";
+    cookieState.sessionId = SECRET;
 
     await getSession();
 
@@ -212,7 +329,7 @@ describe("getSession — sliding expiry", () => {
     const cookieValue = cookieState.set.mock.calls.find(
       (c) => c[0] === "healthlog_session",
     )![1];
-    expect(cookieValue).toBe("hls_abc");
+    expect(cookieValue).toBe(SECRET);
   });
 
   it("withholds the extension from a legacy session so the id path drains", async () => {
@@ -249,8 +366,135 @@ describe("getSession", () => {
     expect(prisma.session.deleteMany).toHaveBeenCalledWith({
       where: { id: "sess-expired" },
     });
-    expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+    expectSessionCookiesExpired();
     expect(cookieState.delete).toHaveBeenCalledWith("hl_onboarding");
+  });
+});
+
+describe("a session lookup that fails is not a missing session", () => {
+  // A dropped connection used to fold into `null`, which every caller reads
+  // as "signed out": the route answered 401 and the client discarded a good
+  // credential because the database blinked.
+  function failLookup() {
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      Object.assign(new Error("Can't reach database server"), {
+        code: "P1001",
+      }) as never,
+    );
+  }
+
+  it("getSession raises a 503 with a retryable code", async () => {
+    cookieState.sessionId = SECRET;
+    failLookup();
+    const err = await getSession().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionStoreUnavailableError);
+    expect(err).toMatchObject({
+      statusCode: 503,
+      errorCode: "auth.session.unavailable",
+    });
+    // Nothing about the browser's credential changes on a fault.
+    expect(cookieState.delete).not.toHaveBeenCalled();
+  });
+
+  it("validateSessionFromCookieValue raises instead of answering null", async () => {
+    failLookup();
+    await expect(validateSessionFromCookieValue(SECRET)).rejects.toBeInstanceOf(
+      SessionStoreUnavailableError,
+    );
+  });
+
+  it("validateSessionWithCreatedAt raises instead of answering null", async () => {
+    failLookup();
+    await expect(validateSessionWithCreatedAt(SECRET)).rejects.toBeInstanceOf(
+      SessionStoreUnavailableError,
+    );
+  });
+
+  it("raises for a pool that had no connection free (P2024)", async () => {
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      Object.assign(new Error("connection pool exhausted"), {
+        code: "P2024",
+      }) as never,
+    );
+    await expect(validateSessionFromCookieValue(SECRET)).rejects.toBeInstanceOf(
+      SessionStoreUnavailableError,
+    );
+  });
+
+  it("raises for the pool's own connect timeout, which carries no code", async () => {
+    // pg-pool rejects with exactly this message and nothing else; the driver
+    // adapter hands it through unchanged.
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      new Error("timeout exceeded when trying to connect") as never,
+    );
+    await expect(validateSessionFromCookieValue(SECRET)).rejects.toBeInstanceOf(
+      SessionStoreUnavailableError,
+    );
+  });
+
+  it.each([
+    ["53300", "sorry, too many clients already"],
+    ["55P03", "canceling statement due to lock timeout"],
+    ["53200", "out of memory"],
+  ])("raises for SQLSTATE %s, which is about the store", async (state, msg) => {
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      Object.assign(new Error(msg), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: state } } },
+      }) as never,
+    );
+    await expect(validateSessionFromCookieValue(SECRET)).rejects.toBeInstanceOf(
+      SessionStoreUnavailableError,
+    );
+  });
+
+  it("answers null for a Prisma validation refusal", async () => {
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      Object.assign(new Error("Invalid value provided"), {
+        name: "PrismaClientValidationError",
+      }) as never,
+    );
+    await expect(validateSessionFromCookieValue(SECRET)).resolves.toBe(null);
+  });
+
+  it("answers null, not 503, when the query refused the value itself", async () => {
+    // Postgres 22021: a byte sequence it will not accept in text. Nothing is
+    // wrong with the store; a 503 here would let any anonymous caller produce
+    // server errors on demand.
+    vi.mocked(prisma.session.findUnique).mockRejectedValueOnce(
+      Object.assign(new Error("invalid byte sequence for encoding"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "22021" } } },
+      }) as never,
+    );
+    await expect(validateSessionFromCookieValue("sess_legacy")).resolves.toBe(
+      null,
+    );
+  });
+
+  it.each([
+    ["a NUL byte", "\u0000"],
+    ["a percent-encoded NUL", "%00"],
+    ["a short secret", "hls_abc"],
+    ["a secret with non-hex", `hls_${"z".repeat(64)}`],
+    ["an overlong legacy id", "c".repeat(65)],
+  ])("never asks the database about %s", async (_name, value) => {
+    vi.mocked(prisma.session.findUnique).mockClear();
+    await expect(validateSessionFromCookieValue(value)).resolves.toBe(null);
+    expect(prisma.session.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("still answers null for a cookie that matches nothing", async () => {
+    await expect(validateSessionFromCookieValue(UNKNOWN_SECRET)).resolves.toBe(
+      null,
+    );
+  });
+
+  it("logout still clears the cookie when the lookup fails", async () => {
+    cookieState.sessionId = SECRET;
+    failLookup();
+    await expect(destroySession()).resolves.toBeUndefined();
+    expectSessionCookiesExpired();
   });
 });
 
@@ -258,15 +502,15 @@ describe("destroySession", () => {
   it("deletes the row the secret resolves to, not the cookie value", async () => {
     // The cookie is no longer the primary key, so a logout that deletes by
     // cookie value would no-op and leave the session alive.
-    seed({ id: "sess_cuid_1", tokenHash: "hash:hls_abc" });
-    cookieState.sessionId = "hls_abc";
+    seed({ id: "sess_cuid_1", tokenHash: `hash:${SECRET}` });
+    cookieState.sessionId = SECRET;
 
     await destroySession();
 
     expect(prisma.session.delete).toHaveBeenCalledWith({
       where: { id: "sess_cuid_1" },
     });
-    expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+    expectSessionCookiesExpired();
   });
 
   it("logs a legacy cookie out too", async () => {
@@ -292,7 +536,7 @@ describe("destroySession", () => {
     expect(prisma.session.delete).toHaveBeenCalledWith({
       where: { id: "sess-gone" },
     });
-    expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+    expectSessionCookiesExpired();
     expect(cookieState.delete).toHaveBeenCalledWith("hl_onboarding");
   });
 
@@ -306,7 +550,7 @@ describe("destroySession", () => {
     // A non-P2025 delete failure is recorded on the wide event, not thrown,
     // so logout never leaves the client authenticated with the cookie intact.
     await expect(destroySession()).resolves.toBeUndefined();
-    expect(cookieState.delete).toHaveBeenCalledWith("healthlog_session");
+    expectSessionCookiesExpired();
     expect(cookieState.delete).toHaveBeenCalledWith("hl_onboarding");
   });
 });

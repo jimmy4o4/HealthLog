@@ -3,16 +3,9 @@
 import { useState, type ComponentType } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import {
-  Activity,
-  Flame,
-  Gauge,
-  HeartPulse,
-  Moon,
-  RefreshCw,
-} from "lucide-react";
+import { Activity, Flame, Gauge, HeartPulse, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslations } from "@/lib/i18n/context";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -24,6 +17,8 @@ import type { ScoreBand } from "./band-tokens";
 import type { ReadinessValue } from "@/lib/insights/derived/readiness";
 import type { SleepScoreValue } from "@/lib/insights/derived/sleep-score";
 import type { WellnessScoreValue } from "@/lib/insights/derived/wellness-scores";
+import { TileHeader } from "@/components/insights/tile-header";
+import { Card } from "@/components/ui/card";
 
 /**
  * v1.10.0 — the wellness-scores strip.
@@ -65,6 +60,8 @@ interface ScoreStripProps {
    * Vitals slot).
    */
   isError?: boolean;
+  /** The batch query's error, which decides what the error row offers. */
+  error?: unknown;
   /** Refetch the one shared batch query. Recovers both strips at once. */
   refetch?: () => void;
   /**
@@ -157,12 +154,7 @@ function RingTile({
         animate && "wellness-tile-rise",
       )}
     >
-      <div className="text-foreground flex items-center gap-2">
-        <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-        <span className="truncate text-base leading-none font-semibold">
-          {label}
-        </span>
-      </div>
+      <TileHeader icon={Icon} title={label} />
       <div className="flex flex-col items-center gap-1.5">
         {/* The ring keeps just the number centred; the metric name lives in
             the header above. The per-metric `hue` gradient leans the arc
@@ -247,10 +239,10 @@ function historyOf(
  */
 function WellnessScoreTileSkeleton() {
   return (
-    <div
+    <Card
       data-slot="wellness-score-tile-skeleton"
       aria-hidden="true"
-      className="bg-card border-border flex flex-col gap-4 rounded-xl border p-4 md:p-6"
+      className="gap-4 px-4 md:gap-4 md:px-6"
     >
       <div className="flex items-center gap-2">
         <Skeleton className="h-5 w-5 rounded" />
@@ -265,7 +257,7 @@ function WellnessScoreTileSkeleton() {
         <Skeleton className="h-10 w-full" />
         <Skeleton className="mx-auto h-3 w-20" />
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -273,6 +265,7 @@ export function WellnessScores({
   read,
   isLoading,
   isError = false,
+  error = null,
   refetch,
   extraTile,
   hideStrain = false,
@@ -351,24 +344,13 @@ export function WellnessScores({
           title={t("insights.derived.scores.sectionTitle")}
           subtitle={t("insights.derived.scores.sectionSubtitle")}
         />
-        <div
-          data-slot="wellness-scores-error"
-          role="alert"
-          className="bg-card border-border text-muted-foreground flex flex-col items-start gap-3 rounded-xl border p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
-        >
-          <span>{t("insights.derived.scores.loadError")}</span>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => refetch?.()}
-            data-slot="wellness-scores-retry"
-            className="gap-1.5"
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{t("common.retry")}</span>
-          </Button>
-        </div>
+        <QueryErrorRow
+          error={error}
+          slot="wellness-scores-error"
+          retrySlot="wellness-scores-retry"
+          message={t("insights.derived.scores.loadError")}
+          onRetry={() => refetch?.()}
+        />
       </section>
     );
   }

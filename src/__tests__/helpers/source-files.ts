@@ -50,18 +50,87 @@
  * worktrees, each a full second copy of the tree that would double every
  * match. Every caller roots at `src/`, `e2e/` or a subtree of one.
  */
-import { readdirSync, readFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+
+// ── The shared source index ────────────────────────────────────────────────
+//
+// The guards walk and read the same tree, and the guards project shares one
+// module graph per worker (`isolate: false`), so every walk and every read
+// below is memoised for the life of the worker: the tree is listed once per
+// top-level folder and each file is read once, however many guards ask. A
+// guard that walked `src/` and read every file again for each pattern it
+// tried ran for fifteen seconds; the same questions over the index take a
+// fraction of one.
+//
+// Only folders of the repository that do not change while tests run are
+// indexed (`INDEXED_ROOTS`). A walk or a read anywhere else (a temporary
+// fixture tree a test writes and rewrites) goes to the disk every time.
+
+const INDEXED_ROOTS = ["src", "e2e", "prisma"].map((dir) =>
+  resolve(process.cwd(), dir),
+);
+
+function indexedRootOf(path: string): string | null {
+  const absolute = resolve(path);
+  return (
+    INDEXED_ROOTS.find(
+      (root) => absolute === root || absolute.startsWith(`${root}${sep}`),
+    ) ?? null
+  );
+}
+
+const listingCache = new Map<string, string[]>();
+
+/** Every entry under `root`, posix-separated, sorted; memoised when indexed. */
+function listTree(root: string): string[] {
+  const absolute = resolve(root);
+  const anchor = indexedRootOf(absolute);
+  if (anchor === null) {
+    return readdirSync(absolute, { recursive: true })
+      .map((entry) => String(entry).split(sep).join("/"))
+      .sort();
+  }
+  let all = listingCache.get(anchor);
+  if (all === undefined) {
+    all = readdirSync(anchor, { recursive: true })
+      .map((entry) => String(entry).split(sep).join("/"))
+      .sort();
+    listingCache.set(anchor, all);
+  }
+  if (absolute === anchor) return all;
+  const prefix = `${relative(anchor, absolute).split(sep).join("/")}/`;
+  return all
+    .filter((rel) => rel.startsWith(prefix))
+    .map((rel) => rel.slice(prefix.length));
+}
+
+const textCache = new Map<string, string>();
+
+/**
+ * A repository file's text, read once per worker when it lies in an indexed
+ * folder. Use it in place of `readFileSync(path, "utf8")` for source the
+ * guard reads and never writes.
+ */
+export function readSourceText(path: string): string {
+  const absolute = resolve(path);
+  if (indexedRootOf(absolute) === null) return readFileSync(absolute, "utf8");
+  let text = textCache.get(absolute);
+  if (text === undefined) {
+    text = readFileSync(absolute, "utf8");
+    textCache.set(absolute, text);
+  }
+  return text;
+}
 
 export function walkSourceFiles(
   root: string,
   options: { floor: number; extensions?: readonly string[] },
 ): string[] {
   const extensions = options.extensions ?? [".ts", ".tsx"];
-  const files = readdirSync(root, { recursive: true })
-    .map((entry) => String(entry).split(sep).join("/"))
-    .filter((rel) => extensions.some((ext) => rel.endsWith(ext)))
-    .sort();
+  const files = listTree(root).filter((rel) =>
+    extensions.some((ext) => rel.endsWith(ext)),
+  );
 
   if (files.length < options.floor) {
     throw new Error(
@@ -75,70 +144,192 @@ export function walkSourceFiles(
 }
 
 /**
- * A source file with its comments removed, line comments FIRST.
+ * A source file with its comments removed, read the way the compiler reads it.
  *
- * The order is the whole reason this is shared rather than re-spelled per
- * guard. Every private copy in this directory strips block comments first,
- * with one non-greedy `/\*[\s\S]*?\*\//` pass, and that pass cannot tell a
- * real block opener from a `/*` that happens to sit inside a line comment.
- * This tree has one: `src/app/mood/page-client.tsx` explains its gate with
- * "Every `/api/mood-entries/*` route also enforces the gate", and the `/*` in
- * that path opened a fake block that swallowed the next 2.2 kB of real code —
- * the module gate three lines below it included. A guard reading that source
- * was searching a file with a hole in it and reporting a clean sweep.
+ * Shared rather than re-spelled per guard because the per-guard copies were
+ * one or two regular expressions, and every spelling was wrong somewhere:
+ *   - block comments stripped first, with one non-greedy pass, cannot tell a
+ *     real opener from a `/*` inside a line comment. `src/app/mood/
+ *     page-client.tsx` explains its gate with "Every `/api/mood-entries/*`
+ *     route also enforces the gate", and that `/*` opened a fake block that
+ *     swallowed the next 2.2 kB of real code, the module gate included;
+ *   - a scanner that takes the first opener on a line still opens a block at
+ *     a `/*` inside a string, which every e2e route glob (`"**\/api/*"`) has;
+ *   - a line comment matched only at the start of a line keeps a trailing
+ *     `// …` after code, and one matched anywhere eats `https://`.
  *
- * So each line is walked once, left to right: whichever opener comes first
- * wins, a line comment ends the line, and a block comment carries its state to
- * the next one. Line-comment detection needs `//` at the start of a line or
- * after whitespace, so a URL inside a string survives.
+ * So the text is scanned once, left to right, knowing what the parser knows:
+ * strings, template literals (with their `${…}` expressions, which may hold
+ * comments), and regular expressions keep every character, and a `/*` or
+ * `//` inside any of them opens nothing. A slash starts a regular expression
+ * where the language allows one: after an operator, an opening bracket, a
+ * keyword such as `return`, or at the start. Line breaks are kept, so a line
+ * number read off the result is the file's own.
  *
- * Its honest limit: it is a scanner, not a parser. A `/*` inside a string
- * literal still opens a block, and a guard that needs more than this needs a
- * real parse.
+ * It is a scanner, not the parser, and is held to the parser instead of
+ * trusted: `strip-comments-parity.test.ts` strips every source file both
+ * ways and fails on the first that differs. `//` right after a `:` is read
+ * as part of a URL in JSX text, never as a comment. CSS, which has no line
+ * comments, is stripped of its block comments only (pass its `fileName`).
  */
-export function stripComments(source: string): string {
-  const lines: string[] = [];
-  let inBlock = false;
-
-  for (const line of source.split("\n")) {
-    let rest = line;
-    let kept = "";
-
-    while (rest.length > 0) {
-      if (inBlock) {
-        const closes = rest.indexOf("*/");
-        if (closes === -1) break;
-        rest = rest.slice(closes + 2);
-        inBlock = false;
-        continue;
-      }
-
-      const lineComment = rest.search(/(^|\s)\/\//);
-      const blockComment = rest.indexOf("/*");
-
-      if (
-        blockComment !== -1 &&
-        (lineComment === -1 || blockComment < lineComment)
+export function stripComments(source: string, fileName?: string): string {
+  if (fileName?.endsWith(".css")) {
+    return source.replace(/\/\*[\s\S]*?\*\//g, blankKeepingLines);
+  }
+  const text = source;
+  const n = text.length;
+  let out = "";
+  let i = 0;
+  // Template nesting: "template" for a template body, a number for the brace
+  // depth of the `${…}` expression being read, restored when it closes.
+  const stack: Array<"template" | number> = [];
+  let depth = 0;
+  while (i < n) {
+    const top = stack[stack.length - 1];
+    if (top === "template") {
+      let j = i;
+      while (
+        j < n &&
+        text[j] !== "`" &&
+        !(text[j] === "$" && text[j + 1] === "{")
       ) {
-        kept += rest.slice(0, blockComment);
-        rest = rest.slice(blockComment + 2);
-        inBlock = true;
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      out += text.slice(i, Math.min(j, n));
+      if (j >= n) break;
+      if (text[j] === "`") {
+        stack.pop();
+        out += "`";
+        i = j + 1;
         continue;
       }
-
-      if (lineComment !== -1) {
-        kept += rest.slice(0, rest.indexOf("//", lineComment));
-        break;
-      }
-
-      kept += rest;
-      break;
+      stack.push(depth);
+      depth = 0;
+      out += "${";
+      i = j + 2;
+      continue;
     }
 
-    lines.push(kept);
-  }
+    SPECIAL.lastIndex = i;
+    const found = SPECIAL.exec(text);
+    if (!found) {
+      out += text.slice(i);
+      break;
+    }
+    const j = found.index;
+    out += text.slice(i, j);
+    const c = text[j];
+    const next = text[j + 1];
 
-  return lines.join("\n");
+    if (c === "/" && next === "/" && text[j - 1] !== ":") {
+      const end = text.indexOf("\n", j);
+      i = end === -1 ? n : end;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const close = text.indexOf("*/", j + 2);
+      const end = close === -1 ? n : close + 2;
+      out += blankKeepingLines(text.slice(j, end));
+      i = end;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let end = j + 1;
+      while (end < n && text[end] !== c && text[end] !== "\n") {
+        end += text[end] === "\\" ? 2 : 1;
+      }
+      if (text[end] === c) end += 1;
+      out += text.slice(j, end);
+      i = end;
+      continue;
+    }
+    if (c === "`") {
+      stack.push("template");
+      out += "`";
+      i = j + 1;
+      continue;
+    }
+    if (c === "/") {
+      const end = regexMayStart(out) ? regexEnd(text, j) : -1;
+      if (end !== -1) {
+        out += text.slice(j, end);
+        i = end;
+        continue;
+      }
+      out += "/";
+      i = j + 1;
+      continue;
+    }
+    if (c === "{") {
+      depth += 1;
+    } else if (depth === 0 && typeof top === "number") {
+      depth = stack.pop() as number;
+    } else {
+      depth -= 1;
+    }
+    out += c;
+    i = j + 1;
+  }
+  return out;
+}
+
+const SPECIAL = /[/'"`{}]/g;
+const WORD = /[A-Za-z_$0-9]/;
+const REGEX_AFTER = new Set("(,=:[!&|?{};+-*%<>~^".split(""));
+const REGEX_KEYWORDS = new Set([
+  "return",
+  "typeof",
+  "case",
+  "do",
+  "else",
+  "in",
+  "of",
+  "void",
+  "yield",
+  "await",
+  "delete",
+  "instanceof",
+  "new",
+  "throw",
+]);
+
+function blankKeepingLines(comment: string): string {
+  return comment.replace(/[^\n]/g, "");
+}
+
+/** Whether a `/` after this code starts a regular expression. */
+function regexMayStart(code: string): boolean {
+  let k = code.length - 1;
+  while (k >= 0 && /\s/.test(code[k]!)) k -= 1;
+  if (k < 0) return true;
+  const last = code[k]!;
+  if (REGEX_AFTER.has(last)) return true;
+  if (!WORD.test(last)) return false;
+  let start = k;
+  while (start > 0 && WORD.test(code[start - 1]!)) start -= 1;
+  return REGEX_KEYWORDS.has(code.slice(start, k + 1));
+}
+
+/** The end of the regular expression opening at `start`, or -1 if none. */
+function regexEnd(text: string, start: number): number {
+  let end = start + 1;
+  let inClass = false;
+  while (end < text.length && text[end] !== "\n") {
+    const ch = text[end];
+    if (ch === "\\") {
+      end += 2;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) {
+      end += 1;
+      while (end < text.length && /[a-z]/i.test(text[end]!)) end += 1;
+      return end;
+    }
+    end += 1;
+  }
+  return -1;
 }
 
 /**
@@ -216,7 +407,7 @@ export function scanSourceMatches(
 
   const matches: SourceMatch[] = [];
   for (const file of files) {
-    const raw = readFileSync(join(root, file), "utf8");
+    const raw = readSourceText(join(root, file));
     const source = options.stripComments ? stripComments(raw) : raw;
     for (const m of source.matchAll(pattern)) {
       const line = source.slice(0, m.index).split("\n").length;
@@ -228,4 +419,83 @@ export function scanSourceMatches(
     matches,
     options.matchFloor,
   ) as SourceMatch[];
+}
+
+/** Something a file must still contain for a read of it to mean anything. */
+export type SourceAnchor = string | RegExp;
+
+function anchorCount(text: string, anchor: SourceAnchor): number {
+  if (typeof anchor === "string") return text.split(anchor).length - 1;
+  const flags = anchor.flags.includes("g") ? anchor.flags : `${anchor.flags}g`;
+  return [...text.matchAll(new RegExp(anchor.source, flags))].length;
+}
+
+/**
+ * Read one source file by path, and prove it is still the file the guard is
+ * about.
+ *
+ * A guard that reads a fixed path and asserts that something is ABSENT
+ * (`expect(source).not.toMatch(…)`) is green on a file that has been split:
+ * the code it watched moved next door, the old path holds whatever is left,
+ * and the absence is true for the wrong reason. A missing file at least
+ * throws; a file that kept its name but lost its contents does not.
+ *
+ * So the caller names at least one anchor: a string or pattern the watched
+ * code itself carries (the function the guard is about, the call it pins).
+ * Every anchor must match at least once, or this throws and names the file,
+ * which is the moment to point the guard at the new home (or at a folder
+ * with `readSourceFolder`). `rel` is relative to the repository root.
+ */
+export function readSource(
+  rel: string,
+  anchors: SourceAnchor | readonly SourceAnchor[],
+): string {
+  const list = (Array.isArray(anchors) ? anchors : [anchors]) as SourceAnchor[];
+  if (list.length === 0) {
+    throw new Error(
+      `readSource(${rel}): name at least one anchor the watched code carries.`,
+    );
+  }
+  const path = join(process.cwd(), rel);
+  if (!existsSync(path)) {
+    throw new Error(
+      `readSource(${rel}): the file does not exist. If it was split or moved, ` +
+        `point the guard at the new location or scan the folder with ` +
+        `readSourceFolder and a floor.`,
+    );
+  }
+  const text = readSourceText(path);
+  const lost = list.filter((anchor) => anchorCount(text, anchor) === 0);
+  if (lost.length > 0) {
+    throw new Error(
+      `readSource(${rel}): the file no longer contains ${lost
+        .map(String)
+        .join(", ")}. The code this guard watches has moved; a negative ` +
+        `assertion on this file would now pass for the wrong reason.`,
+    );
+  }
+  return text;
+}
+
+/**
+ * Read every source file under a folder (relative to the repository root),
+ * with a floor on how many it found: the folder-scan form of `readSource`
+ * for a guard whose subject was split into several files. Returns
+ * `[path relative to the folder, text]` pairs, sorted.
+ */
+export function readSourceFolder(
+  relDir: string,
+  options: {
+    floor: number;
+    include?: (rel: string) => boolean;
+    extensions?: readonly string[];
+  },
+): Array<[string, string]> {
+  const root = join(process.cwd(), relDir);
+  const files = walkSourceFiles(root, {
+    floor: options.floor,
+    extensions: options.extensions,
+  }).filter(options.include ?? (() => true));
+  requireFloor(`readSourceFolder(${relDir})`, files, options.floor);
+  return files.map((rel) => [rel, readSourceText(join(root, rel))]);
 }

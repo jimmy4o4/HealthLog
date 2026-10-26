@@ -85,7 +85,7 @@ export async function readDailySeries(opts: {
       tiered = await readTieredRollupSeries({
         userId,
         type,
-        // v1.26.0 SEAM-N2 — pass the resolved `[from, to]` bounds so the tier
+        // v1.26.0 — pass the resolved `[from, to]` bounds so the tier
         // reads the REQUESTED window (which may be entirely historic), not a
         // trailing "to now" slice. `windowDaysFull` still gates entry above and
         // drives the tier width inside the reader.
@@ -104,7 +104,7 @@ export async function readDailySeries(opts: {
       });
     }
     if (tiered && tiered.rows.length > 0) {
-      return tiered.rows;
+      return withLiveHead(tiered, { userId, type, from, priorityJson, opts });
     }
     // Coverage miss at every tier — fall through to the daily path, which
     // folds the live table. The daily fallback still caps at `cap`; the
@@ -144,6 +144,88 @@ export async function readDailySeries(opts: {
     meta: { total: rows.length, type, aggregate: "daily", source: "live" },
   });
   return rows;
+}
+
+/** The shortest bucket of a live grain, in days (a month is at least 28). */
+const GRAIN_MIN_DAYS: Record<Exclude<AggregateGrain, "raw">, number> = {
+  daily: 1,
+  weekly: 7,
+  monthly: 28,
+};
+
+/** The live grain that matches a rollup tier's buckets. */
+const TIER_GRAIN: Record<string, Exclude<AggregateGrain, "raw">> = {
+  DAY: "daily",
+  WEEK: "weekly",
+  MONTH: "monthly",
+};
+
+/**
+ * The tiered rollup rows, with the window's older history in front of them.
+ *
+ * Rollups are kept for the last five years (`ROLLUP_FOLD_WINDOW_MS`), so on
+ * a record that goes back further the tier read starts where they start, and
+ * the "All" range showed nothing before it: a weight history from 2015
+ * charted from late 2021. The readings older than the first rollup day are
+ * folded live, at the tier's grain, and lead the series. One indexed lookup
+ * when there are none.
+ */
+async function withLiveHead(
+  tiered: NonNullable<Awaited<ReturnType<typeof readTieredRollupSeries>>>,
+  ctx: {
+    userId: string;
+    type: MeasurementType;
+    from: Date;
+    priorityJson: unknown;
+    opts: { timeZone?: string };
+  },
+): Promise<DailySeriesRow[]> {
+  const { userId, type, from, priorityJson } = ctx;
+  const grain = TIER_GRAIN[tiered.granularity];
+  // The first tier row's bucket holds the first rollup day; the head ends
+  // where that bucket starts, so no reading is counted in both.
+  const firstRowAt = new Date(tiered.rows[0]!.measuredAt);
+  const headEnd = new Date(
+    Math.min(tiered.firstDay.getTime(), firstRowAt.getTime() - 12 * 3_600_000),
+  );
+  if (!grain || headEnd <= from) return tiered.rows;
+  const older = await prisma.measurement.findFirst({
+    where: {
+      userId,
+      type,
+      deletedAt: null,
+      measuredAt: { gte: from, lt: headEnd },
+    },
+    select: { id: true },
+  });
+  if (!older) return tiered.rows;
+  const timeZone = ctx.opts.timeZone ?? (await resolveUserTimezone(userId));
+  const head = await readLiveBuckets({
+    userId,
+    type,
+    from,
+    to: new Date(headEnd.getTime() - 1),
+    // Enough buckets for the whole head (the grain's default cap is sized
+    // for a window, and the head of an "All" range can be years long).
+    cap: Math.max(
+      BUCKET_CAP[grain],
+      Math.ceil(
+        (headEnd.getTime() - from.getTime()) /
+          (GRAIN_MIN_DAYS[grain] * 86_400_000),
+      ) + 2,
+    ),
+    priorityJson,
+    grain,
+    timeZone,
+  });
+  annotate({
+    meta: {
+      tiered_series_live_head: head.length,
+      type,
+      granularity: tiered.granularity,
+    },
+  });
+  return [...head, ...tiered.rows];
 }
 
 /** SQL `date_trunc` unit per aggregate grain (a closed map, never input). */
@@ -217,13 +299,22 @@ export async function readLiveBuckets(opts: {
   // the user's zone and truncate there.
   //
   // The canonical source is chosen per local DAY, whatever the grain: each
-  // source is folded per day in one hashed pass (a few rows per day, however
-  // dense the stream), each day keeps its ladder-canonical source, and only
-  // then are the days folded into the week or month. Picking the source per
+  // source is folded per hour and then per day in hashed passes (a few rows
+  // per day, however dense the stream), each day keeps its ladder-canonical
+  // source, and only then are the days folded into the week or month. Picking the source per
   // week or month instead dropped every day the losing source carried, so a
   // month of manual readings plus one synced reading reported one day.
   // Folding first and picking second is the same result as collapsing the
   // raw rows first; it just never sorts more than one row per source per day.
+  //
+  // One chain of folds over one scan, no join. The hour means used to be a
+  // second scan joined back to the per-source days before the pick; on a
+  // measurements table without planner statistics (a new install, an import
+  // under the autoanalyze threshold) that join ran as a nested loop that
+  // re-ran the hour fold for every source day, and a ten-year read of every
+  // type ran into the statement timeout.
+  // `tests/integration/per-source-fold-parity.test.ts` holds the joined
+  // statement as the reference.
   const buckets = await prisma.$queryRaw<
     Array<{
       type: string;
@@ -234,13 +325,20 @@ export async function readLiveBuckets(opts: {
       max_value: number | null;
     }>
   >`
-    WITH per_source AS (
+    -- Each source's readings fold per local hour, then the hours per local
+    -- day. A day of a type with an activity-dependent sampling rate is the
+    -- weighted mean of its local hours' means, not the mean of its readings:
+    -- a workout hour holds hundreds of times as many readings as a resting
+    -- one. NULL for every other type.
+    WITH per_hour AS (
       SELECT
         m."type",
         m."source",
         date_trunc('day', (m."measured_at" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}) AS day,
+        date_trunc('hour', (m."measured_at" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}) AS hr,
         SUM(m."value")::double precision AS total,
-        COUNT(*)::int AS cnt,
+        COUNT(*) AS n,
+        AVG(m."value") AS hour_mean,
         MIN(m."value") AS min_value,
         MAX(m."value") AS max_value
       FROM measurements m
@@ -249,40 +347,25 @@ export async function readLiveBuckets(opts: {
         AND m."measured_at" <= ${to}
         AND m."deleted_at" IS NULL
         ${typeFilter}
-      GROUP BY m."type", m."source", 3
+      GROUP BY m."type", m."source", 3, 4
     ),
-    -- A day of a type with an activity-dependent sampling rate is the weighted
-    -- mean of its local hours' means, not the mean of its readings: a workout
-    -- hour holds hundreds of times as many readings as a resting one.
-    -- Empty for every other type.
-    hour_mean AS (
-      SELECT h."type", h."source", h.day,
-             ${dayOfHours}::double precision AS day_mean
-      FROM (
-        SELECT
-          m."type",
-          m."source",
-          date_trunc('day', (m."measured_at" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}) AS day,
-          date_trunc('hour', (m."measured_at" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}) AS hr,
-          AVG(m."value") AS hour_mean,
-          COUNT(*) AS n
-        FROM measurements m
-        WHERE m."user_id" = ${userId}
-          AND m."measured_at" >= ${from}
-          AND m."measured_at" <= ${to}
-          AND m."deleted_at" IS NULL
-          AND m."type" IN (${hourlyMeanList})
-          ${typeFilter}
-        GROUP BY m."type", m."source", 3, 4
-      ) h
+    per_source AS (
+      SELECT
+        h."type",
+        h."source",
+        h.day,
+        SUM(h.total)::double precision AS total,
+        SUM(h.n)::int AS cnt,
+        MIN(h.min_value) AS min_value,
+        MAX(h.max_value) AS max_value,
+        (CASE WHEN h."type" IN (${hourlyMeanList}) THEN ${dayOfHours} END)::double precision AS day_mean
+      FROM per_hour h
       GROUP BY h."type", h."source", h.day
     ),
     canon AS (
       SELECT DISTINCT ON (p."type", p.day)
-        p."type", p.day, p.total, p.cnt, p.min_value, p.max_value, hm.day_mean
+        p."type", p.day, p.total, p.cnt, p.min_value, p.max_value, p.day_mean
       FROM per_source p
-      LEFT JOIN hour_mean hm
-        ON hm."type" = p."type" AND hm."source" = p."source" AND hm.day = p.day
       ORDER BY p."type", p.day, (${rankRaw}), p."source"::text
     ),
     folded AS (

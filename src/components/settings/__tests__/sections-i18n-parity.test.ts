@@ -1,5 +1,5 @@
 /**
- * v1.4.16 phase B6 — settings i18n parity.
+ * v1.4.16 — settings i18n parity.
  *
  * Every slug declared in `SETTINGS_SECTION_SLUGS` MUST have a
  * `settings.sections.<slug>.title` AND a `settings.sections.<slug>.subtitle`
@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 import en from "../../../../messages/en.json" with { type: "json" };
 import de from "../../../../messages/de.json" with { type: "json" };
-import { SETTINGS_SECTION_SLUGS } from "../section-slugs";
+import { SETTINGS_SECTION_SLUGS } from "@/lib/settings/section-slugs";
 
 type Bag = Record<string, unknown>;
 

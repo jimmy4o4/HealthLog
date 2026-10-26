@@ -466,7 +466,7 @@ export function resolveInviteScope({
  * a button inside a label forwards its own tap to the label's control, so the
  * radio and the popover would fight for the same click (the same reason
  * `SectionOption` avoids the wrapping label). Muted, `text-xs` — the meta floor
- * per UI-STANDARDS §3.
+ * per ui-standards.md §3.
  */
 function AccessOption({
   level,
@@ -747,11 +747,10 @@ export function inviteErrorKey(err: unknown): string {
     // sent" is not.
     case "sharing.invite.manage_browser_only":
       return "recordSharing.invite.errorManageBrowserOnly";
+    case "sharing.invite.no_account":
+      return "recordSharing.invite.errorNoAccount";
     default:
       break;
-  }
-  if (err instanceof ApiError && err.status === 404) {
-    return "recordSharing.invite.errorNoAccount";
   }
   if (err instanceof ApiError && err.status === 429) {
     return "recordSharing.invite.errorRateLimited";

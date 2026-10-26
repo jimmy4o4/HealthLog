@@ -57,7 +57,7 @@ describe("<ScoreAnatomyView>", () => {
     expect(html).toContain('data-present="false"');
     expect(html).toContain('data-slot="provenance-explainer-method"');
     expect(html).toContain("A blend of deviation components.");
-    // v1.15.12 F4 — the "keine klinische Bewertung" footer line is removed;
+    // v1.15.12 — the "keine klinische Bewertung" footer line is removed;
     // the non-clinical framing now lives in the inline provenance method.
     expect(html).not.toContain('data-slot="score-anatomy-disclaimer"');
     // Regression guard: `ProvenanceExplainer` renders its full method body
@@ -65,6 +65,35 @@ describe("<ScoreAnatomyView>", () => {
     // normal flow — never pulled out via `absolute top-3 right-3`, which
     // painted the whole paragraph over the title, ring and contributor rows.
     expect(html).not.toContain("absolute top-3 right-3");
+  });
+
+  it("names why a contributor is missing when the caller knows", () => {
+    const html = render(
+      <ScoreAnatomyView
+        title="Sleep score"
+        score={70}
+        contributors={[
+          { key: "sufficiency", label: "Sufficiency", value: 90, weight: 1 },
+          {
+            key: "consistency",
+            label: "Consistency",
+            value: null,
+            weight: 0,
+            missingLabel: "not enough nights yet (2 of 3)",
+          },
+          { key: "composition", label: "Composition", value: null, weight: 0 },
+        ]}
+        coverage={COVERAGE}
+        confidence={CONFIDENCE}
+        provenance={PROVENANCE}
+        method="m"
+      />,
+    );
+    expect(html).toContain("not enough nights yet (2 of 3)");
+    // A missing contributor without a reason keeps the general note.
+    expect(html).toContain("no data");
+    // Neither reads as a 0 score.
+    expect(html).not.toMatch(/>0, weighted/);
   });
 
   it("tints the card + leans the ring hue when a hue is passed (F1)", () => {

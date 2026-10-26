@@ -128,6 +128,19 @@ function mockInsertReturning(
   }) => (args.where === undefined && args.select?.id ? rows : [])) as never);
 }
 
+/**
+ * Rows the pre-flight `(source, externalId)` probe finds. The probe is the
+ * read with an `OR` of keys; the windowed read of the stored workouts around
+ * the batch (a `startedAt` range) finds nothing here.
+ */
+function mockExistingByKey(
+  rows: Array<{ source: string; externalId: string }>,
+) {
+  vi.mocked(prisma.workout.findMany).mockImplementation((async (args: {
+    where?: { OR?: unknown };
+  }) => (args.where?.OR ? rows : [])) as never);
+}
+
 function validWorkout(
   externalId: string,
   overrides: Record<string, unknown> = {},
@@ -200,11 +213,14 @@ beforeEach(() => {
     (async (args: { data: Array<{ workoutId: string }> }) =>
       args.data.map((row) => ({ workoutId: row.workoutId }))) as never,
   );
-  // v1.4.43 W9 — default to no per-user source-priority override so
+  // v1.4.43 — default to no per-user source-priority override so
   // the write-time picker walks the canonical default ladder. Tests
   // that exercise a custom ladder override this in-line.
+  // The route opt-in is on here so the route cases below exercise the
+  // write; the off case sets it explicitly.
   vi.mocked(prisma.user.findUnique).mockResolvedValue({
     sourcePriorityJson: null,
+    storeWorkoutRoutes: true,
   } as never);
 });
 
@@ -342,9 +358,9 @@ describe("POST /api/workouts/batch — per-entry status envelope", () => {
   });
 
   it("flags entries already in the DB as duplicate without re-inserting", async () => {
-    vi.mocked(prisma.workout.findMany).mockResolvedValue([
+    mockExistingByKey([
       { source: "APPLE_HEALTH", externalId: "uuid-existing" },
-    ] as never);
+    ]);
     vi.mocked(prisma.workout.createMany).mockResolvedValue({ count: 1 });
     const res = await POST(
       makeRequest({
@@ -504,6 +520,55 @@ describe("POST /api/workouts/batch — per-entry status envelope", () => {
     expect(
       vi.mocked(emitDataArrival).mock.calls.map(([call]) => call.refId),
     ).toEqual(["apple-id", "manual-id"]);
+  });
+});
+
+describe("POST /api/workouts/batch — workout-route opt-in", () => {
+  const withRoute = () =>
+    validWorkout("uuid-with-route", {
+      route: {
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [11.077, 49.452],
+            [11.078, 49.453],
+          ],
+        },
+      },
+    });
+
+  it("keeps the workout and drops the track while the opt-in is off", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      sourcePriorityJson: null,
+      storeWorkoutRoutes: false,
+    } as never);
+    vi.mocked(prisma.workout.createMany).mockResolvedValue({ count: 1 });
+    mockInsertReturning([
+      { id: "wkt-off", source: "APPLE_HEALTH", externalId: "uuid-with-route" },
+    ]);
+
+    const res = await POST(makeRequest({ workouts: [withRoute()] }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { entries: Array<{ status: string }> };
+    };
+    // Same per-entry status as a stored track: the client needs no branch.
+    expect(body.data.entries[0]?.status).toBe("inserted");
+    expect(prisma.workoutRoute.createMany).not.toHaveBeenCalled();
+  });
+
+  it("drops the track when the account row carries no opt-in at all", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      sourcePriorityJson: null,
+    } as never);
+    vi.mocked(prisma.workout.createMany).mockResolvedValue({ count: 1 });
+    mockInsertReturning([
+      { id: "wkt-none", source: "APPLE_HEALTH", externalId: "uuid-with-route" },
+    ]);
+
+    const res = await POST(makeRequest({ workouts: [withRoute()] }));
+    expect(res.status).toBe(200);
+    expect(prisma.workoutRoute.createMany).not.toHaveBeenCalled();
   });
 });
 
@@ -700,7 +765,7 @@ describe("POST /api/workouts/batch — user source-priority (v1.4.43 W9)", () =>
     expect(sourcePriorityReads).toHaveLength(1);
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-1" },
-      select: { sourcePriorityJson: true },
+      select: { sourcePriorityJson: true, storeWorkoutRoutes: true },
     });
   });
 
@@ -773,9 +838,7 @@ describe("POST /api/workouts/batch — PR detection enqueue (v1.4.25 W16c)", () 
     // stays 0 but duplicateCount becomes 1. The hook fires anyway —
     // the detector is cheap and a duplicate batch can still reveal a
     // PR if the row was written by another path between dispatches.
-    vi.mocked(prisma.workout.findMany).mockResolvedValue([
-      { source: "APPLE_HEALTH", externalId: "uuid-dup" } as never,
-    ]);
+    mockExistingByKey([{ source: "APPLE_HEALTH", externalId: "uuid-dup" }]);
     vi.mocked(prisma.workout.createMany).mockResolvedValue({ count: 0 });
     const res = await POST(
       makeRequest({ workouts: [validWorkout("uuid-dup")] }),

@@ -1,11 +1,24 @@
 /**
- * v1.20.0 (F1) — Coach retrieval tool executor: dispatch, grounding, and the
+ * v1.20.0 — Coach retrieval tool executor: dispatch, grounding, and the
  * gate-preservation contract. The executor must NEVER throw and must return a
  * structured `{ present: false }` for an absent domain — the hallucination
  * audit asserts the model can always tell "no data" from "data".
  */
 import { DEFAULT_UNIT_PREFERENCES } from "@/lib/measurements/display-transform";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, onTestFinished } from "vitest";
+
+// The labs module is on unless a test switches it off.
+const { labsModule } = vi.hoisted(() => ({ labsModule: { on: true } }));
+vi.mock("@/lib/modules/gate", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/modules/gate")>();
+  return {
+    ...actual,
+    isModuleEnabled: async (
+      userId: string,
+      key: Parameters<typeof actual.isModuleEnabled>[1],
+    ) => (key === "labs" ? labsModule.on : actual.isModuleEnabled(userId, key)),
+  };
+});
 
 import type { CoachSnapshotResult } from "@/lib/ai/coach/snapshot";
 
@@ -74,6 +87,15 @@ vi.mock("@/lib/i18n/user-locale", () => ({
 const buildIllnessScores = vi.fn();
 vi.mock("@/lib/ai/coach/illness-snapshot", () => ({
   buildIllnessScores: (userId: string) => buildIllnessScores(userId),
+}));
+
+// #1263 — a named labs read is its own read (latest + history per matching
+// marker); the dispatch test stubs it like the snapshot. The read itself runs
+// against Postgres in `tests/integration/coach-labs-history.test.ts`.
+const buildLabsSnapshotBlock = vi.fn();
+vi.mock("@/lib/ai/coach/labs-snapshot", () => ({
+  buildLabsSnapshotBlock: (...args: unknown[]) =>
+    buildLabsSnapshotBlock(...args),
 }));
 
 import { executeCoachTool } from "@/lib/ai/coach/tools/executor";
@@ -223,19 +245,27 @@ describe("executeCoachTool", () => {
     });
   });
 
-  it("filters labs by analyte and reports analyte_not_found", async () => {
+  it("reads a named analyte with its history and reports analyte_not_found", async () => {
     buildCoachSnapshot.mockResolvedValue(
       snapshot({
-        labs: { recent: [{ name: "LDL", value: "120" }] },
+        labs: { recent: [{ analyte: "LDL", value: 120 }] },
       }),
+    );
+    buildLabsSnapshotBlock.mockImplementation(
+      async (_userId: string, _now: Date, _reach: unknown, options: unknown) =>
+        (options as { analyte?: string }).analyte === "ldl"
+          ? { recent: [{ analyte: "LDL", value: 120, history: { count: 2 } }] }
+          : null,
     );
     const hit = await executeCoachTool({
       userId: "u1",
       name: "get_labs",
-      rawArguments: JSON.stringify({ analyte: "ldl" }),
+      rawArguments: JSON.stringify({ analyte: "LDL" }),
     });
     expect(hit.present).toBe(true);
-    expect(hit.data).toMatchObject({ recent: [{ name: "LDL" }] });
+    expect(hit.data).toMatchObject({
+      recent: [{ analyte: "LDL", history: { count: 2 } }],
+    });
 
     const miss = await executeCoachTool({
       userId: "u1",
@@ -250,6 +280,21 @@ describe("executeCoachTool", () => {
   // can cite the reading, not just name the biomarker. The snapshot labs block
   // already carries { analyte, value, unit, rangeStatus, … }; the tool passes
   // it through verbatim. This guards that the value + unit survive the tool.
+  it("get_labs answers module_disabled with the labs module off", async () => {
+    labsModule.on = false;
+    onTestFinished(() => {
+      labsModule.on = true;
+    });
+    buildCoachSnapshot.mockClear();
+    const result = await executeCoachTool({
+      userId: "u1",
+      name: "get_labs",
+      rawArguments: "{}",
+    });
+    expect(result).toMatchObject({ present: false, reason: "module_disabled" });
+    expect(buildCoachSnapshot).not.toHaveBeenCalled();
+  });
+
   it("get_labs carries each reading's value and unit (citation guarantee)", async () => {
     buildCoachSnapshot.mockResolvedValue(
       snapshot({
@@ -471,7 +516,7 @@ describe("executeCoachTool", () => {
   });
 });
 
-// v1.21.0 (D5-1) — ONE snapshot per turn. When the route threads the shared
+// v1.21.0 — ONE snapshot per turn. When the route threads the shared
 // full-source scope (the inventory's probe scope) and the tool's window
 // matches, the tool must read under the SHARED scope key so every per-tool read
 // lands the inventory's already-built 60s LRU entry — rather than rebuilding a

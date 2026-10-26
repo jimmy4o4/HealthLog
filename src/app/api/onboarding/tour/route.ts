@@ -4,17 +4,13 @@ import { z } from "zod/v4";
 import { prisma } from "@/lib/db";
 import { apiHandler, requireAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
-import {
-  apiSuccess,
-  apiValidationError,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { tourProgressSchema } from "@/lib/onboarding/tour-progress";
 import { Prisma } from "@/generated/prisma/client";
 
 /**
- * v1.4.15 Phase B5 — onboarding tour completion endpoint.
+ * v1.4.15 — onboarding tour completion endpoint.
  * v1.18.6 — extended with the resumable module-tour progress point.
  *
  * Operations on a single resource:
@@ -54,22 +50,12 @@ const tourBodySchema = z
 export const POST = apiHandler(async (request: NextRequest) => {
   const { user } = await requireAuth();
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, tourBodySchema, {
     maxBytes: 64 * 1024,
+    message: "Invalid input",
+    errorCode: "onboarding.tour.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = z.safeParse(tourBodySchema, body);
-  if (!parsed.success) {
-    return apiValidationError(
-      "Invalid input",
-      sanitiseZodIssues(parsed.error.issues),
-      422,
-      {
-        errorCode: "onboarding.tour.invalid",
-      },
-    );
-  }
+  if (!parsed.ok) return parsed.error;
 
   // Build the update field-by-field (no mass assignment). `completed`
   // drives the coarse boolean; a replay (`completed:false`) wipes the

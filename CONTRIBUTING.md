@@ -121,7 +121,7 @@ Contributors: branch off `main`; PRs target `main`.
 
 ## Translations
 
-HealthLog ships with English (`en`) and German (`de`) maintained by the project, plus French (`fr`), Spanish (`es`), Italian (`it`), Polish (`pl`), and Korean (`ko`) that are **AI-initial, community-maintained**. The maintained locales are reviewed line-by-line; the community-maintained ones surface a small banner inviting users to improve them.
+HealthLog ships with English (`en`) and German (`de`) maintained by the project, plus French (`fr`), Spanish (`es`), Italian (`it`), Polish (`pl`), Korean (`ko`), Dutch (`nl`), and Brazilian Portuguese (`pt-BR`) that are **AI-initial, community-maintained**. The maintained locales are reviewed line-by-line; the community-maintained ones surface a small banner inviting users to improve them.
 
 ### Improving an existing locale
 
@@ -134,16 +134,45 @@ To suggest a fix or improvement:
 3. Edit `messages/<locale>.json`. Keep the JSON valid; the i18n integrity test will flag missing or extra keys against `en.json` before CI accepts the PR.
 4. Open a PR titled `i18n(<locale>): <area>`. Describe what was unclear, awkward, or wrong in the previous wording.
 
+### Translating in the browser
+
+Every locale can be edited in [Fink](https://fink.inlang.com/?repo=MBombeck/HealthLog&project=project.inlang), inlang's browser editor, without cloning the repository. Fink reads `project.inlang/settings.json`, which points it at `messages/<locale>.json`, shows each message next to its translations, and flags strings that are missing or use other placeholders than English.
+
+1. Open the link and sign in with GitHub.
+2. Without write access to this repository, choose **Fork**. Fink asks you to install the Inlang GitHub App on your own account so it can push to your fork.
+3. Edit, then choose **Push**. Fink commits to the fork; **Open pull request** takes you to GitHub's compare page, where you submit the change against `main`.
+
+Fink writes the same nested JSON this repository uses and changes only the lines you edited. A string you add for a key the locale did not have yet goes to the end of its section instead of the position it has in `en.json`, which is harmless.
+
+What a reviewer checks on a translation pull request:
+
+- Only `messages/*.json` changed, and only the strings the description names.
+- Every `{placeholder}` of the English string is still there and spelled the same. The i18n integrity test fails the build otherwise.
+- Medical terms are the ones the language's clinical guidelines use, and the register matches the rest of the locale (`du` in German, `você` in Brazilian Portuguese).
+- Words the app or the Telegram bot matches literally stay as they are: slash commands, `taken <name>`, and the unit symbols.
+- Machine translation is fine as a first draft, but someone who reads the language has gone through every string before the pull request is opened, and the description says so.
+- No questionnaire text. The bundles hold the app's own copy around the questionnaires (titles, notes, buttons), never an item, an answer option or a stem; see the next section.
+
+To run the checks Fink shows on a local checkout: `npx @inlang/cli@3.4.4 check --project ./project.inlang`. It reads the files and changes nothing.
+
+### Questionnaire wording
+
+The PHQ-9, GAD-7, WHO-5 and SCI are not translated through the bundles, and Fink never shows them. Their text lives in code, one file per instrument and language under `src/lib/mental-health/wording/<instrument>/<locale>.ts`, because changing a word in a validated questionnaire changes what it measures. Each file declares what it is:
+
+- `validated: true` with a `source`: a published validated translation, reproduced word for word (stem, items, answer options and, for the PHQ-9, the follow-up question, in the form of address the source uses). The source names who made it, the document it was read from with its link, and the terms that allow reproducing it in software. The file's header comment names anything that differs from the printed form, such as a corrected misprint.
+- `validated: false`: no validated version exists that may be reproduced, so the file carries a translation written for HealthLog, faithful to the English and on the same scale. The app shows a note beside it that the result is orientation, offers the English original in one tap, and records on the result that it was answered in an unvalidated translation. The header comment names any validated version that was found and why it is not used (paywalled, terms that allow private study only).
+
+To propose a validated version for a language that has none, or a better source for one that does, open an issue or a pull request with the publication, a link to the PDF it can be read from, and its terms of use. A pull request replaces the language's file: the text copied exactly from the PDF, `validated: true`, and the `source` filled in. The tests in `src/lib/mental-health/__tests__/` check that every instrument has text in every language, that every validated entry names its source, and that each answer is bound to the score the instrument gives it; the spot checks in `instrument-wording.test.ts` are the place to pin a line that is easy to transcribe wrongly. A correction to HealthLog's own translation of an unvalidated entry is welcome too; it stays `validated: false`.
+
 ### Adding a new locale
 
-If you want to introduce a locale that isn't shipped (e.g. `nl`, `pt-BR`, `cs`):
+If you want to introduce a locale that isn't shipped (e.g. `sv`, `cs`):
 
 1. Open an issue first using the **Translation request** template. We'll confirm the locale is in scope and decide whether it joins the AI-initial-community-maintained tier or the maintained tier.
-2. Copy `messages/en.json` to `messages/<locale>.json`.
+2. Copy `messages/en.json` to `messages/<locale>.json`. Questionnaire text is not in it; the new language needs a wording file per instrument instead (see Questionnaire wording above), which step 4 makes impossible to forget.
 3. Translate. AI assistance is welcome as a starting point but the PR description should note whether it's an AI-initial pass or a fully human-reviewed one — that information drives the banner state.
-4. Add the locale to the supported list in `src/lib/i18n/locales.ts` (or wherever the registry lives — grep `SUPPORTED_LOCALES`).
-5. The Coach system prompts at `src/lib/ai/prompts/coach-prompt.ts` and `src/lib/ai/prompts/insight-generator.ts` and the doctor-report PDF strings need translation too. Include those in the same PR.
-6. Run `pnpm test -- i18n-integrity` locally before submitting.
+4. Add the locale to `locales` in `src/lib/i18n/config.ts` and to `locales` in `project.inlang/settings.json`, then run `pnpm typecheck`. Every per-locale table that still lacks the new locale fails to compile, and that list is the work: date and number formatting, the reply-language footers of the Coach and insights prompts, the outbound safety banks, the prose-grounding patterns, the no-key fallback copy and the questionnaire wording registry. Include those in the same PR.
+5. Run `pnpm test` before submitting. The i18n guards hold the new bundle to the English keys and placeholders.
 
 ### Style guide for translators
 
@@ -156,7 +185,7 @@ If you want to introduce a locale that isn't shipped (e.g. `nl`, `pt-BR`, `cs`):
 
 ### Long-term
 
-When the community grows beyond ad-hoc PRs, we'll spin up a self-hosted [Weblate](https://weblate.org/) instance. That replaces the JSON-PR workflow with a web UI but keeps every translation under our own roof — no third-party telemetry. Tracking issue: `v1.6 — Weblate self-hosted on edge-01`.
+Fink covers browser editing today. It edits the files in this repository directly and keeps no copy of the translations anywhere else. If the community outgrows it, a self-hosted [Weblate](https://weblate.org/) instance remains the fallback. Tracking issue: `v1.6 — Weblate self-hosted on edge-01`.
 
 ## Code of Conduct
 

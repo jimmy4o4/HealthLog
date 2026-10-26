@@ -52,7 +52,7 @@ interface NavLink {
 // the existing measurement / medication / mood quick-entry surfaces
 // (see `<CapturePicker>`).
 //
-// v1.17.1 (F-1) — the two always-visible flanking anchors and the "More"
+// v1.17.1 — the two always-visible flanking anchors and the "More"
 // hub are now BOTH derived from the one shared destination model
 // (`nav-model.ts`), the same ordered list the desktop sidebar renders.
 // The bar keeps its ergonomic 5-slot shape, but the hub is computed by the
@@ -104,7 +104,7 @@ export function BottomNav() {
     visibleCaptureKinds(capabilities, CAPTURE_KIND_ORDER, user?.modules)
       .length > 0;
 
-  // v1.17.1 (F-1) — the More hub is the model-computed hub: every visible
+  // v1.17.1 — the More hub is the model-computed hub: every visible
   // feature destination that isn't a primary slot, plus the shared utility
   // tail. Cycle is gated by the same flag the sidebar uses, so the two
   // surfaces gate identically and cannot drift.
@@ -193,9 +193,9 @@ export function BottomNav() {
 
   return (
     <>
-      {/* v1.4.33 F14 — bar height and safe-area defence so the bar can
+      {/* v1.4.33 — bar height and safe-area defence so the bar can
           never overlap the last viewport line of scrollable page content.
-          `min-h-16` floors the bar at 64px; `pb-[env(safe-area-inset-bottom)]`
+          `min-h-16` floors the bar at 64px; `pb-(--safe-area-bottom)`
           reserves the home-indicator inset on iOS / iPadOS PWA installs;
           `bg-card` + `border-t` give the bar a clean visual edge so page
           content that scrolls under the bar is occluded, not bleeding
@@ -208,7 +208,7 @@ export function BottomNav() {
         aria-label={t("nav.mobileNavigation")}
         data-slot="bottom-nav"
         data-keyboard-hide=""
-        className="bg-card border-border shell-desktop:hidden fixed bottom-0 left-0 z-50 min-h-16 w-full border-t pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] backdrop-blur-md"
+        className="bg-card border-border shell-desktop:hidden fixed bottom-0 left-0 z-50 min-h-16 w-full border-t pr-[env(safe-area-inset-right)] pb-(--safe-area-bottom) pl-[env(safe-area-inset-left)] backdrop-blur-md"
       >
         <div className="mx-auto flex h-16 max-w-lg items-stretch justify-around px-1">
           {primaryLeft.map(renderPrimary)}
@@ -274,7 +274,9 @@ export function BottomNav() {
           // The sheet auto-sizes to its content; padding-bottom respects
           // the iOS safe area so the inner buttons stay reachable above
           // the home-indicator on iPhone-X-class devices.
-          className="shell-desktop:hidden mx-auto max-w-md rounded-t-xl pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+          // `gap-0`: the grip sits flush above the header, and the grid
+          // takes the header's old 16 px gap as its own top padding.
+          className="shell-desktop:hidden mx-auto max-w-md gap-0 rounded-t-xl pb-[calc(env(safe-area-inset-bottom)+1rem)]"
           data-testid="bottom-nav-more-sheet"
         >
           <SheetHeader>
@@ -286,7 +288,7 @@ export function BottomNav() {
               (de "Benachrichtigungen") then have room to break onto a clean
               second line instead of clipping the last character at the tile
               edge. */}
-          <div className="grid grid-cols-2 gap-2 px-3 pb-4">
+          <div className="grid grid-cols-2 gap-2 px-3 pt-4 pb-4">
             {moreHub.map((item) => {
               const isActive = isActiveLink(item.href);
               return (
@@ -309,7 +311,7 @@ export function BottomNav() {
                   )}
                 >
                   <item.icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-                  {/* v1.18.10 (W10) — show the FULL label, never an ellipsis
+                  {/* v1.18.10 — show the FULL label, never an ellipsis
                       that hides meaning. The W7 `truncate` clipped long words
                       ("Benachrichtigungen" → "Benachrichtigun…"); the goal is a
                       readable label, not a balanced tile. Shrink the type to

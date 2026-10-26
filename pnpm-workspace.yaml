@@ -1,18 +1,22 @@
 overrides:
   # CVE-2026-84375 (js-yaml < 4.3.2, HIGH), CVE-2026-84363/84364/84365 (hono
-  # < 4.13.5, via @hono/node-server under the MCP SDK), CVE-2026-45819
+  # < 4.13.5, via @hono/node-server under the MCP SDK; GHSA-5r4p-p66f-jhc7 raised the
+  # floor to 4.13.11), CVE-2026-45819
   # (baseline-browser-mapping < 2.11.0), GHSA-rgj7-g3m4-5g8c (sharp < 0.35.4,
   # pulled by next). None is a direct dependency; the bounds move the copies
   # the scanner flags and nothing else.
   "js-yaml@<4.3.2": "^4.3.2"
-  "hono@<4.13.5": "^4.13.5"
+  "hono@<4.13.11": "^4.13.11"
   "baseline-browser-mapping@<2.11.0": "^2.11.0"
   "sharp@<0.35.4": "^0.35.4"
   # GHSA-55q2-fjhq-7xh7: a crafted document gets past the sanitiser and its
   # markup survives into the output. The copy here is jspdf's optional HTML
   # renderer, which the doctor-report PDF path reaches.
-  # A later advisory against 3.4.13 to 3.4.15 raised the floor to 3.4.16.
-  "dompurify@<3.4.16": "^3.4.16"
+  # A later advisory against 3.4.13 to 3.4.15 raised the floor to 3.4.16, and
+  # GHSA-cg2g-xh64-v4q7 (a SAFE_FOR_TEMPLATES bypass) with GHSA-mrv2-3pqr-j5jr
+  # (an IN_PLACE hook that removes a parent) to 3.4.17. jspdf 4.2.1, the
+  # newest release, still allows the flagged range.
+  "dompurify@<3.4.17": "^3.4.17"
   # CVE-2026-69153. Next declares an exact `postcss@8.4.31`, so nothing except
   # this bound moves it. The build has run on the 8.5 line since the first
   # bump; the fix landed in 8.5.23.
@@ -26,7 +30,9 @@ overrides:
   # for.
   "@hono/node-server@<1.19.15": "^1.19.15"
   "picomatch@<4.0.4": "^4.0.4"
-  "body-parser@<2.3.0": "^2.3.0"
+  # CVE-2026-111181 (HIGH) raised the floor from 2.3.0. The copy arrives
+  # under express in the MCP SDK, on a production path.
+  "body-parser@<2.4.0": "^2.4.0"
   # CVE-2026-93749 (source-map-js < 1.2.2, HIGH, under postcss and the
   # Tailwind build), CVE-2026-104844 (postcss-selector-parser < 7.1.6, under
   # shadcn) and GHSA-r4xh-jqrq-34v2 (smol-toml < 1.9.0, under knip). All three
@@ -42,8 +48,9 @@ overrides:
   # malformed authorities. It arrives under ajv, including the connector SDK's
   # copy, so it sits on a path this app exposes.
   # Authority injection through an unvalidated port in serialize, and a
-  # follow-up fixed in 3.1.8, raised the floor from 3.1.6.
-  "fast-uri@<3.1.8": "^3.1.8"
+  # follow-up fixed in 3.1.8, raised the floor from 3.1.6. CVE-2026-110180 and
+  # CVE-2026-110306 raised it again to 3.1.9.
+  "fast-uri@<3.1.9": "^3.1.9"
   "flatted@<3.4.2": "^3.4.2"
   # GHSA-jqcg-44mw-7w3h: IP spoofing through IPv4-mapped addresses. It
   # arrives under express in the MCP SDK; the app resolves client IPs itself,
@@ -61,26 +68,18 @@ overrides:
   # 10.0.0.1 rather than being rejected. That is the exact alt-notation class
   # `isPublicUrl` exists to catch, and this copy arrives under the MCP SDK's
   # rate limiter where nothing of ours screens it.
-  # Later advisories up to 10.7.0 raised the floor from 10.3.1 to 10.7.1.
-  "ip-address@<10.7.1": "^10.7.1"
+  # Later advisories raised the floor from 10.3.1 to 10.7.1, then to 10.7.4
+  # (a ReDoS in the Address6 zone identifier, through 10.7.3).
+  "ip-address@<10.7.4": "^10.7.4"
   "sharp@<0.35.0": "^0.35.3"
-  # A crafted PDF could run arbitrary JavaScript through the renderer. Our own
-  # copy is pinned past it in `devDependencies`, but a second copy arrives
-  # transitively, and `outputFileTracingIncludes` ships EVERY `pdfjs-dist@*` in
-  # the store into the standalone image — so an unused transitive copy is still
-  # a copy in the runtime image. The range is bounded on both ends deliberately:
-  # `pdf-parse` resolves 5.4.296, which predates the flaw and drives the local
-  # text-extraction path, so it must not be dragged onto a new major.
-  "pdfjs-dist@>=5.6.83 <6.2.108": "6.2.108"
   # Deeply nested input drives DeepmergeTS into unbounded recursion until the
   # stack gives out. The copy here is Prisma's: `@prisma/config` still asks for
   # 7.1.5 even on the current 7.9.1, so no Prisma bump reaches it and the
   # override is the only way through. It runs on the config-loading and CLI
   # path, not under a request, but a red audit blocks the whole release train.
   "deepmerge-ts@<8.0.0": "^8.0.0"
-  # CVE-2026-59952. Two copies arrive, neither of them ours to call: an
-  # optional peer of `@hookform/resolvers` (this app validates with zod) and
-  # prisma's local dev server. Mirrored for /opt/prisma-cli in the Dockerfile,
+  # CVE-2026-59952. The copy arrives through prisma's local dev server, not
+  # ours to call. Mirrored for /opt/prisma-cli in the Dockerfile,
   # where the flagged 1.2.0 landed. 1.4.2 is the same major, so no consumer is
   # dragged onto a new one.
   "valibot@<1.4.2": "^1.4.2"
@@ -96,12 +95,20 @@ overrides:
 
   # Development-only copies (test containers, build tooling) that the
   # dependency alerts flag: gRPC under the test containers, brace-expansion on
-  # three major lines, and undici 7 next to the app's own undici 8.
+  # three major lines, and undici 7 next to the app's own undici 8
+  # (CVE-2026-109869, CVE-2026-109841 and CVE-2026-109924 raised it to 7.30.1).
   "@grpc/grpc-js@>=1.14.0 <1.14.5": "^1.14.5"
   "brace-expansion@<1.1.21": "^1.1.21"
   "brace-expansion@>=2.0.0 <2.1.7": "^2.1.7"
   "brace-expansion@>=4.0.0 <5.0.12": "^5.0.12"
-  "undici@>=7.0.0 <7.29.1": "^7.29.1"
+  "undici@>=7.0.0 <7.30.1": "^7.30.1"
+
+  # GHSA-587h-7wmj-h5pm (HIGH), GHSA-rq7h-c2jc-7f22, GHSA-r825-w8mm-5pxw,
+  # GHSA-698v-4r3x-3vcv and GHSA-9jrq-w75r-8gcw: dev-server file serving,
+  # cross-origin middleware and the bundled launch-editor. Vite arrives only
+  # under vitest, never in the image; vitest asks for ^8, so a floor on the
+  # same major moves it and nothing else.
+  "vite@>=8.0.0 <8.1.6": "^8.1.6"
 
 allowBuilds:
   "@prisma/engines": true
@@ -131,3 +138,6 @@ auditConfig:
     # never runs. No patched release is published yet (latest is 1.4.0);
     # remove this entry and raise the floor once 1.4.1 is out.
     - GHSA-86w9-cpqp-85rv
+
+patchedDependencies:
+  "@stryker-mutator/vitest-runner@10.0.0": patches/@stryker-mutator__vitest-runner@10.0.0.patch

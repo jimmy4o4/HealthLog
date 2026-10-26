@@ -58,6 +58,12 @@ export interface AnatomyContributor {
   value: number | null;
   /** Effective weight share after null-redistribution, 0..1. */
   weight: number;
+  /**
+   * What a missing contributor still needs, when the server says why it is
+   * missing (the sleep score's rhythm sub-scores). Shown in place of the
+   * generic "no data".
+   */
+  missingLabel?: string;
 }
 
 export interface ScoreAnatomyViewProps {
@@ -68,7 +74,7 @@ export interface ScoreAnatomyViewProps {
   /** Band override; derived from the score when omitted. */
   band?: ScoreBand;
   /**
-   * v1.15.12 (F1/F2/F3) — the metric's ring hue. When set, the detail card
+   * v1.15.12 — the metric's ring hue. When set, the detail card
    * carries the same gentle per-metric tint the dashboard ring tile wears
    * (visual continuity from tap to detail) and the ring arc leans the same
    * hue instead of the generic band gradient. Omitted → plain `--card` surface
@@ -119,7 +125,7 @@ export function ScoreAnatomyView({
     <section
       data-slot="score-anatomy-view"
       data-status={insufficient ? "insufficient" : "ok"}
-      // v1.15.12 F1/F3 — when a `hue` is set, the detail card carries the same
+      // v1.15.12 — when a `hue` is set, the detail card carries the same
       // gentle `--tile-hue` mix + bottom-leaning gradient the dashboard ring
       // tile wears (`.wellness-tile` family), so the tap-through reads as the
       // same surface deepened. No hue → the plain bordered `--card` look.
@@ -143,7 +149,7 @@ export function ScoreAnatomyView({
       <TileHeader title={title} />
       {/* Hero: ring + caption — a centred identity block below the header. */}
       <div className="flex flex-col items-center gap-3 text-center">
-        {/* v1.15.12 F2 — vertical breathing room so the ring's bloom/glow is
+        {/* v1.15.12 — vertical breathing room so the ring's bloom/glow is
             never clipped top/bottom by the hero container. */}
         {!insufficient || showProvisionalRing ? (
           <div className="py-2">
@@ -238,7 +244,8 @@ function ContributorRow({ contributor }: { contributor: AnatomyContributor }) {
                 value: Math.round(clamped),
                 weight: weightPct,
               })
-            : t("insights.derived.anatomy.contributorMissing")}
+            : (contributor.missingLabel ??
+              t("insights.derived.anatomy.contributorMissing"))}
         </span>
       </div>
       <div

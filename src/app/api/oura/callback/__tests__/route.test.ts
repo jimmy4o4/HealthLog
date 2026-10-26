@@ -1,11 +1,44 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Single-use claiming is covered against Postgres in
+// tests/integration/oauth-callback-single-use.test.ts; here every callback
+// is the first and only one.
+const { claimSpy } = vi.hoisted(() => ({ claimSpy: vi.fn() }));
+vi.mock("@/lib/oauth/callback-claim", () => ({
+  runOAuthCallbackOnce: (
+    _p: string,
+    _s: string,
+    _o: unknown,
+    run: () => Promise<unknown>,
+  ) => {
+    claimSpy();
+    return run();
+  },
+  settleOAuthCallback: (_p: string, _s: string, run: () => Promise<unknown>) =>
+    run(),
+  consumeLedgerState: async (
+    _p: string,
+    _s: string,
+    consume: (tx: unknown) => Promise<unknown>,
+  ) => consume((await import("@/lib/db")).prisma),
+  duplicateOAuthCallback: async () => null,
+}));
+
+vi.mock("@/lib/integrations/oauth-kit/connect-target", () => ({
+  // The guardian arm is covered in its own test; here the record's own
+  // browser (or none) may finish, any other session may not.
+  verifyCallbackActor: async (record: string, session: string | null) =>
+    session === null || session === record
+      ? { ok: true, guardianUserId: null }
+      : { ok: false, reason: "cross_user" },
+}));
+
 vi.mock("@/lib/api-handler", () => ({
   apiHandler: <T extends (...args: unknown[]) => unknown>(fn: T) => fn,
 }));
 
 vi.mock("@/lib/db", () => ({
-  prisma: { user: { update: vi.fn() } },
+  prisma: { user: { update: vi.fn(), findMany: vi.fn(async () => []) } },
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: vi.fn(async () => null) }));
@@ -41,11 +74,14 @@ const {
 
 vi.mock("@/lib/jobs/boss-instance", () => ({ getGlobalBoss: bossMock }));
 
-vi.mock("@/lib/oura/client", async (importOriginal) => ({
+vi.mock("@/lib/oura/client", () => ({
+  fetchOuraAccountId: vi.fn(async () => "oura-account-1"),
+}));
+vi.mock("@/lib/oura/oauth", async (importOriginal) => ({
   isAcceptedOuraIssuer: (
-    await importOriginal<typeof import("@/lib/oura/client")>()
+    await importOriginal<typeof import("@/lib/oura/oauth")>()
   ).isAcceptedOuraIssuer,
-  exchangeCode: exchangeMock,
+  exchangeOuraCode: exchangeMock,
 }));
 vi.mock("@/lib/oura/credentials", () => ({
   getOuraClientCredentials: getCredsMock,
@@ -142,8 +178,29 @@ describe("GET /api/oura/callback", () => {
     const data = userUpdate.mock.calls[0]![0].data;
     expect(data.ouraAccessTokenEncrypted).toBe("enc:at");
     expect(data.ouraRefreshTokenEncrypted).toBe("enc:rt");
-    expect(auditLog).toHaveBeenCalledWith("oura.connect", { userId: "u1" });
+    expect(auditLog).toHaveBeenCalledWith("oura.connect", {
+      userId: "u1",
+      actorUserId: null,
+    });
+    expect(data.ouraUserId).toBe("oura-account-1");
     expect(res.headers.get("location")).toContain("oura=connected");
+  });
+
+  it("refuses an Oura account another record already holds", async () => {
+    const { prisma } = await import("@/lib/db");
+    vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+      { id: "guardian-1" },
+    ] as never);
+    const res = await GET(
+      makeReq({ code: "auth-code", state: "S", cookie: "S" }),
+    );
+    expect(res.headers.get("location")).toContain("reason=already_linked");
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { ouraUserId: "oura-account-1", id: { not: "u1" } },
+      }),
+    );
+    expect(userUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -182,12 +239,17 @@ describe("GET /api/oura/callback — issuer", () => {
  * card for up to an hour.
  */
 describe("GET /api/oura/callback — connect-time first sync", () => {
-  it("enqueues exactly one targeted oura-sync job for the connecting user", async () => {
+  it("enqueues one targeted oura-sync job and the history backfill for the connecting user", async () => {
     const res = await GET(makeReq({ code: "c", state: "S", cookie: "S" }));
 
     expect(res.headers.get("location")).toContain("oura=connected");
-    expect(bossSend).toHaveBeenCalledTimes(1);
+    expect(bossSend).toHaveBeenCalledTimes(2);
     expect(bossSend).toHaveBeenCalledWith("oura-sync", { userId: "u1" });
+    expect(bossSend).toHaveBeenCalledWith(
+      "oura-backfill",
+      expect.objectContaining({ userId: "u1" }),
+      expect.objectContaining({ singletonKey: "oura-backfill|u1" }),
+    );
   });
 
   it("still connects when no boss instance is available", async () => {
@@ -205,5 +267,38 @@ describe("GET /api/oura/callback — connect-time first sync", () => {
     const res = await GET(makeReq({ code: "c", state: "S", cookie: "S" }));
 
     expect(res.headers.get("location")).toContain("oura=connected");
+  });
+});
+
+// A refused callback must not spend the state: Oura sends a denied consent
+// back without a code, and the person may return to the same authorize URL
+// and allow it.
+describe("GET /api/oura/callback — claim only what can be exchanged", () => {
+  it("does not claim the state for a callback without a code", async () => {
+    const res = await GET(makeReq({ state: "S", cookie: "S" }));
+    expect(res.headers.get("location")).toContain("reason=nocode");
+    expect(claimSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not claim the state for a foreign issuer or a cross-user session", async () => {
+    await GET(
+      makeReq({
+        code: "c",
+        state: "S",
+        cookie: "S",
+        iss: "https://evil.example/oauth",
+      }),
+    );
+    (getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: "attacker" },
+    });
+    await GET(makeReq({ code: "c", state: "S", cookie: "S" }));
+    expect(claimSpy).not.toHaveBeenCalled();
+  });
+
+  it("claims the state once before exchanging a valid code", async () => {
+    await GET(makeReq({ code: "c", state: "S", cookie: "S" }));
+    expect(claimSpy).toHaveBeenCalledTimes(1);
+    expect(exchangeMock).toHaveBeenCalledTimes(1);
   });
 });

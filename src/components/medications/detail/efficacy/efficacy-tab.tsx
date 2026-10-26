@@ -16,7 +16,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { showErrorToast } from "@/lib/errors/error-toast";
 
 import { MedicationDetailSection } from "@/components/medications/medication-detail-section";
-import { SegmentedToggle } from "@/components/medications/detail/segmented-toggle";
+import { Segmented } from "@/components/ui/segmented";
 import { TileHeader } from "@/components/insights/tile-header";
 import { Glp1PlateauNote } from "@/components/insights/glp1-plateau-note";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -42,6 +42,12 @@ import type {
   MedicationEfficacyDTO,
   EfficacyTargetView,
 } from "@/lib/medications/efficacy/build-efficacy";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  SEGMENTED_MIN_DAYS_PER_SIDE,
+  SEGMENTED_MIN_SPAN_DAYS,
+} from "@/lib/medications/efficacy/segmented-effect";
+import { ChangeAtStartSummary } from "./change-at-start-summary";
 
 // v1.30 UI audit (M8) — `EfficacyChart` mounts inside `TargetCard`'s own
 // `<Card>` as a bare 220px `ResponsiveContainer` with no chrome of its own.
@@ -96,7 +102,7 @@ export function EfficacyTab({
   const timezone = user?.timezone || DEFAULT_TIMEZONE;
   const queryClient = useQueryClient();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.medicationEfficacy(medicationId),
     queryFn: () =>
       apiGet<MedicationEfficacyDTO>(
@@ -128,7 +134,7 @@ export function EfficacyTab({
         title={t("medications.efficacy.title")}
         dataSlot="medication-wirkung-section"
       >
-        <QueryErrorCard onRetry={() => refetch()} />
+        <QueryErrorCard error={error} onRetry={() => refetch()} />
       </MedicationDetailSection>
     );
   }
@@ -258,7 +264,9 @@ function TargetCard({
         {target.series.length > 0 ? (
           <div className="space-y-3">
             <div className="flex justify-end">
-              <SegmentedToggle
+              <Segmented
+                size="sm"
+                mode="toggle"
                 value={scaleMode}
                 options={[
                   {
@@ -272,8 +280,8 @@ function TargetCard({
                   },
                 ]}
                 onChange={setScaleMode}
-                ariaLabel={t("medications.efficacy.scaleToggleLabel")}
-                dataSlot="medication-wirkung-scale-toggle"
+                label={t("medications.efficacy.scaleToggleLabel")}
+                slot="medication-wirkung-scale-toggle"
               />
             </div>
             <EfficacyChart
@@ -298,12 +306,23 @@ function TargetCard({
             />
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">
-            {t("medications.efficacy.noSeries")}
-          </p>
+          <EmptyState
+            variant="plain"
+            size="compact"
+            title={t("medications.efficacy.noSeries")}
+          />
         )}
 
         <BeforeAfterCard target={target} minWeeks={dto.minWeeksPerSide} />
+
+        {target.segmented ? (
+          <ChangeAtStartSummary
+            segmented={target.segmented}
+            unit={target.unit}
+            minDays={SEGMENTED_MIN_DAYS_PER_SIDE}
+            minSpanDays={SEGMENTED_MIN_SPAN_DAYS}
+          />
+        ) : null}
 
         {target.levelShift?.present &&
         target.levelShift.nearStart &&

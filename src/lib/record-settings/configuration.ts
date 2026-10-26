@@ -11,6 +11,7 @@ import {
   WRITABLE_MODULE_KEYS,
 } from "@/lib/validations/modules";
 import { thresholdsUpdateSchema } from "@/lib/validations/thresholds";
+import { locales } from "@/lib/i18n/config";
 
 /**
  * The target-record configuration boundary. These literals are both the DTO
@@ -46,6 +47,7 @@ const timezoneSchema = z
   .max(64)
   .refine((timezone) => {
     try {
+      // eslint-disable-next-line healthlog/no-unlocalised-decimal -- validates a zone name and formats nothing
       Intl.DateTimeFormat(undefined, { timeZone: timezone });
       return true;
     } catch {
@@ -59,10 +61,7 @@ const profilePatchSchema = z
     heightCm: z.number().finite().min(30).max(300).nullable().optional(),
     dateOfBirth: z.string().date().nullable().optional(),
     gender: z.enum(["MALE", "FEMALE", "OTHER"]).nullable().optional(),
-    locale: z
-      .enum(["de", "en", "es", "fr", "it", "pl", "ko"])
-      .nullable()
-      .optional(),
+    locale: z.enum(locales).nullable().optional(),
     timezone: timezoneSchema.optional(),
     unitPreference: z.enum(["metric", "imperial"]).optional(),
     timeFormat: z.enum(["AUTO", "H12", "H24"]).optional(),

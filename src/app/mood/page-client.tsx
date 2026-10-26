@@ -18,6 +18,8 @@ import { ArrowRight, Plus, Wrench } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { useTranslations } from "@/lib/i18n/context";
+import { InlineAction } from "@/components/ui/inline-action";
+import { writeUrlState } from "@/lib/url-state";
 
 export default function MoodPageClient() {
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -70,7 +72,7 @@ export default function MoodPageClient() {
   // The list's empty state carries the add action while there is nothing
   // to list, so the header drops its own then.
   const [listEmpty, setListEmpty] = useState(false);
-  // v1.4.27 R4 RC2 — DOM-ref handle the form portals its action row
+  // v1.4.27 — DOM-ref handle the form portals its action row
   // into. The ref lives on the `<ResponsiveSheet>` footer slot so the
   // Sheet branch can sticky-pin Save / Cancel above the keyboard.
   const [footerEl, setFooterEl] = useState<HTMLDivElement | null>(null);
@@ -98,11 +100,10 @@ export default function MoodPageClient() {
 
   useEffect(() => {
     if (!searchParams.has("add")) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("add");
-    const search = next.toString();
-    router.replace(search ? `/mood?${search}` : "/mood");
-  }, [searchParams, router]);
+    // From the live query at the moment of the write, never the rendered
+    // copy, so a filter written meanwhile is kept (`@/lib/url-state`).
+    writeUrlState((params) => params.delete("add"), { afterPaint: true });
+  }, [searchParams]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -149,7 +150,7 @@ export default function MoodPageClient() {
                 className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9"
               >
                 <Link
-                  href="/settings/layout/mood"
+                  href="/settings/modules/mood"
                   aria-label={t("mood.customize")}
                   title={t("mood.customize")}
                 >
@@ -191,20 +192,18 @@ export default function MoodPageClient() {
         onEmptyChange={setListEmpty}
       />
 
-      {/* 2026-07-17 UX/IA audit M9 — mood tracking, the mental-wellbeing
+      {/* Mood tracking, the mental-wellbeing
           screeners, and the mood insights page form one mental-health
           domain but used to be three unconnected islands. A quiet pointer
           here (module-gated — no nav change) rather than a merge: capture
           vs. screener stay two defensible surfaces, just cross-linked. */}
       {user?.modules?.mentalHealth === true ? (
-        <Link
-          href="/mental-wellbeing"
-          data-slot="mood-mental-wellbeing-link"
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1.5 text-sm underline-offset-4 transition-colors hover:underline focus-visible:ring-[3px] focus-visible:outline-none"
-        >
-          {t("mood.mentalWellbeingLink")}
-          <ArrowRight className="size-3.5" aria-hidden="true" />
-        </Link>
+        <InlineAction asChild tone="muted" size="sm" className="gap-1.5">
+          <Link href="/mental-wellbeing" data-slot="mood-mental-wellbeing-link">
+            {t("mood.mentalWellbeingLink")}
+            <ArrowRight className="size-3.5" aria-hidden="true" />
+          </Link>
+        </InlineAction>
       ) : null}
     </div>
   );

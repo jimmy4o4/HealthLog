@@ -27,6 +27,7 @@ import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { type AdminAuditEntry, useAuthActionLabels } from "./_shared";
 import { apiGet } from "@/lib/api/api-fetch";
+import { InlineAction } from "@/components/ui/inline-action";
 
 const PREVIEW_LIMIT = 10;
 
@@ -38,7 +39,7 @@ interface AuditLogResponse {
 export function RecentAuditPreview() {
   const { t } = useTranslations();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: queryKeys.adminAuditOverview(),
     queryFn: async () => {
       return apiGet<AuditLogResponse>(
@@ -61,13 +62,12 @@ export function RecentAuditPreview() {
         titleId="admin-overview-audit-heading"
         title={t("admin.overview.auditTitle")}
         status={
-          <Link
-            href="/admin/login-overview"
-            className="text-primary inline-flex items-center gap-1 text-sm underline-offset-2 hover:underline"
-          >
-            {t("admin.overview.auditViewAll")}
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </Link>
+          <InlineAction asChild size="sm">
+            <Link href="/admin/login-overview">
+              {t("admin.overview.auditViewAll")}
+              <ArrowRight className="size-3.5" aria-hidden="true" />
+            </Link>
+          </InlineAction>
         }
       />
 
@@ -84,11 +84,13 @@ export function RecentAuditPreview() {
           </div>
         ) : isError ? (
           <QueryErrorRow
+            inset
+            error={error}
             message={t("admin.overview.auditLoadError")}
             onRetry={() => void refetch()}
           />
         ) : entries.length === 0 ? (
-          // v1.4.15 phase-C5: compact + plain so it nests inside the
+          // v1.4.15: compact + plain so it nests inside the
           // overview card without doubling the dashed border. Reuses
           // the existing audit-empty string.
           <EmptyState

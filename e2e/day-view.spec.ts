@@ -192,7 +192,9 @@ test.describe("the day view", () => {
     await expect(expand).toBeFocused();
     await expect(expand).toHaveAttribute("aria-expanded", "false");
     await expect(expand).toHaveAttribute("aria-controls", "day-docked-panel");
-    expect(await expand.getAttribute("aria-label")).toMatch(/^Show /);
+    // Named by its visible date (WCAG 2.5.3); the action is the tooltip.
+    expect(await expand.getAttribute("aria-label")).toBeNull();
+    expect(await expand.getAttribute("title")).toMatch(/^Show /);
     expect((await rail.boundingBox())!.width).toBeLessThanOrEqual(40);
 
     // Another page: the edge is still there and brings the same day back,
@@ -328,6 +330,40 @@ test.describe("the day view", () => {
     await expect(panel(page)).toHaveCount(0);
     await expect(page).toHaveURL(/\/mood$/);
     await expect(page.locator('[data-slot="day-strip"]')).toHaveCount(0);
+  });
+
+  test("beside the docked day, every blood-pressure value keeps its unit on its line", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "chromium-desktop",
+      "docked from 1280 px",
+    );
+    // The narrowest docked width: each half of the stat card is narrowest
+    // here. Four cells a row left "1xx mmHg" no room, so the systolic values
+    // broke onto two lines while the two-digit diastolic ones fitted.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/insights/blood-pressure?day=${isoDaysAgo(3)}`);
+    await expect(panel(page)).toHaveAttribute("data-shell", "docked");
+    const values = page.locator(
+      '[data-slot="metric-stat-series"] [data-slot="metric-stat"] > p:nth-child(2)',
+    );
+    await expect(values).toHaveCount(8);
+    const cells = await values.evaluateAll((els) =>
+      els.map((el) => {
+        const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+        return {
+          text: el.textContent ?? "",
+          lines: Math.round(el.getBoundingClientRect().height / lineHeight),
+          overflow: el.scrollWidth - el.clientWidth,
+        };
+      }),
+    );
+    for (const cell of cells) {
+      expect(cell.text, cell.text).toMatch(/mmHg$/);
+      expect(cell.lines, cell.text).toBe(1);
+      expect(cell.overflow, cell.text).toBeLessThanOrEqual(0);
+    }
   });
 
   test("the strip runs the full height; the search magnifier stays clear of it", async ({

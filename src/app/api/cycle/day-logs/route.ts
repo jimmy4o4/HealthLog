@@ -24,9 +24,8 @@ import {
   apiError,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
 } from "@/lib/api-response";
-import { checkRecordWriteRateLimit } from "@/lib/rate-limit";
+import { parseJsonBody } from "@/lib/api/body";
 import { withIdempotency } from "@/lib/idempotency";
 import { requireCycleEnabled } from "@/lib/cycle/gate";
 import {
@@ -95,42 +94,28 @@ async function postDayLog(request: NextRequest): Promise<Response> {
   // v1.37.0 — MANAGE. The upsert replaces the day, which is what edit means
   // here; the gate below resolves `user.gender` against the RECORD, so the
   // module follows the record rather than the caller.
-  const { user, actor } = await requireRecordAuth("manage", "cycle");
+  const { user } = await requireRecordAuth("manage", "cycle");
 
   const gate = await requireCycleEnabled(user.id, user.gender);
   if (!gate.enabled) return gate.response;
 
-  // Shared per-account write ceiling — see `checkRecordWriteRateLimit`. The
-  // batch siblings have always been capped; the per-record creates a looping
-  // client hits were not.
-  const writeRl = await checkRecordWriteRateLimit(actor.id);
-  if (!writeRl.allowed) {
-    return apiError("Too many writes, try again later", 429, {
-      errorCode: "record_write.rate_limited",
-    });
-  }
-
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, cycleDayLogCreateSchema, {
     maxBytes: 64 * 1024,
+    errorCode: "cycle.day-log.invalid",
+    onInvalid: (error, rawBody) => {
+      const shape = unstableExternalIdShape(rawBody);
+      annotate({
+        action: { name: "cycle.day-log.validation-failed" },
+        meta: {
+          issue_count: error.issues.length,
+          ...(shape
+            ? unstableExternalIdMeta("cycle.day_log.create", [shape])
+            : {}),
+        },
+      });
+    },
   });
-  if (jsonError) return jsonError;
-
-  const parsed = cycleDayLogCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    const shape = unstableExternalIdShape(rawBody);
-    annotate({
-      action: { name: "cycle.day-log.validation-failed" },
-      meta: {
-        issue_count: parsed.error.issues.length,
-        ...(shape
-          ? unstableExternalIdMeta("cycle.day_log.create", [shape])
-          : {}),
-      },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "cycle.day-log.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const entry = parsed.data;
   const tz = user.timezone ?? DEFAULT_TIMEZONE;

@@ -27,6 +27,14 @@ import {
  *
  * To run locally: `pnpm dlx playwright install --with-deps chromium`
  * once, then `pnpm e2e`.
+ *
+ * The journeys tagged `@critical` (`pnpm e2e:critical`) are the exception to
+ * the route interception above: they intercept nothing under `/api`, which
+ * `src/__tests__/e2e-critical-no-api-stub-guard.test.ts` holds. Most of them
+ * run in both Chromium projects on an account per project
+ * (`e2e/setup/critical-fixture.ts`), so they need no entry in the
+ * `chromium-mobile` ignore list below; the ones that are on that list are
+ * there for the reason written beside them.
  */
 /**
  * Drawn once here, before any server or worker exists, and published through
@@ -113,6 +121,10 @@ export default defineConfig({
       testIgnore: [
         "v137-record-session-fence-offline.spec.ts",
         "pwa-offline.spec.ts",
+        // Runs only in the WebKit phone project.
+        "bottom-sheet.spec.ts",
+        // Runs only in the two tablet projects.
+        "tablet-shell.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -228,6 +240,10 @@ export default defineConfig({
         // Runs only in the service-worker project.
         "v137-record-session-fence-offline.spec.ts",
         "pwa-offline.spec.ts",
+        // Runs only in the WebKit phone project.
+        "bottom-sheet.spec.ts",
+        // Runs only in the two tablet projects.
+        "tablet-shell.spec.ts",
         // The Apple Health import journey uploads an archive into the one
         // shared account and its refusal control asserts that the account's
         // Apple-Health row count did not move. A second project running the
@@ -251,7 +267,7 @@ export default defineConfig({
         // through stable attributes and the account's own API, not a mobile
         // layout, so it runs in one project.
         "notification-dispatch-journey.spec.ts",
-        // v1.39 (C2) — the setup-flow journeys each own one account and walk
+        // v1.39 — the setup-flow journeys each own one account and walk
         // it from the welcome screen to the dashboard, resetting it first. A
         // second project would walk the same account from a second browser
         // and each would find the other's answers. The two sweeps set their
@@ -302,6 +318,45 @@ export default defineConfig({
         // mobile-Safari smoke is exercised by the iOS app suite.
         ...devices["Pixel 5"],
         colorScheme: "dark",
+      },
+    },
+    // The bottom sheet's drag, on the engine it is for: iOS Safari is
+    // WebKit, and Chromium's touch scrolling and pointer capture behave
+    // differently enough that a pass there proves little about an iPhone.
+    // CI runs it in its own job inside the Playwright image, where WebKit's
+    // system libraries are already present; the Chromium shards set
+    // E2E_SKIP_WEBKIT so they neither install WebKit nor pick the spec up.
+    ...(process.env.E2E_SKIP_WEBKIT
+      ? []
+      : [
+          {
+            name: "webkit-iphone",
+            testMatch: ["bottom-sheet.spec.ts"],
+            use: {
+              ...devices["iPhone 13"],
+              colorScheme: "dark" as const,
+            },
+          },
+          // The app shell on an iPad (`tablet-shell.spec.ts`): the rail
+          // under a finger, `<main>` to its last line, scroll after a modal.
+          // In CI's WebKit job beside `webkit-iphone`. The spec sets each
+          // iPad size itself; the profile supplies touch and `isMobile`.
+          {
+            name: "webkit-tablet",
+            testMatch: ["tablet-shell.spec.ts"],
+            use: {
+              ...devices["iPad Pro 11 landscape"],
+              colorScheme: "dark" as const,
+            },
+          },
+        ]),
+    // The same spec on an Android tablet, in the Chromium shards.
+    {
+      name: "chromium-tablet",
+      testMatch: ["tablet-shell.spec.ts"],
+      use: {
+        ...devices["Galaxy Tab S4 landscape"],
+        colorScheme: "dark" as const,
       },
     },
   ],

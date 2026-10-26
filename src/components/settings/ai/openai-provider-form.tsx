@@ -21,12 +21,15 @@ import { apiPatch } from "@/lib/api/api-fetch";
 import { useTranslations } from "@/lib/i18n/context";
 import { aiInputDependentKeys, invalidateKeys } from "@/lib/query-keys";
 
+import { RemoveSavedKeyButton } from "./remove-saved-key-button";
+
 import {
   CUSTOM_MODEL_SENTINEL,
   OPENAI_MODEL_PRESETS,
   uiToLegacyProviderEnum,
   type UserAIProvider,
 } from "./shared";
+import { InlineAction } from "@/components/ui/inline-action";
 
 export function OpenAIProviderForm({
   userProvider,
@@ -172,15 +175,15 @@ export function OpenAIProviderForm({
       )}
 
       <div>
-        <button
-          type="button"
+        <InlineAction
+          tone="muted"
+          className="underline"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="text-muted-foreground hover:text-foreground text-xs underline"
         >
           {showAdvanced
             ? t("settings.ai.openai.hideAdvanced")
             : t("settings.ai.openai.showAdvanced")}
-        </button>
+        </InlineAction>
         {showAdvanced && (
           <div className="mt-2 space-y-1">
             <Label htmlFor="ai-openai-base-url">
@@ -206,6 +209,9 @@ export function OpenAIProviderForm({
       )}
 
       <SettingsCardActions>
+        {userProvider?.hasOpenaiKey && (
+          <RemoveSavedKeyButton field="openaiKey" />
+        )}
         <Button
           type="submit"
           size="sm"

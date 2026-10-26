@@ -18,9 +18,18 @@
  *
  * The report is English on purpose: it is read by whoever answers the issue.
  */
-import { getHeapStatistics } from "node:v8";
 
 import { prisma } from "@/lib/db";
+import { failureCondition } from "@/lib/jobs/failure-condition";
+import {
+  containerMemoryLimitMb,
+  heapLimitMb,
+  isBelowMemoryFloor,
+  isHeapLimitLow,
+  lowHeapLimitAdvice,
+  megabytes,
+  memoryFloorAdvice,
+} from "@/lib/support/heap-limit";
 import { shouldEmitSecureCookie } from "@/lib/auth/secure-cookie";
 import { isOidcConfigured, isOidcOnly } from "@/lib/auth/oidc";
 import { getLoggingConfig } from "@/lib/logging/config";
@@ -29,12 +38,10 @@ import {
   PROBLEMS_BUFFER_MAX,
 } from "@/lib/logging/in-memory-buffer";
 import type { WideEvent } from "@/lib/logging/types";
-import {
-  offhostBackupConfigured,
-  OFFHOST_BACKUP_QUEUE,
-} from "@/lib/jobs/offhost-backup";
+import { offhostBackupConfigured } from "@/lib/jobs/offhost-backup";
+import { OFFHOST_BACKUP_QUEUE } from "@/lib/jobs/offhost-backup-queue";
 import { DATA_BACKUP_QUEUE } from "@/lib/jobs/data-backup-policy";
-import { RESTORE_DRILL_QUEUE } from "@/lib/jobs/restore-drill";
+import { RESTORE_DRILL_QUEUE } from "@/lib/jobs/restore-drill-queue";
 import {
   JOB_FAILURE_WINDOW_HOURS,
   readFailingQueues,
@@ -79,6 +86,8 @@ export interface SupportReportFacts {
     node: string;
     processType: string;
     heapLimitMb: number;
+    /** The container's memory limit; `null` when there is none or it cannot be read. */
+    containerMemoryLimitMb: number | null;
     uptimeSeconds: number;
   };
   database: {
@@ -183,6 +192,11 @@ export function errorClassOf(text: string | null | undefined): string {
   const parts: string[] = [];
   const named = /^([A-Z][A-Za-z0-9]{1,60}(?:Error|Exception))\b/.exec(trimmed);
   if (named) parts.push(named[1]);
+  // The database condition (`statement_timeout`, `lock_timeout`, ...): a
+  // Prisma error carries it only as a SQLSTATE inside the message, and
+  // without it a statement timeout read as the bare class "Error" (#1239).
+  const condition = failureCondition(trimmed);
+  if (condition) return [...parts, condition].join(" ");
   const code =
     /\b(P\d{4})\b/.exec(trimmed) ??
     /\b(E[A-Z][A-Z_]{2,30})\b/.exec(trimmed) ??
@@ -605,9 +619,8 @@ export async function collectSupportReportFacts(
       builtAt: process.env.NEXT_PUBLIC_APP_BUILT_AT?.trim() || null,
       node: process.version,
       processType: getProcessType(),
-      heapLimitMb: Math.round(
-        getHeapStatistics().heap_size_limit / 1024 / 1024,
-      ),
+      heapLimitMb: heapLimitMb(),
+      containerMemoryLimitMb: containerMemoryLimitMb(),
       uptimeSeconds: Math.round(process.uptime()),
     },
     database,
@@ -684,8 +697,8 @@ function or(value: string | number | null | undefined, fallback = "unknown") {
     : String(value);
 }
 
-function megabytes(bytes: number | null): string {
-  return bytes === null ? "unknown" : `${Math.round(bytes / 1024 / 1024)} MB`;
+function sizeLine(bytes: number | null): string {
+  return bytes === null ? "unknown" : `${megabytes(bytes)} MB`;
 }
 
 function runLine(run: QueueRunFact | null): string {
@@ -721,7 +734,22 @@ export function renderSupportReport(facts: SupportReportFacts): string {
   row("Built at", facts.build.builtAt);
   row("Node", facts.build.node);
   row("Process type", facts.build.processType);
+  row(
+    "Container memory limit",
+    facts.build.containerMemoryLimitMb === null
+      ? "none or unreadable"
+      : `${facts.build.containerMemoryLimitMb} MB`,
+  );
+  if (isBelowMemoryFloor(facts.build.containerMemoryLimitMb)) {
+    row(
+      "Memory note",
+      `Below the supported floor. ${memoryFloorAdvice(facts.build.containerMemoryLimitMb as number)}`,
+    );
+  }
   row("Heap limit", `${facts.build.heapLimitMb} MB`);
+  if (isHeapLimitLow(facts.build.heapLimitMb)) {
+    row("Heap limit note", lowHeapLimitAdvice(facts.build.heapLimitMb));
+  }
   row(
     "Uptime",
     `${Math.floor(facts.build.uptimeSeconds / 3600)} h ${Math.floor((facts.build.uptimeSeconds % 3600) / 60)} min`,
@@ -730,7 +758,7 @@ export function renderSupportReport(facts: SupportReportFacts): string {
   section("Database");
   row("PostgreSQL", facts.database.version);
   row("Server time zone", facts.database.timezone);
-  row("Size", megabytes(facts.database.sizeBytes));
+  row("Size", sizeLine(facts.database.sizeBytes));
   row(
     "Last migration",
     facts.database.lastMigration

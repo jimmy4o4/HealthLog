@@ -1,0 +1,402 @@
+/**
+ * The pure arithmetic behind `HealthChart`: series names, day keys, the
+ * moving average, the personal baseline and where annotations and markers
+ * land. No React and no Recharts, so each piece has direct unit coverage.
+ */
+import { chartPointDayKey } from "@/components/day/chart-day";
+import { isWholeNumberType } from "@/components/day/use-day-value-format";
+import { translateOrNull } from "@/lib/i18n/translate-code";
+
+import { computeTickGrid, type TickLayout } from "@/lib/charts/x-axis-density";
+
+import type { ChartDataPoint } from "./types";
+
+const BASE_TYPE_LABEL_KEYS: Record<string, string> = {
+  WEIGHT: "charts.weight",
+  BLOOD_PRESSURE_SYS: "charts.systolic",
+  BLOOD_PRESSURE_DIA: "charts.diastolic",
+  PULSE: "charts.pulse",
+  BODY_FAT: "charts.bodyFat",
+  SLEEP_DURATION: "charts.sleep",
+  ACTIVITY_STEPS: "charts.steps",
+  BLOOD_GLUCOSE: "measurements.typeBloodGlucose",
+  TOTAL_BODY_WATER: "charts.bodyWater",
+  BONE_MASS: "charts.boneMass",
+  OXYGEN_SATURATION: "charts.spo2",
+};
+
+/**
+ * The measurement label key for a type outside the chart's short labels:
+ * `RESTING_HEART_RATE` → `measurements.typeRestingHeartRate`. Derived rather
+ * than imported, because the full label map would ride into every route that
+ * draws a chart; `health-chart-type-label.test.tsx` pins that the derivation
+ * matches `MEASUREMENT_TYPE_LABEL_KEYS` for every type it is used for.
+ */
+export function measurementLabelKey(type: string): string {
+  return `measurements.type${type
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("")}`;
+}
+
+/**
+ * The name a series carries in the trend line, the legend, the tooltip and
+ * the spoken summary. The chart's own short labels come first; every other
+ * type takes its measurement label, so no overlay ever shows the raw enum.
+ */
+export function getTypeLabel(
+  type: string,
+  valueMode: "raw" | "bmi",
+  t: (key: string) => string,
+): string {
+  if (type === "WEIGHT" && valueMode === "bmi") {
+    return "BMI";
+  }
+  const key = BASE_TYPE_LABEL_KEYS[type];
+  if (key) return t(key);
+  const measurementKey = measurementLabelKey(type);
+  return translateOrNull(t, measurementKey) ?? type;
+}
+
+/**
+ * A `YYYY-MM-DD` day-key formatter pinned to the time zone. Memoised per zone
+ * by the caller so the per-row loop reuses one `Intl.DateTimeFormat`.
+ */
+export function makeDayKeyFormatter(tz: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+export function toDayKey(
+  value: string,
+  formatter: Intl.DateTimeFormat,
+): string {
+  const parts = formatter.formatToParts(new Date(value));
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    throw new Error("Could not derive day key for chart");
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+export function dayKeyToTimestamp(dayKey: string): number {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return Date.UTC(year, month - 1, day, 12, 0, 0);
+}
+
+export function movingAverageByPoints(
+  data: Array<{ date: Date; value: number }>,
+  windowSize: number,
+): Array<{ date: Date; value: number }> {
+  if (data.length === 0) return [];
+
+  const sorted = [...data].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  return sorted.map((point, index) => {
+    const start = Math.max(0, index - windowSize + 1);
+    const window = sorted.slice(start, index + 1);
+    const avg =
+      window.reduce((sum, item) => sum + item.value, 0) / window.length;
+    return {
+      date: point.date,
+      value: Math.round(avg * 100) / 100,
+    };
+  });
+}
+
+/**
+ * The personal baseline: the median of a daily series, over at most its most
+ * recent 90 points (the rolling window "your normal" is framed on). Null
+ * under 5 points, since a baseline drawn from one or two readings misleads.
+ */
+export function computePersonalBaseline(
+  data: Array<{ value: number }>,
+  windowPoints = 90,
+): number | null {
+  if (data.length < 5) return null;
+  const recent = data.slice(-windowPoints);
+  const sorted = recent.map((d) => d.value).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
+/**
+ * An annotation placed on a visible point, with a 24-character truncation
+ * precomputed for narrow screens.
+ */
+export interface ResolvedAnnotation {
+  pointIndex: number;
+  label: string;
+  color: string;
+  truncatedLabel: string;
+}
+
+/** A vertical marker placed on a visible point. */
+export interface ResolvedVerticalMarker {
+  pointIndex: number;
+  color: string;
+  label: string | undefined;
+}
+
+/**
+ * Markers land only on a day the chart has a point for (matched by exact day
+ * key): a line through a gap in the axis would hang with no data context and
+ * read as a rendering bug. Off-window markers drop.
+ */
+export function resolveVerticalMarkerPositions(
+  markers: Array<{ date: string; label?: string; color?: string }> | undefined,
+  chartData: Array<{ date: string; timestamp?: number }> | undefined,
+): ResolvedVerticalMarker[] {
+  if (!markers || !chartData || chartData.length === 0) return [];
+  const indexByDate = new Map<string, number>();
+  for (const [i, point] of chartData.entries()) {
+    // Last write wins. A drawn point's `date` is its display label
+    // ("12.03."), so the day key comes from its timestamp, which a daily
+    // point holds at noon UTC of its day; a bare `{ date }` (the pure-helper
+    // tests) is the key.
+    indexByDate.set(
+      typeof point.timestamp === "number"
+        ? chartPointDayKey(point.timestamp)
+        : point.date,
+      i,
+    );
+  }
+  const out: ResolvedVerticalMarker[] = [];
+  for (const marker of markers) {
+    const idx = indexByDate.get(marker.date);
+    if (idx === undefined) continue;
+    out.push({
+      pointIndex: idx,
+      color: marker.color ?? "var(--success)",
+      label: marker.label,
+    });
+  }
+  return out;
+}
+
+/**
+ * Annotations snap to the nearest visible point within 7 days; further off
+ * they drop, or long buckets (monthly aggregation) would pull events from
+ * months away onto one point and stack their labels.
+ */
+export function resolveAnnotationPositions(
+  annotations:
+    Array<{ date: string; label: string; color: string }> | undefined,
+  chartData: Array<{ timestamp: number }> | undefined,
+): ResolvedAnnotation[] {
+  if (!annotations || !chartData || chartData.length === 0) return [];
+  const out: ResolvedAnnotation[] = [];
+  for (const annotation of annotations) {
+    const targetMs = Date.parse(`${annotation.date}T12:00:00Z`);
+    if (!Number.isFinite(targetMs)) continue;
+    let bestIdx = -1;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (const [i, point] of chartData.entries()) {
+      const delta = Math.abs(point.timestamp - targetMs);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx < 0 || bestDelta > 7 * 24 * 60 * 60 * 1000) continue;
+    const truncatedLabel =
+      annotation.label.length > 24
+        ? `${annotation.label.slice(0, 23)}…`
+        : annotation.label;
+    out.push({
+      pointIndex: bestIdx,
+      label: annotation.label,
+      color: annotation.color,
+      truncatedLabel,
+    });
+  }
+  return out;
+}
+
+/**
+ * The value axis's and the tooltip's number formats. The axis shows as many
+ * decimals as its tick step needs: none for a step of 1 or more (57, 58, 59
+ * bpm rather than 57.0, 58.0, 59.0), one for 0.5 or 0.2, two for 0.05. Without
+ * ticks, one decimal while the visible domain spans under 6 units, so two
+ * gridlines never round to the same integer (82.8 vs 83.5 kg).
+ */
+export function axisValueFormatters(
+  yDomain: [number, number] | undefined,
+  fmt: {
+    number: (value: number, digits: number) => string;
+    integer: (value: number) => string;
+  },
+  yTicks?: ReadonlyArray<number>,
+) {
+  const digits = axisDecimals(yDomain, yTicks);
+  return {
+    useDecimalAxis: digits > 0,
+    formatAxisValue: (value: number) =>
+      digits > 0 ? fmt.number(value, digits) : fmt.integer(value),
+    formatTooltipValue: (value: number) => fmt.number(value, 1),
+  };
+}
+
+function axisDecimals(
+  yDomain: [number, number] | undefined,
+  yTicks?: ReadonlyArray<number>,
+): number {
+  if (yTicks && yTicks.length >= 2) {
+    const step = Math.abs(yTicks[1]! - yTicks[0]!);
+    if (step >= 1 || step === 0) return 0;
+    return Math.min(2, Math.ceil(-Math.log10(step) - 1e-9));
+  }
+  const span = yDomain ? yDomain[1] - yDomain[0] : null;
+  return span !== null && span < 6 ? 1 : 0;
+}
+
+/**
+ * Below this chart width the labels beside the plot (the average's, the target
+ * zones') move into it, as they were drawn before 1.46. On a phone the room
+ * beside the plot took about a third of its width, and the legend, wrapping
+ * into the narrower space, took more of its height.
+ */
+export const LABELS_BESIDE_PLOT_MIN_WIDTH = 520;
+
+/** Whether a chart this wide keeps its labels beside the plot. */
+export function labelsBesidePlot(width: number): boolean {
+  return width >= LABELS_BESIDE_PLOT_MIN_WIDTH;
+}
+
+/**
+ * What the day shows at its top when opened from a point: the chart's name
+ * and the point's value as the tooltip reads it. A pressure or a pulse reads
+ * in whole numbers on the day, as in every list; the rest keep the tooltip's
+ * one decimal.
+ */
+export function dayFocusFor(
+  point: ChartDataPoint | undefined,
+  ctx: {
+    types: string[];
+    title: string;
+    unit?: string;
+    valueMode: "raw" | "bmi";
+    fmt: { number: (value: number, digits: number) => string };
+    formatTooltipValue: (value: number) => string;
+  },
+) {
+  if (!point) return null;
+  const parts = ctx.types
+    .map((type) => ({ type, v: point[type] }))
+    .filter((p): p is { type: string; v: number } => typeof p.v === "number");
+  if (parts.length === 0) return null;
+  return {
+    label: ctx.title,
+    value: parts
+      .map(({ type, v }) =>
+        ctx.valueMode === "raw" && isWholeNumberType(type)
+          ? ctx.fmt.number(Math.round(v), 0)
+          : ctx.formatTooltipValue(v),
+      )
+      .join("/"),
+    unit: ctx.unit,
+    types: ctx.valueMode === "raw" ? ctx.types : [],
+  };
+}
+
+/**
+ * Where the x labels are drawn: the plot's width (the container less the
+ * chart margins, the y axis, the right-hand label room and the axis padding)
+ * and the width a date label takes, with room between two. Null until the
+ * container has been measured; the ticks then fall back to the count cap.
+ *
+ * The label's width comes from a date in the reader's own format: at the
+ * axis's 11 px a digit or a separator is under 6 px wide (10/01/2026 draws at
+ * 58 px). A fixed 80 px kept the month grid off a 90-day chart on a phone,
+ * whose month starts sit about 78 px apart, and left it one date.
+ */
+export function xTickLayout(
+  containerWidth: number | null,
+  yAxisWidth: number,
+  rightRoom: number,
+  sampleLabel?: string,
+): TickLayout | undefined {
+  if (!containerWidth) return undefined;
+  const plotWidth = containerWidth - 16 - yAxisWidth - rightRoom - 20;
+  if (plotWidth <= 0) return undefined;
+  const textWidth = sampleLabel ? Math.ceil(sampleLabel.length * 5.8) : 58;
+  return {
+    plotWidth,
+    labelWidth: textWidth + 8,
+    yearLabelWidth: Math.ceil(4 * 5.8) + 8,
+  };
+}
+
+/**
+ * The year a tick on the yearly grid stands for. The tick sits on the point
+ * nearest January 1, which may be one from the December before when the
+ * series has a gap there; it still marks the new year.
+ */
+export function gridYear(timestamp: number): number {
+  const date = new Date(timestamp);
+  const year = date.getUTCFullYear();
+  return date.getUTCMonth() >= 6 ? year + 1 : year;
+}
+
+/** A date with a two-digit day and month: the widest an x label gets. */
+const X_LABEL_SAMPLE_DATE = new Date(Date.UTC(2000, 11, 31, 12));
+
+/**
+ * The x axis's props: one point per index, labelled with its date. Recharts
+ * ignores `interval` on a numeric axis, so the calendar grid arrives as
+ * explicit tick positions (`computeTickGrid`), and a yearly grid is labelled
+ * with the year alone.
+ */
+export function pointIndexXAxis({
+  chartData,
+  formatDate,
+  viewportWidth,
+  containerWidth,
+  yAxisWidth,
+  rightRoom,
+}: {
+  chartData: ChartDataPoint[] | undefined;
+  formatDate: (date: Date) => string;
+  viewportWidth: number;
+  containerWidth: number | null;
+  yAxisWidth: number;
+  rightRoom: number;
+}) {
+  const layout = xTickLayout(
+    containerWidth,
+    yAxisWidth,
+    rightRoom,
+    formatDate(X_LABEL_SAMPLE_DATE),
+  );
+  const grid = computeTickGrid(chartData ?? [], viewportWidth, layout);
+  return {
+    type: "number" as const,
+    dataKey: "pointIndex",
+    domain: [0, Math.max(0, (chartData?.length ?? 1) - 1)],
+    allowDecimals: false,
+    tick: { fontSize: 11, fill: "var(--muted-foreground)" },
+    tickLine: false,
+    axisLine: false,
+    tickFormatter: (value: number) => {
+      const timestamp = chartData?.[Math.round(value)]?.timestamp ?? Date.now();
+      return grid.yearly
+        ? String(gridYear(timestamp))
+        : formatDate(new Date(timestamp));
+    },
+    ticks: grid.ticks,
+    padding: { left: 10, right: 10 },
+    tickMargin: 10,
+  };
+}

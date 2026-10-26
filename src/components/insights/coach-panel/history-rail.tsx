@@ -7,7 +7,6 @@ import {
   MoreHorizontal,
   Paperclip,
   Pencil,
-  RotateCw,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -30,6 +29,8 @@ import {
   useCoachConversationHistory,
   useDeleteCoachConversationWithUndo,
 } from "./use-coach";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /**
  * The Coach's conversation list: the full history grouped by recency
@@ -88,6 +89,7 @@ export function HistoryRail({
     conversations,
     isLoading,
     isError,
+    error,
     refetch,
     hasNextPage,
     isFetchingNextPage,
@@ -160,23 +162,21 @@ export function HistoryRail({
           </p>
         ) : isError && visible.length === 0 ? (
           // A load failure must not read as "no conversations yet".
-          <div
-            data-slot="coach-history-error"
-            className="text-muted-foreground flex flex-col items-start gap-2 px-2 py-3 text-sm"
-          >
-            <p>{t("common.loadFailed")}</p>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RotateCw className="size-3.5" aria-hidden="true" />
-              {t("common.retry")}
-            </Button>
-          </div>
+          <QueryErrorRow
+            inset
+            error={error}
+            slot="coach-history-error"
+            onRetry={() => void refetch()}
+            className="px-2 py-3"
+          />
         ) : groups.length === 0 ? (
-          <p
+          <EmptyState
+            variant="plain"
+            size="compact"
+            title={t("insights.coach.historyEmpty")}
+            className="px-2"
             data-slot="coach-history-empty"
-            className="text-muted-foreground px-2 py-3 text-sm leading-relaxed"
-          >
-            {t("insights.coach.historyEmpty")}
-          </p>
+          />
         ) : (
           groups.map((group) => (
             <section

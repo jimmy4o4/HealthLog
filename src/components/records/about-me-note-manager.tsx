@@ -38,7 +38,10 @@ import { QueryErrorRow } from "@/components/ui/query-error-row";
 import { SettingsInfoTile } from "@/components/settings/_info-tile";
 import { Label } from "@/components/ui/label";
 import { ConfirmButton } from "@/components/ui/confirm-button";
-import { useAiCapability } from "@/hooks/use-ai-capability";
+import {
+  useAboutMeSaveTimeoutMs,
+  useAiCapability,
+} from "@/hooks/use-ai-capability";
 import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
@@ -82,6 +85,7 @@ export function AboutMeNoteManager() {
   // there is a note to clear.
   const hasNote = savedNote.length > 0;
 
+  const saveTimeoutMs = useAboutMeSaveTimeoutMs();
   const save = useMutation({
     mutationKey: queryKeys.coachAboutMe(),
     // Send only the note. `conditions` / `coachFocus` / `allergies` are
@@ -93,6 +97,7 @@ export function AboutMeNoteManager() {
       return apiPut<AboutMeData>(
         "/api/coach/about-me",
         withBaseToken(input, query.data?.updatedAt ?? undefined),
+        { signal: AbortSignal.timeout(saveTimeoutMs) },
       );
     },
     onSuccess: (next) => {
@@ -109,7 +114,7 @@ export function AboutMeNoteManager() {
       });
     },
     onError: (err) => {
-      // v1.32.21 (R5a) — a 409 means the stored self-context advanced since
+      // v1.32.21 — a 409 means the stored self-context advanced since
       // this edit was based. Refetch so the token advances, KEEP the draft so
       // the user can re-save, nudge gently.
       if (isConflict(err)) {
@@ -184,6 +189,7 @@ export function AboutMeNoteManager() {
 
       {query.isError && (
         <QueryErrorRow
+          error={query.error}
           message={t("settings.ai.aboutMe.loadError")}
           onRetry={() => query.refetch()}
         />
@@ -193,6 +199,7 @@ export function AboutMeNoteManager() {
         {hasNote && (
           <ConfirmButton
             slot="settings-about-me-clear"
+            destructive
             label={t("settings.ai.aboutMe.clear")}
             icon={<Trash2 className="size-4" aria-hidden />}
             variant="outline"

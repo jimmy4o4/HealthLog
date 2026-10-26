@@ -160,6 +160,59 @@ describe("ConfirmBody — the action is the only path to the callback", () => {
   });
 });
 
+describe("the destructive style reaches the action from both shapes", () => {
+  // `ConfirmButton` accepted `destructive` through its props type and dropped
+  // it on the way to the dialog, so every delete confirmation built on it
+  // offered a neutral primary where `ConfirmDialog` offered a red one.
+  function actionVariant(element: ReactElement): unknown {
+    const body = walk(element).find((el) => nameOf(el) === "ConfirmBody")!;
+    const rendered = walk(
+      (body.type as (p: unknown) => ReactElement)(body.props),
+    );
+    const action = rendered.find((el) => nameOf(el) === "AlertDialogAction")!;
+    return (action.props as Record<string, unknown>).variant;
+  }
+
+  it("ConfirmButton forwards destructive to the dialog's action", () => {
+    expect(
+      actionVariant(
+        ConfirmButton({
+          label: "Delete",
+          onConfirm: vi.fn(),
+          destructive: true,
+          ...COPY,
+        }) as ReactElement,
+      ),
+    ).toBe("destructive");
+  });
+
+  it("ConfirmButton stays neutral when the act does not destroy", () => {
+    expect(
+      actionVariant(
+        ConfirmButton({
+          label: "Reset",
+          onConfirm: vi.fn(),
+          ...COPY,
+        }) as ReactElement,
+      ),
+    ).toBe("default");
+  });
+
+  it("ConfirmDialog forwards it the same way", () => {
+    expect(
+      actionVariant(
+        ConfirmDialog({
+          open: true,
+          onOpenChange: vi.fn(),
+          onConfirm: vi.fn(),
+          destructive: true,
+          ...COPY,
+        }) as ReactElement,
+      ),
+    ).toBe("destructive");
+  });
+});
+
 describe("<ConfirmDialog> — the trigger-less half", () => {
   const onConfirm = vi.fn();
   const tree = walk(
@@ -186,5 +239,37 @@ describe("<ConfirmDialog> — the trigger-less half", () => {
       (el) => (el.props as Record<string, unknown>).onConfirm === onConfirm,
     );
     expect(carriers.map(nameOf)).toEqual(["ConfirmBody"]);
+  });
+});
+
+describe("ConfirmDialog with holdOpen — the request stays on screen", () => {
+  const onConfirm = vi.fn();
+  const body = walk(
+    ConfirmDialog({
+      open: true,
+      onOpenChange: () => {},
+      onConfirm,
+      pending: true,
+      holdOpen: true,
+      ...COPY,
+    }) as ReactElement,
+  ).find((el) => nameOf(el) === "ConfirmBody")!;
+  const rendered = walk(
+    (body.type as (p: unknown) => ReactElement)(body.props),
+  );
+
+  it("keeps the dialog open on confirm and still calls back", () => {
+    const action = rendered.find((el) => nameOf(el) === "AlertDialogAction")!;
+    const preventDefault = vi.fn();
+    (action.props as { onClick: (e: unknown) => void }).onClick({
+      preventDefault,
+    });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds Cancel while the request runs", () => {
+    const cancel = rendered.find((el) => nameOf(el) === "AlertDialogCancel")!;
+    expect((cancel.props as { disabled?: boolean }).disabled).toBe(true);
   });
 });

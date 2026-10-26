@@ -1,18 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight, HeartPulse } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { HeartPulse } from "lucide-react";
 
-import { useAuth } from "@/hooks/use-auth";
-import { queryKeys } from "@/lib/query-keys";
-import { apiGet } from "@/lib/api/api-fetch";
 import { useTranslations } from "@/lib/i18n/context";
-import { cn } from "@/lib/utils";
-import { TileHeader } from "@/components/insights/tile-header";
+import { CrossLinkCard } from "@/components/insights/cross-link-card";
+import { useEcgList } from "./use-ecg-list";
 
 /**
- * S10 — ECG cross-link, the pointer from the resting-HR / pulse context into
+ * ECG cross-link, the pointer from the resting-HR / pulse context into
  * the ECG viewer (`/insights/ecg`). Points at the routed sub-page, which
  * always mounts, rather than the overview `#ecg` fragment, which is absent
  * until the overview section's own fetch resolves (UX-flows finding F1-1).
@@ -29,18 +24,6 @@ import { TileHeader } from "@/components/insights/tile-header";
  * surfaces share one cache entry with an identical response shape.
  */
 
-type EcgClassification = "IRREGULAR" | "NOT_DETECTED" | "INCONCLUSIVE" | null;
-
-interface EcgRecordingListItem {
-  id: string;
-  classification: EcgClassification;
-}
-
-interface EcgListResponse {
-  recordings: EcgRecordingListItem[];
-  hasRecordings: boolean;
-}
-
 /** The device verdict, surfaced verbatim and attributed to the device. */
 const RESULT_LABEL_KEYS: Record<string, string> = {
   IRREGULAR: "insights.ecg.result.irregular",
@@ -54,20 +37,9 @@ interface EcgCrossLinkProps {
 }
 
 export function EcgCrossLink({ enabled = true, className }: EcgCrossLinkProps) {
-  const { isAuthenticated } = useAuth();
   const { t } = useTranslations();
 
-  const { data } = useQuery({
-    queryKey: queryKeys.insightsEcgList(),
-    queryFn: async () => {
-      try {
-        return await apiGet<EcgListResponse>("/api/insights/ecg");
-      } catch {
-        throw new Error(t("insights.ecg.loadError"));
-      }
-    },
-    enabled: enabled && isAuthenticated,
-  });
+  const data = useEcgList(enabled).data?.data;
 
   // Data-availability gate — never paint an empty pointer.
   if (!data || !data.hasRecordings || data.recordings.length === 0) return null;
@@ -87,27 +59,20 @@ export function EcgCrossLink({ enabled = true, className }: EcgCrossLinkProps) {
     : null;
 
   return (
-    <Link
+    <CrossLinkCard
       href="/insights/ecg"
-      data-slot="ecg-cross-link"
-      className={cn(
-        // `.metric-accent` — the heart-family identity edge (`--tile-strain`,
-        // the wellness vocabulary's cardiovascular hue), the same mark the
-        // `ecg_new_recording` rail card carries, so the two ECG pointers
-        // read as one family.
-        "bg-card hover:bg-accent/40 focus-visible:ring-ring/50 metric-accent block space-y-1.5 rounded-xl border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none",
-        className,
-      )}
+      slot="ecg-cross-link"
+      icon={HeartPulse}
+      title={t("insights.ecg.crossLink.title")}
+      body={resultText ? `${countText} ${resultText}` : countText}
+      cta={t("insights.ecg.crossLink.cta")}
+      className={className}
+      // `.metric-accent` — the heart-family identity edge (`--tile-strain`,
+      // the wellness vocabulary's cardiovascular hue), the same mark the
+      // `ecg_new_recording` rail card carries, so the two ECG pointers read
+      // as one family.
+      cardClassName="metric-accent"
       style={{ "--tile-hue": "var(--tile-strain)" } as React.CSSProperties}
-    >
-      <TileHeader icon={HeartPulse} title={t("insights.ecg.crossLink.title")} />
-      <span className="text-muted-foreground block text-xs leading-snug">
-        {resultText ? `${countText} ${resultText}` : countText}
-      </span>
-      <span className="text-primary inline-flex shrink-0 items-center gap-1 text-xs font-medium">
-        {t("insights.ecg.crossLink.cta")}
-        <ArrowRight className="h-4 w-4" aria-hidden="true" />
-      </span>
-    </Link>
+    />
   );
 }

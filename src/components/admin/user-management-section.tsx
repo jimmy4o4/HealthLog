@@ -16,6 +16,7 @@ import { showErrorToast } from "@/lib/errors/error-toast";
 import { Badge } from "@/components/ui/badge";
 import { SettingsCardActions } from "@/components/settings/_card-actions";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,7 @@ import { ListRow } from "@/components/ui/list-row";
 import { useTranslations } from "@/lib/i18n/context";
 import { queryKeys } from "@/lib/query-keys";
 import { type AdminUser, PasswordInput } from "./_shared";
+import { PendingDeletionControls } from "./pending-deletion-controls";
 import { apiGet, apiPost, apiPut } from "@/lib/api/api-fetch";
 import {
   recentProofErrorMessage,
@@ -55,8 +57,7 @@ type UserFilter = "all" | "admin" | "user";
 
 export function UserManagementSection() {
   const { t } = useTranslations();
-  const { user } = useAuth();
-  const currentUserId = user?.id ?? "";
+  const currentUserId = useAuth().user?.id ?? "";
   const queryClient = useQueryClient();
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editUsername, setEditUsername] = useState("");
@@ -162,7 +163,8 @@ export function UserManagementSection() {
     setEditQuotaGb(
       u.documentQuotaBytes === null
         ? ""
-        : String(Math.round((u.documentQuotaBytes / 1_073_741_824) * 10) / 10),
+        : // eslint-disable-next-line healthlog/no-unlocalised-decimal -- value of a type="number" input, which only takes a full stop
+          String(Math.round((u.documentQuotaBytes / 1_073_741_824) * 10) / 10),
     );
   }
 
@@ -180,6 +182,7 @@ export function UserManagementSection() {
    */
   const renderUserActions = (u: AdminUser) => (
     <>
+      <PendingDeletionControls user={u} />
       <Button
         variant="ghost"
         size="sm"
@@ -200,14 +203,10 @@ export function UserManagementSection() {
               ? t("admin.demoteToUser")
               : t("admin.promoteToAdmin")
         }
-        aria-label={
-          u.role === "ADMIN"
-            ? t("admin.demoteToUser")
-            : t("admin.promoteToAdmin")
-        }
       >
         <Shield className="h-3 w-3" aria-hidden="true" />
         {u.role === "ADMIN" ? t("admin.toUser") : t("admin.toAdmin")}
+        <span className="sr-only">, {u.username}</span>
       </Button>
       <Button
         variant="ghost"
@@ -224,15 +223,11 @@ export function UserManagementSection() {
             ? t("admin.mfaEnforcedOnHint")
             : t("admin.mfaEnforcedOffHint")
         }
-        aria-label={
-          u.mfaEnforced
-            ? t("admin.mfaEnforcedOnHint")
-            : t("admin.mfaEnforcedOffHint")
-        }
         aria-pressed={u.mfaEnforced}
       >
         <ShieldCheck className="h-3 w-3" aria-hidden="true" />
         {u.mfaEnforced ? t("admin.mfaEnforcedOn") : t("admin.mfaEnforcedOff")}
+        <span className="sr-only">, {u.username}</span>
       </Button>
       {/* The three icon tools travel as one group: on a phone the row wraps
           between the labelled toggles and the tools, never leaving the
@@ -311,25 +306,22 @@ export function UserManagementSection() {
         className="flex flex-wrap items-center gap-1.5"
         data-slot="admin-users-filter"
       >
-        {(["all", "admin", "user"] as const).map((value) => (
-          <Button
-            key={value}
-            // Neutral pills: the selected filter is a state, not a call to
-            // action, so it never takes the primary fill.
-            variant={filter === value ? "secondary" : "outline"}
-            size="sm"
-            className="min-h-11 min-w-11 px-3 text-xs sm:min-h-9"
-            onClick={() => setFilter(value)}
-            aria-pressed={filter === value}
-          >
-            {t(`admin.section.users.filter.${value}`)}
-          </Button>
-        ))}
+        <Segmented
+          mode="toggle"
+          label={t("admin.section.users.filterLabel")}
+          slot="admin-users-filter-choice"
+          value={filter}
+          onChange={setFilter}
+          options={(["all", "admin", "user"] as const).map((value) => ({
+            value,
+            label: t(`admin.section.users.filter.${value}`),
+          }))}
+        />
       </div>
 
       {filteredUsers ? (
         filteredUsers.length === 0 ? (
-          // v1.4.15 phase-C5: dedicated empty state. The previous build
+          // v1.4.15: dedicated empty state. The previous build
           // rendered an empty `<tbody>` so an admin filter that returned
           // no rows produced a blank rectangle; the icon + filter-aware
           // copy + "Show all users" CTA make the state explicit.
@@ -357,7 +349,7 @@ export function UserManagementSection() {
               `md:block hidden` swaps it out for the card-list below at
               `< md`. Hiding the table-only wrapper (instead of just
               the cells) saves DOM weight on mobile too. */}
-            <div className="hidden overflow-x-auto md:block">
+            <div className="relative hidden overflow-x-auto md:block">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-muted-foreground border-b text-xs">

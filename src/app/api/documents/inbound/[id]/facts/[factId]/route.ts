@@ -1,5 +1,5 @@
 /**
- * v1.25 (W-DOCS-IN) — edit a staged fact before approval.
+ * v1.25 — edit a staged fact before approval.
  *
  * The review screen corrects OCR / units / dates / codes on a staged fact. A
  * successful edit rewrites the fact's FHIR-staged payload (still STATED status
@@ -11,12 +11,8 @@
 import { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { prisma } from "@/lib/db";
 import {
   encryptFactData,
@@ -100,13 +96,10 @@ export const PATCH = apiHandler(
       });
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, inboundFactEditSchema, {
       maxBytes: 16 * 1024,
     });
-    if (jsonError) return jsonError;
-
-    const parsed = inboundFactEditSchema.safeParse(body);
-    if (!parsed.success) return returnAllZodIssues(parsed.error, 422);
+    if (!parsed.ok) return parsed.error;
 
     // The edit cannot change the fact's resource type.
     if (parsed.data.factType !== fact.factType) {

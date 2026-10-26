@@ -12,15 +12,17 @@ import {
 import { formatUpdatedLabel } from "@/lib/i18n/relative-time";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
+import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { AskCoachIconButton } from "@/components/insights/ask-coach-action";
 import { ProseBlocks } from "@/components/insights/prose-blocks";
 import { apiGet } from "@/lib/api/api-fetch";
 import { InsightSectionCard } from "./insight-section-card";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 
 /**
- * v1.11.0 W3 — period-narrative card (Pillar P1).
+ * v1.11.0 — period-narrative card (Pillar P1).
  *
  * A calm, top-of-overview summary of the user's last week / month, drawn from
  * the read-only `GET /api/insights/narrative` route. The route is
@@ -121,13 +123,33 @@ export function PeriodNarrativeCard({
     );
   }
 
-  // The route never errors the page; on a fetch error or whenever there is no
-  // real generated narrative yet (empty account, or a first warm still in
-  // flight) the card un-mounts itself rather than showing an error, a
-  // "preparing" husk, or the methodology framing. The query stays mounted and
-  // polls in the background, so the card appears the moment a narrative lands.
+  // A failed read is said, with a retry: hiding it would look exactly like
+  // "no narrative yet". Whenever there is no real generated narrative yet
+  // (empty account, the capability off, or a first warm still in flight) the
+  // card un-mounts itself rather than showing a "preparing" husk or the
+  // methodology framing. The query stays mounted and polls in the background,
+  // so the card appears the moment a narrative lands.
+  if (query.isError && !query.data) {
+    return (
+      <section
+        data-slot="period-narrative-section"
+        aria-label={t("insights.narrativeTitle")}
+        className={cn("space-y-3", className)}
+      >
+        <SectionHeading
+          icon={CalendarRange}
+          title={t("insights.narrativeTitle")}
+        />
+        <QueryErrorRow
+          error={query.error}
+          slot="period-narrative-error"
+          onRetry={() => void query.refetch()}
+        />
+      </section>
+    );
+  }
   const narrative = query.data?.narrative ?? null;
-  if (query.isError || !narrative) {
+  if (!narrative) {
     return null;
   }
 
@@ -154,29 +176,18 @@ export function PeriodNarrativeCard({
             reads best. */}
         <div className="flex items-start justify-between gap-2">
           {/* Calm segmented control, no chart. */}
-          <div className="flex gap-1">
-            {(["week", "month"] as const).map((p) => {
-              const active = period === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setPeriod(p)}
-                  className={cn(
-                    "focus-visible:ring-ring inline-flex min-h-11 items-center rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none",
-                    active
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {p === "week"
-                    ? t("insights.narrativeWeek")
-                    : t("insights.narrativeMonth")}
-                </button>
-              );
-            })}
-          </div>
+          <Segmented
+            size="sm"
+            mode="toggle"
+            label={t("insights.narrativeTitle")}
+            slot="period-narrative-period"
+            value={period}
+            onChange={setPeriod}
+            options={[
+              { value: "week", label: t("insights.narrativeWeek") },
+              { value: "month", label: t("insights.narrativeMonth") },
+            ]}
+          />
           <AskCoachIconButton
             question={t(
               period === "week"
@@ -187,7 +198,7 @@ export function PeriodNarrativeCard({
           />
         </div>
 
-        {/* v1.22 (W6) — real paragraphs via the shared ProseBlocks helper
+        {/* v1.22 — real paragraphs via the shared ProseBlocks helper
             (still plain text children — NO markdown renderer, XSS posture). */}
         <div className="text-foreground text-sm">
           <ProseBlocks text={narrative.text} />

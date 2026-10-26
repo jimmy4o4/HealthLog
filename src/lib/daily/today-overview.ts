@@ -27,6 +27,8 @@ import { formatDurationMinutes } from "@/lib/i18n/duration";
 import { isFromToday } from "@/lib/insights/measurement-freshness";
 import type { ModuleKey } from "@/lib/modules/registry";
 import type { PriorityItem } from "@/lib/daily/priority-item";
+import { translateOrNull } from "@/lib/i18n/translate-code";
+import { visitsPath } from "@/lib/encounters/visit-links";
 
 type Translate = (
   key: string,
@@ -510,8 +512,7 @@ function outsideBy(v: TodayVital): number {
 
 function vitalLabel(t: Translate, type: string): string {
   const key = `daily.today.vital.${type}`;
-  const label = t(key);
-  return label === key ? t("daily.today.vital.generic") : label;
+  return translateOrNull(t, key) ?? t("daily.today.vital.generic");
 }
 
 function sleepDiff(sleep: TodaySleep): number | null {
@@ -681,7 +682,8 @@ function appointmentFact(
         : "daily.todayFact.appointment.tomorrow",
       { time: visit.timeLabel, what },
     ),
-    href: "/checkups",
+    // The visit itself, or the visits list when the line counts several.
+    href: visitsPath(sameDay.map((v) => v.id)),
   };
 }
 

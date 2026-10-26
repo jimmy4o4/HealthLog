@@ -30,46 +30,60 @@ const MANAGED_INTEGRATIONS: readonly IntegrationKey[] = [
 ];
 
 /**
- * A managed profile may disclose whether its existing integrations are
- * connected, but this endpoint deliberately has no control or credential
- * projection. OAuth and provider state cannot safely carry a record selector.
+ * Whether a managed profile's integrations are connected and how each is
+ * doing. No credential projection. A guardian connects and disconnects the
+ * profile's OAuth providers through `./[provider]/connect` and
+ * `./[provider]/disconnect`, whose state names the profile itself rather than
+ * carrying a record selector.
  */
 export const GET = apiHandler(async () => {
   const context = await requireGuardianAuth();
   const access = resolveGuardianRecordSettingsAccess(context);
   if (!access) throw new SharingAccessDeniedError();
-  const [statuses, withings, whoop, fitbit, googleHealth] = await Promise.all([
-    Promise.all(
-      MANAGED_INTEGRATIONS.map((integration) =>
-        getIntegrationStatus(access.recordId, integration),
+  const [statuses, withings, whoop, fitbit, googleHealth, credentials] =
+    await Promise.all([
+      Promise.all(
+        MANAGED_INTEGRATIONS.map((integration) =>
+          getIntegrationStatus(access.recordId, integration),
+        ),
       ),
-    ),
-    prisma.withingsConnection.findUnique({
-      where: { userId: access.recordId },
-      select: { id: true },
-    }),
-    prisma.whoopConnection.findUnique({
-      where: { userId: access.recordId },
-      select: { whoopUserId: true },
-    }),
-    prisma.fitbitConnection.findUnique({
-      where: { userId: access.recordId },
-      select: { id: true },
-    }),
-    prisma.googleHealthConnection.findUnique({
-      where: { userId: access.recordId },
-      select: { id: true },
-    }),
-  ]);
+      prisma.withingsConnection.findUnique({
+        where: { userId: access.recordId },
+        select: { id: true },
+      }),
+      prisma.whoopConnection.findUnique({
+        where: { userId: access.recordId },
+        select: { whoopUserId: true },
+      }),
+      prisma.fitbitConnection.findUnique({
+        where: { userId: access.recordId },
+        select: { id: true },
+      }),
+      prisma.googleHealthConnection.findUnique({
+        where: { userId: access.recordId },
+        select: { id: true },
+      }),
+      // Presence only; the credentials themselves are not on the per-request
+      // user and are not read past this null check.
+      prisma.user.findUnique({
+        where: { id: context.user.id },
+        select: {
+          nightscoutUrlEncrypted: true,
+          polarAccessTokenEncrypted: true,
+          ouraAccessTokenEncrypted: true,
+          stravaAccessTokenEncrypted: true,
+        },
+      }),
+    ]);
   const connected: Record<IntegrationKey, boolean> = {
     withings: withings !== null,
     whoop: whoop?.whoopUserId != null,
     fitbit: fitbit !== null,
     "google-health": googleHealth !== null,
-    nightscout: context.user.nightscoutUrlEncrypted !== null,
-    polar: context.user.polarAccessTokenEncrypted !== null,
-    oura: context.user.ouraAccessTokenEncrypted !== null,
-    strava: context.user.stravaAccessTokenEncrypted !== null,
+    nightscout: (credentials?.nightscoutUrlEncrypted ?? null) !== null,
+    polar: (credentials?.polarAccessTokenEncrypted ?? null) !== null,
+    oura: (credentials?.ouraAccessTokenEncrypted ?? null) !== null,
+    strava: (credentials?.stravaAccessTokenEncrypted ?? null) !== null,
     // Not offered on a managed profile (no managed integrations before
     // v1.44); listed so the map stays total.
     dawarich: false,

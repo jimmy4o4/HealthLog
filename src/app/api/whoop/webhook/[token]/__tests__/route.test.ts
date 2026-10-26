@@ -166,7 +166,7 @@ describe("POST /api/whoop/webhook/[token]", () => {
     expect(res.status).toBe(200);
     expect(prisma.whoopConnection.findUnique).toHaveBeenCalledWith({
       where: { whoopUserId: "42" },
-      select: { userId: true },
+      select: { userId: true, user: { select: { deletionRequestedAt: true } } },
     });
     // v1.16.16 (iOS #17) — the resource id rides through so the worker can do
     // a targeted fetch-by-id refresh instead of re-walking the collection.
@@ -191,14 +191,16 @@ describe("POST /api/whoop/webhook/[token]", () => {
     expect(getGlobalBoss).not.toHaveBeenCalled();
   });
 
-  it("soft-deletes matching rows on a `*.deleted` event", async () => {
+  it("soft-deletes the recovery's own rows on a `recovery.deleted` event", async () => {
     vi.mocked(prisma.whoopConnection.findUnique).mockResolvedValue({
       userId: "user-1",
     } as never);
 
+    // The v2 recovery webhook id is the associated sleep's UUID, which also
+    // prefixes the night's sleep rows — the match names the recovery's ids.
     const req = signedRequest({
       user_id: 42,
-      id: "rec-uuid",
+      id: "sleep-uuid",
       type: "recovery.deleted",
     });
     const res = await POST(req, ctx(SECRET));
@@ -208,7 +210,15 @@ describe("POST /api/whoop/webhook/[token]", () => {
       where: {
         userId: "user-1",
         source: "WHOOP",
-        externalId: { startsWith: "rec-uuid:" },
+        externalId: {
+          in: [
+            "sleep-uuid:recovery",
+            "sleep-uuid:hrv_rmssd",
+            "sleep-uuid:rhr",
+            "sleep-uuid:spo2",
+            "sleep-uuid:skin_temp",
+          ],
+        },
         deletedAt: null,
       },
       data: { deletedAt: expect.any(Date), syncVersion: { increment: 1 } },

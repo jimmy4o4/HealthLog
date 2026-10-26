@@ -14,8 +14,9 @@
  * v1.27.9 — the card generalises over the four-instrument registry and
  * carries the instrument's required attribution/licence line (WHO
  * CC BY-NC-SA citation for the WHO-5, the Sleepio CC BY-NC citation for
- * the SCI, the Pfizer grant for PHQ/GAD). A locale without validated item
- * wording additionally gets the honest "validated in English" note. The
+ * the SCI, the Pfizer grant for PHQ/GAD). A language whose text is the
+ * app's own translation additionally gets the note that it has not been
+ * validated. The
  * card BODY (header + last-result block) opens the per-instrument detail —
  * the Vorsorge-/med-card interaction — while the bottom-pinned Start
  * button stays a separate, non-overlapping action.
@@ -23,13 +24,14 @@
  * v1.27.24 — the attribution left the space UNDER the Start button (which
  * crowded the action) for a discreet info affordance at the top-right of
  * the card header, at the heading's height. A single icon button opens a
- * popover carrying the verbatim citation (+ the "validated in English"
+ * popover carrying the verbatim citation (+ the unvalidated-translation
  * note where it applies), so the Start button stands alone with clean
  * space below it. The citation still renders verbatim in full view on the
  * result and detail surfaces; here it is one tap away. The trigger is a
  * sibling of the detail-open button (never nested inside it) so the two
  * actions never collide.
  */
+import { EmptyState } from "@/components/ui/empty-state";
 import { Info } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -47,10 +49,8 @@ import {
   useDisplayTimezone,
 } from "@/lib/i18n/context";
 import { relativeCalendarDate } from "@/lib/i18n/relative-time";
-import {
-  INSTRUMENTS,
-  hasValidatedItems,
-} from "@/lib/mental-health/instruments";
+import { INSTRUMENTS } from "@/lib/mental-health/instruments";
+import { useQuestionnaireWording } from "@/hooks/use-questionnaire-wording";
 
 import type { AssessmentRow, InstrumentId } from "./types";
 
@@ -82,12 +82,15 @@ export function InstrumentCard({
   const displayTz = useDisplayTimezone();
   const def = INSTRUMENTS[instrument];
   const key = def.i18nKey;
+  const unvalidated =
+    useQuestionnaireWording(locale)?.[instrument].validated === false;
   const title = t(`mentalHealth.instrument.${key}`);
 
   return (
     <Card
       className="relative h-full gap-3 md:gap-3"
       data-slot="instrument-card"
+      data-instrument={instrument}
     >
       {/* Source / licence — a discreet info control at the top-right of the
           header, at the heading's height. A sibling of the detail-open
@@ -114,9 +117,7 @@ export function InstrumentCard({
             className="text-muted-foreground mt-1 text-xs leading-snug"
             data-slot="instrument-card-attribution"
           >
-            {!hasValidatedItems(instrument, locale) && (
-              <>{t("mentalHealth.validatedInEnglishNote")} </>
-            )}
+            {unvalidated && <>{t("mentalHealth.wording.unvalidatedNote")} </>}
             {def.attribution}
           </p>
         </PopoverContent>
@@ -132,7 +133,6 @@ export function InstrumentCard({
         type="button"
         onClick={onOpenDetail}
         data-slot="instrument-card-open"
-        aria-label={`${title}: ${t("mentalHealth.openDetail")}`}
         className="focus-visible:ring-ring block w-full rounded-t-xl text-left focus-visible:ring-2 focus-visible:outline-none"
       >
         <MedicationCardHeader
@@ -140,6 +140,7 @@ export function InstrumentCard({
           dose=""
           categoryLabel={t(`mentalHealth.instrumentSub.${key}`)}
         />
+        <span className="sr-only">{t("mentalHealth.openDetail")}</span>
       </button>
 
       {/* Label/value block in the Vorsorge card's next-last grammar. With
@@ -170,23 +171,33 @@ export function InstrumentCard({
           </div>
         </div>
       ) : (
-        <div className="text-muted-foreground flex min-h-[2.75rem] items-center px-4 text-sm md:px-6">
-          {t("mentalHealth.noResultYet")}
-        </div>
+        <EmptyState
+          variant="plain"
+          size="compact"
+          className="px-4 md:px-6"
+          title={t("mentalHealth.noResultYet")}
+        />
       )}
 
-      <CardContent className="flex h-full flex-col">
-        {/* Bottom-pinned single primary action — the med-/Vorsorge card slot.
-            Nothing sits below it now: the attribution moved to the header's
-            info control, so the Start button stands alone with clean space. */}
-        {canManageMind && (
+      {/* Bottom-pinned single primary action — the med-/Vorsorge card slot.
+          Nothing sits below it now: the attribution moved to the header's
+          info control, so the Start button stands alone with clean space.
+          Without the right to start, the slot is not drawn at all: an empty
+          one still took the card's gap at its foot. */}
+      {canManageMind && (
+        <CardContent className="flex h-full flex-col">
           <div className="mt-auto pt-0">
-            <Button type="button" className="min-h-11 w-full" onClick={onStart}>
+            <Button
+              type="button"
+              className="min-h-11 w-full"
+              onClick={onStart}
+              data-slot="instrument-card-start"
+            >
               {t("mentalHealth.start")}
             </Button>
           </div>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
     </Card>
   );
 }

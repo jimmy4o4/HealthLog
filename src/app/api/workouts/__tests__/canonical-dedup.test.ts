@@ -1,7 +1,7 @@
 /**
  * Unit suite for `GET /api/workouts` — the canonical-dedup contract.
  *
- * v1.4.27 B7 / BL-P2-3 — original wiring with `pickCanonicalWorkout()`.
+ * v1.4.27 — original wiring with `pickCanonicalWorkout()`.
  * v1.4.32 — swap to `pickCanonicalWorkoutRows()` (v1.4.30) so the
  * per-user source-priority ladder governs the canonical pick. The
  * test pins:
@@ -26,6 +26,10 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: vi.fn(),
     },
+    // v1.44 — the first page carries the training load.
+    strainTrimpCache: { findMany: vi.fn(async () => []) },
+    measurementRollup: { findMany: vi.fn(async () => []) },
+    $queryRaw: vi.fn(async () => []),
   },
 }));
 
@@ -354,9 +358,11 @@ describe("GET /api/workouts — canonical dedup", () => {
         where: {
           userId: "user-1",
           sportType: "running",
+          // The range plus one duplicate window on either side, so a twin
+          // just outside the filter still decides which row is canonical.
           startedAt: {
-            gte: new Date("2026-01-01T00:00:00.000Z"),
-            lte: new Date("2026-01-02T00:00:00.000Z"),
+            gte: new Date("2025-12-31T23:55:00.000Z"),
+            lt: new Date("2026-01-02T00:05:00.000Z"),
           },
         },
       }),
@@ -421,5 +427,49 @@ describe("GET /api/workouts — canonical dedup", () => {
     expect([...page1Ids, ...page2Ids].sort()).toEqual(
       Array.from({ length: 8 }, (_, i) => `apple-${i}`).sort(),
     );
+  });
+});
+
+describe("GET /api/workouts — training load (v1.44)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetAllCachesForTests();
+    vi.mocked(getSession).mockResolvedValue(SESSION_OK as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      sourcePriorityJson: null,
+    } as never);
+    vi.mocked(requireModuleEnabled).mockResolvedValue({
+      enabled: true,
+    } as never);
+    vi.mocked(prisma.workout.findMany).mockResolvedValue([] as never);
+  });
+
+  it("carries fitness, fatigue and form on the first page only", async () => {
+    const yesterday = new Date(Date.now() - 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      day: new Date(
+        Date.parse(`${yesterday}T00:00:00Z`) - (49 - i) * 86_400_000,
+      )
+        .toISOString()
+        .slice(0, 10),
+      dayTrimp: 80,
+    }));
+    vi.mocked(prisma.strainTrimpCache.findMany).mockResolvedValue(
+      rows as never,
+    );
+    const first = await (await GET(makeRequest())).json();
+    expect(first.data.trainingLoad).toMatchObject({
+      status: "ok",
+      asOf: yesterday,
+      daysCovered: 50,
+      trainingDays: 50,
+      recentRatedDays: 42,
+      recentDays: 42,
+      warmingUp: false,
+    });
+    const later = await (await GET(makeRequest("?offset=100"))).json();
+    expect(later.data.trainingLoad).toBeUndefined();
   });
 });

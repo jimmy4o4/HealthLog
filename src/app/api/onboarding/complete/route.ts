@@ -2,14 +2,8 @@ import { prisma, toJson } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { apiHandler, requireAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
-import {
-  apiError,
-  apiSuccess,
-  apiValidationError,
-  getClientIp,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { setOnboardingPendingCookie } from "@/lib/auth/session";
 import { normalisePrefs } from "@/lib/modules/gate";
@@ -34,7 +28,6 @@ import {
 import { readManagedProfileForGuardian } from "@/lib/managed-profiles/lifecycle";
 import { writeRecordModulePreferences } from "@/lib/record-settings/modules";
 import { NextRequest } from "next/server";
-import { z } from "zod/v4";
 import { onboardingCompleteSchema } from "@/lib/validations/onboarding";
 
 /**
@@ -54,7 +47,7 @@ import { onboardingCompleteSchema } from "@/lib/validations/onboarding";
  * /api/onboarding/restart` clears that marker when the person asks for the
  * questions again.
  *
- * v1.39 (C2) — the dashboard order joins the derivation. The five-step
+ * v1.39 — the dashboard order joins the derivation. The five-step
  * wizard's goal slugs used to seed it from their own route; the answers now
  * carry both halves of Q2 — which modules are on, and what is on top — and
  * the seed keeps the wizard's one contract: only while the layout column is
@@ -75,22 +68,12 @@ export const POST = apiHandler(async (request: NextRequest) => {
   const { user } = await requireAuth();
   annotate({ action: { name: "onboarding.complete" } });
 
-  const { data: body, error: jsonError } = await safeJson(request, {
+  const result = await parseJsonBody(request, onboardingCompleteSchema, {
     maxBytes: 64 * 1024,
+    message: "Invalid input",
+    errorCode: "onboarding.complete.invalid",
   });
-
-  if (jsonError) return jsonError;
-  const result = z.safeParse(onboardingCompleteSchema, body);
-  if (!result.success) {
-    return apiValidationError(
-      "Invalid input",
-      sanitiseZodIssues(result.error.issues),
-      422,
-      {
-        errorCode: "onboarding.complete.invalid",
-      },
-    );
-  }
+  if (!result.ok) return result.error;
 
   const data: Record<string, unknown> = {
     onboardingCompletedAt: new Date(),
@@ -129,7 +112,7 @@ export const POST = apiHandler(async (request: NextRequest) => {
     data,
   });
 
-  // v1.4.22 C4 — clear the proxy-readable onboarding cookie so the
+  // v1.4.22 — clear the proxy-readable onboarding cookie so the
   // next navigation drops the /onboarding redirect immediately.
   await setOnboardingPendingCookie(false);
 

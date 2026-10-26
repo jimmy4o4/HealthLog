@@ -10,11 +10,13 @@
  */
 import { NextRequest } from "next/server";
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import { apiSuccess } from "@/lib/api-response";
 import { annotate } from "@/lib/logging/context";
 import { prisma } from "@/lib/db";
 import { securityActivityWhere } from "@/lib/auth/security-activity";
 import { maskIp } from "@/lib/auth/device-fingerprint";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage, parseListQuery } from "@/lib/http/list-query";
+import { returnAllZodIssues } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
@@ -32,26 +34,33 @@ export interface SecurityActivityDTO {
 export const GET = apiHandler(async (request: NextRequest) => {
   const { user } = await requireAuth();
 
-  const limitParam = Number(
-    request.nextUrl.searchParams.get("limit") ?? DEFAULT_LIMIT,
-  );
-  const limit =
-    Number.isFinite(limitParam) && limitParam > 0
-      ? Math.min(Math.floor(limitParam), MAX_LIMIT)
-      : DEFAULT_LIMIT;
-
-  const rows = await prisma.auditLog.findMany({
-    where: securityActivityWhere(user.id),
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    select: {
-      action: true,
-      createdAt: true,
-      location: true,
-      ipAddress: true,
-      carrier: true,
-    },
+  // The shared list query: an out-of-range limit is a 422 naming it, as on
+  // every other list, rather than a silent clamp to something not asked for.
+  const query = parseListQuery(request.nextUrl.searchParams, {
+    defaultLimit: DEFAULT_LIMIT,
+    maxLimit: MAX_LIMIT,
   });
+  if (!query.success) {
+    return returnAllZodIssues(query.error, 422, {
+      errorCode: "security_activity.invalid",
+    });
+  }
+  const { limit } = query.data;
+
+  const { rows, cap } = await listPage(limit, (take) =>
+    prisma.auditLog.findMany({
+      where: securityActivityWhere(user.id),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take,
+      select: {
+        action: true,
+        createdAt: true,
+        location: true,
+        ipAddress: true,
+        carrier: true,
+      },
+    }),
+  );
 
   const events: SecurityActivityDTO[] = rows.map((r) => ({
     action: r.action,
@@ -66,5 +75,5 @@ export const GET = apiHandler(async (request: NextRequest) => {
     meta: { event_count: events.length },
   });
 
-  return apiSuccess({ events });
+  return apiListSuccess({ events }, cap);
 });

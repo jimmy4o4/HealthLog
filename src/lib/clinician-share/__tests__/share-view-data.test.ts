@@ -1,5 +1,5 @@
 /**
- * v1.11.0 (Epic C, C8) — clinician-view scoped data load guarantees.
+ * v1.11.0 — clinician-view scoped data load guarantees.
  *
  * The public clinician view aggregates ONLY the data the owner froze into the
  * link, and it must NEVER surface the insurance number (KVNR). KVNR is
@@ -111,6 +111,25 @@ describe("loadShareViewData — KVNR default OFF", () => {
     const patient = (report as { patient?: Record<string, unknown> }).patient;
     expect(patient).not.toHaveProperty("insuranceNumber");
     expect(patient).not.toHaveProperty("kvnr");
+  });
+
+  it("lists no document once the owner switched the documents module off", async () => {
+    moduleMap.mockResolvedValueOnce(modulesWithout("inboundDocuments"));
+    findDocs.mockResolvedValue([
+      {
+        document: {
+          id: "doc-a",
+          title: "Blood panel",
+          kind: "LAB_REPORT",
+          documentDate: null,
+          byteSize: 1,
+          mimeType: "application/pdf",
+        },
+      },
+    ]);
+    const { documents } = await loadShareViewData(ctx());
+    expect(documents).toEqual([]);
+    expect(findDocs).not.toHaveBeenCalled();
   });
 
   it("lists the frozen document set as metadata only (never bytes)", async () => {

@@ -1,3 +1,4 @@
+import { activeAccount } from "@/lib/account-deletion/active-account";
 import { prisma } from "@/lib/db";
 import { isP2025 } from "@/lib/prisma-errors";
 import { decrypt } from "@/lib/crypto";
@@ -9,7 +10,7 @@ import {
 import { getServerTranslator } from "@/lib/i18n/server-translator";
 import { locales, type Locale } from "@/lib/i18n/config";
 import { foldForMatch } from "@/lib/i18n/fold-for-match";
-import { recomputeMedicationComplianceForEvent } from "@/lib/rollups/medication-compliance-rollups";
+import { refreshDoseSlot } from "@/lib/medications/dose-day-refresh";
 import {
   applyCanonicalSlotWrite,
   resolveForcedSlotForWrite,
@@ -20,7 +21,7 @@ import {
   consumeForIntake,
   restoreForIntake,
 } from "@/lib/medications/inventory/consumption";
-import { localHmAsUtc } from "@/lib/tz/local-day";
+import { getUserTodayBounds, localHmAsUtc } from "@/lib/tz/local-day";
 import { wallClockInTz } from "@/lib/tz/wall-clock";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
 import {
@@ -37,6 +38,7 @@ import {
 // dose (the /add list, the "taken" keyword, the reminder buttons) leaves a
 // medication kept as a record out, as the web and the today list do.
 import { TRACKED_INTAKE_WHERE } from "@/lib/medications/intake-tracking";
+import { GREETING_WORDS, HELP_WORDS } from "@/lib/telegram-bare-words";
 
 /**
  * Telegram webhook update handlers, split out of
@@ -47,50 +49,6 @@ import { TRACKED_INTAKE_WHERE } from "@/lib/medications/intake-tracking";
  * mood / measurement helpers live here. The userId is always resolved
  * from the linked chat via `findTelegramUser` — never from the payload.
  */
-
-/* ──────────────────────────────────────────────────────────────────────────
- * Bare-word aliases.
- *
- * The bot's real commands are slash commands (`/help`, `/start`, `/add`) plus
- * the `taken <name>` text command, and `telegram.helpBody` documents exactly
- * those in all six bundles — none of that depends on the reader's language.
- * What did depend on it were the two undocumented courtesies below, which knew
- * English and German: "aide", "ayuda", "aiuto" and "pomoc" reached the intake
- * keyword instead, failed it, and the handler returned without replying at all.
- * Silence is the worst answer to someone asking for help.
- *
- * These are ordinary words, not app labels, so there is nothing in the bundles
- * to derive them from. They are matched on the FOLDED text so "cześć" and
- * "czesc" are one entry and a stray capital or accent cannot miss.
- * ────────────────────────────────────────────────────────────────────────── */
-
-/** "Help", in every language the app ships. */
-const HELP_WORDS: readonly string[] = [
-  "help",
-  "hilfe",
-  "aide",
-  "ayuda",
-  "aiuto",
-  "pomoc",
-];
-
-/** Greetings the bot answers with a wave, in every language the app ships. */
-const GREETING_WORDS: readonly string[] = [
-  "hi",
-  "hello",
-  "hey",
-  "hallo",
-  "moin",
-  "bonjour",
-  "salut",
-  "hola",
-  "buenas",
-  "ciao",
-  "salve",
-  "czesc",
-  "witaj",
-  "dzien dobry",
-];
 
 /**
  * True when the whole message is one of `words`. Folded on both sides, so the
@@ -190,9 +148,8 @@ async function isManagedReminderCallback(input: {
   );
 }
 
-// v1.19.0 — the auto-delete window dropped from 1 h to ~30 min and moved to
-// the shared `scheduleTelegramAutoDelete` helper so the inbound (free-text)
-// and outbound (unanswered prompt) paths agree on the window.
+// The auto-delete window lives in `scheduleTelegramAutoDelete`, so the inbound
+// (free-text) and outbound (unanswered prompt) paths agree on it.
 async function scheduleAutoDelete(
   userId: string,
   chatId: string,
@@ -203,17 +160,17 @@ async function scheduleAutoDelete(
 
 async function findTelegramUser(chatId: string) {
   return prisma.user.findFirst({
-    where: {
+    where: activeAccount({
       telegramEnabled: true,
       telegramChatId: chatId,
       telegramBotToken: { not: null },
-    },
+    }),
     select: {
       id: true,
       telegramBotToken: true,
       locale: true,
-      // v1.4.39 W-MED — pulled into the select so the post-write
-      // compliance-rollup hook can anchor the user-day bucket.
+      // Pulled into the select so the post-write dose-day refresh can
+      // anchor the user's local day.
       timezone: true,
     },
   });
@@ -424,11 +381,11 @@ async function markMedicationTaken(
     invalidateUserMedications(userId, { evict: true });
   }
 
-  // v1.4.39 W-MED — refresh the compliance rollup for the
+  // v1.4.39 — refresh the compliance rollup for the
   // affected day so the next read after the cache miss reflects the
   // new dose. Only fires when the write landed a row.
   if (scheduledFor) {
-    await recomputeMedicationComplianceForEvent({
+    await refreshDoseSlot({
       userId,
       medicationId: medication.id,
       scheduledFor,
@@ -597,10 +554,12 @@ export async function handleCallback(update: TelegramUpdate) {
 
     let skippedScheduledFor: Date | null = null;
     if (!existing) {
-      const endOfDay = new Date();
-      endOfDay.setHours(23, 59, 59, 999);
       const skipMoment = new Date();
       const tz = user.timezone || DEFAULT_TIMEZONE;
+      // The rest of the person's own day, not of the server's: the process
+      // runs in UTC, so a Berlin skip after 01:00 used to snooze the next
+      // local morning's reminders as well.
+      const endOfDay = getUserTodayBounds(skipMoment, tz).end;
 
       // v1.16.9 — a Telegram skip answers a specific dose prompt, so it
       // must converge onto the slot's pending row like a take does. The
@@ -684,11 +643,11 @@ export async function handleCallback(update: TelegramUpdate) {
       invalidateUserMedications(user.id, { evict: true });
     }
 
-    // v1.4.39 W-MED — refresh the compliance rollup for the skipped
+    // v1.4.39 — refresh the compliance rollup for the skipped
     // event's user-day so the next read sees the (scheduled, skipped)
     // counts incremented.
     if (skippedScheduledFor) {
-      await recomputeMedicationComplianceForEvent({
+      await refreshDoseSlot({
         userId: user.id,
         medicationId: medication.id,
         scheduledFor: skippedScheduledFor,
@@ -1205,7 +1164,7 @@ export async function handleTextMessage(update: TelegramUpdate) {
     const meds = await prisma.medication.findMany({
       where: { userId: user.id, active: true, ...TRACKED_INTAKE_WHERE },
       select: { id: true, name: true, dose: true },
-      orderBy: { name: "asc" },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
     });
 
     if (meds.length === 0) {
@@ -1321,7 +1280,7 @@ export async function handleTextMessage(update: TelegramUpdate) {
     const meds = await prisma.medication.findMany({
       where: { userId: user.id, active: true, ...TRACKED_INTAKE_WHERE },
       select: { id: true, name: true },
-      orderBy: { name: "asc" },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
       take: 2,
     });
     if (meds.length === 1) {

@@ -19,13 +19,8 @@ import {
   destroyedDetails,
   overwriteDetails,
 } from "@/lib/sharing/audit-details";
-import {
-  apiSuccess,
-  apiError,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiSuccess, apiError, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { encryptToBytes } from "@/lib/ai/coach/bytes-codec";
 import { allergyUpdateSchema } from "@/lib/validations/allergy";
 import { toAllergyDTO } from "@/lib/records/dto";
@@ -82,17 +77,11 @@ export const PATCH = apiHandler(
       return apiError("Allergy not found", 404);
     }
 
-    const { data: rawBody, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, allergyUpdateSchema, {
       maxBytes: 16 * 1024,
+      errorCode: "allergy.invalid",
     });
-    if (jsonError) return jsonError;
-
-    const parsed = allergyUpdateSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return returnAllZodIssues(parsed.error, 422, {
-        errorCode: "allergy.invalid",
-      });
-    }
+    if (!parsed.ok) return parsed.error;
     const entry = parsed.data;
 
     // Field-by-field — only fields actually present in the body are written.
@@ -119,7 +108,7 @@ export const PATCH = apiHandler(
     await auditLog("allergy.update", {
       userId: user.id,
       ipAddress: getClientIp(request),
-      // C4 — the replaced fields. The reaction and the note are named and
+      // The replaced fields. The reaction and the note are named and
       // never quoted; both are encrypted at rest and the audit table is not a
       // second store for them.
       details: {
@@ -196,7 +185,7 @@ export const DELETE = apiHandler(
     await auditLog("allergy.delete", {
       userId: user.id,
       ipAddress: getClientIp(request),
-      // C3 — the allergen, its severity and its recorded date, and never the
+      // The allergen, its severity and its recorded date, and never the
       // encrypted reaction text.
       details: {
         allergyId: id,

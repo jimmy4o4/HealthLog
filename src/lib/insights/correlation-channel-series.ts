@@ -20,6 +20,7 @@
  * fabricating a constant.
  */
 import { prisma } from "@/lib/db";
+import { triggersRestMode } from "@/lib/illness/rest-mode";
 import {
   buildComplianceMedicationContext,
   COURSES_COMPLIANCE_SELECT,
@@ -29,6 +30,8 @@ import {
 } from "@/lib/analytics/compliance";
 import {
   FACTOR_CHANNEL_PREFIX,
+  INDOOR_CLIMATE_TARGETS,
+  INDOOR_CLIMATE_TYPES,
   MEDICATION_COMPLIANCE_CHANNEL_KEY,
   MOVEMENT_AWAY_CHANNEL_KEY,
   MOVEMENT_DISTANCE_CHANNEL_KEY,
@@ -45,7 +48,12 @@ import {
 } from "@/lib/environment/fields";
 import { isAirQualityActive } from "@/lib/environment/open-meteo-air-quality";
 import {
+  buildAlcoholDailySeries,
   buildComplianceDailySeries,
+  buildNutrientDailySeries,
+  buildOvernightClimateSeries,
+  buildTrainingLoadSeries,
+  buildWorkoutMinutesSeries,
   buildSymptomEventDailySeries,
   buildSymptomSeverityDailySeries,
   type SymptomDayLogRow,
@@ -57,10 +65,22 @@ import { metricKeyForType } from "@/lib/measurements/cumulative-day-sum";
 import { pickCanonicalSourceRows } from "@/lib/analytics/source-priority";
 import {
   reconstructSleepSessions,
+  daySleepMinutes,
   pickMainNightAndNaps,
   type SleepStageRow,
 } from "@/lib/analytics/sleep-night";
-import { isNearUtc, shiftDateKey, userDayKey } from "@/lib/tz/format";
+import {
+  isNearUtc,
+  isValidTimezone,
+  shiftDateKey,
+  userDayKey,
+} from "@/lib/tz/format";
+import { MIN_PAIRED_N } from "@/lib/insights/correlations";
+import {
+  canonicalWorkoutsInRange,
+  readWorkoutsAroundRange,
+  WORKOUT_PICK_SELECT,
+} from "@/lib/workouts/canonical-read";
 import { probeRollupCoverage } from "@/lib/rollups/measurement-coverage";
 import { loadUserSourcePriority } from "@/lib/rollups/measurement-read";
 import type {
@@ -95,13 +115,13 @@ export async function fetchComplianceSeries(
     where: { userId, active: true, asNeeded: false, ...TRACKED_INTAKE_WHERE },
     include: {
       schedules: { select: SCHEDULE_COMPLIANCE_SELECT },
-      scheduleRevisions: { orderBy: { validFrom: "asc" } },
-      // v1.25 H-MED1 — pause eras so paused days drop out of the denominator.
+      scheduleRevisions: { orderBy: [{ validFrom: "asc" }, { id: "asc" }] },
+      // v1.25 — pause eras so paused days drop out of the denominator.
       pauseEras: { select: { pausedAt: true, resumedAt: true } },
       // v1.40 (#1024) — the courses, so a gap between two expects nothing.
       courses: COURSES_COMPLIANCE_SELECT,
     },
-    orderBy: { name: "asc" },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
   });
   if (medications.length === 0) {
     return {
@@ -118,7 +138,7 @@ export async function fetchComplianceSeries(
       medicationId: { in: medications.map((med) => med.id) },
       scheduledFor: { gte: since },
     },
-    orderBy: { scheduledFor: "asc" },
+    orderBy: [{ scheduledFor: "asc" }, { id: "asc" }],
     select: {
       medicationId: true,
       scheduledFor: true,
@@ -149,12 +169,14 @@ export async function fetchComplianceSeries(
 }
 
 /**
- * v1.21.0 (FDREXTEND) — build the user's SYMPTOM_SEVERITY daily series in the
- * `outcome` role (callers that need the behaviour role re-tag the returned
- * series — the points are role-invariant). Reads every in-window illness episode
- * + its day-logs; the builder zero-fills healthy days ONLY across real episode
- * spans, so a user with no episodes yields an empty series that degrades to
- * absent.
+ * Build the user's SYMPTOM_SEVERITY daily series in the `outcome` role
+ * (callers that need the behaviour role re-tag the returned series — the
+ * points are role-invariant). Reads every in-window illness episode and its
+ * day-logs. Only episodes that can put the account into Rest Mode zero-fill
+ * their span: a chronic condition has no end, so its span would fill every
+ * day of the window and hand the engine a near-constant series. Its logged
+ * days still count, as real readings. No episode and no log yields an empty
+ * series that degrades to absent.
  */
 export async function fetchSymptomSeries(
   userId: string,
@@ -171,7 +193,7 @@ export async function fetchSymptomSeries(
       onsetAt: { lte: now },
       OR: [{ resolvedAt: null }, { resolvedAt: { gte: since } }],
     },
-    select: { id: true, onsetAt: true, resolvedAt: true },
+    select: { id: true, onsetAt: true, resolvedAt: true, lifecycle: true },
   });
   if (episodes.length === 0) {
     return { key: SYMPTOM_SEVERITY_CHANNEL_KEY, role: "outcome", points: [] };
@@ -210,10 +232,9 @@ export async function fetchSymptomSeries(
       dayLogs.push({ day: row.date, impact: maxSeverity });
   }
 
-  const spans: SymptomEpisodeSpan[] = episodes.map((e) => ({
-    onsetAt: e.onsetAt,
-    resolvedAt: e.resolvedAt,
-  }));
+  const spans: SymptomEpisodeSpan[] = episodes
+    .filter(triggersRestMode)
+    .map((e) => ({ onsetAt: e.onsetAt, resolvedAt: e.resolvedAt }));
 
   return buildSymptomSeverityDailySeries({
     dayLogs,
@@ -226,7 +247,7 @@ export async function fetchSymptomSeries(
 }
 
 /**
- * v1.25 (W-ENV) — build the user's environmental-exposure BEHAVIOUR channels.
+ * v1.25 — build the user's environmental-exposure BEHAVIOUR channels.
  *
  * One {@link NamedSeries} per registered env field (temperature, daylight,
  * sunshine, precipitation, pressure mean + intraday swing), read from the daily
@@ -502,7 +523,7 @@ export interface MeasurementWindowFetch {
 }
 
 /**
- * v1.30.3 (QA F1/F2/F3) — shared measurement-window fetch for every
+ * v1.30.3 — shared measurement-window fetch for every
  * correlation-adjacent surface: the `/api/insights/correlations` route, the
  * Coach `get_correlations` tool, the per-metric assessment card, and the
  * period narrative. Hoisted here so a fourth independently-maintained copy
@@ -569,7 +590,7 @@ export interface MoodWindowFetch {
 }
 
 /**
- * v1.30.3 (QA F1/F2/F3) — shared mood-window fetch, same desc+cap+resort
+ * v1.30.3 — shared mood-window fetch, same desc+cap+resort
  * discipline as {@link fetchMeasurementWindowSeries}. This helper covers the
  * plain-score case; the RATED-factor variant that also reads each entry's
  * tag-links is {@link fetchMoodFactorWindowSeries}, which carries the same
@@ -829,11 +850,13 @@ function buildSleepDailySeries(
     byNight.set(s.night, list);
   }
 
+  // A day's sleep is the main night plus its naps (`daySleepMinutes`), the
+  // total the series route and the sleep score read.
   const points: DailySeriesPoint[] = [];
   for (const [night, nightSessions] of byNight) {
-    const { main } = pickMainNightAndNaps(nightSessions);
-    if (!main) continue;
-    points.push({ day: night, value: main.asleepMinutes });
+    const day = pickMainNightAndNaps(nightSessions);
+    if (!day.main && day.naps.length === 0) continue;
+    points.push({ day: night, value: daySleepMinutes(day) });
   }
   return points.sort((a, b) => (a.day < b.day ? -1 : 1));
 }
@@ -1149,4 +1172,168 @@ export async function fetchLabDraws(
     });
   }
   return draws;
+}
+
+// ─── v1.44 — the extended channel families ─────────────────────────────────
+
+/**
+ * Upper bound on nutrient rows read for one scan: 180 days × 28 codes × two
+ * sources is about ten thousand; the cap falls on the oldest rows.
+ */
+const NUTRIENT_READ_CAP = 12_000;
+
+/**
+ * HYDRATION, CAFFEINE and up to four micronutrients from the nutrient log.
+ * The caller skips this read when the opt-in `nutrients` module is off.
+ */
+export async function fetchNutrientSeries(
+  userId: string,
+  tz: string,
+  since: Date,
+): Promise<NamedSeries[]> {
+  const rows = await prisma.nutrientIntakeDay.findMany({
+    where: { userId, day: { gte: userDayKey(since, tz) } },
+    orderBy: { day: "desc" },
+    take: NUTRIENT_READ_CAP,
+    select: { day: true, nutrient: true, amount: true },
+  });
+  return buildNutrientDailySeries(rows, { minDays: MIN_PAIRED_N });
+}
+
+/** The mood read the alcohol channel shares its cap with. */
+const ALCOHOL_TAG_KEY = "alcohol";
+
+/**
+ * The ALCOHOL channel from the mood log's `alcohol` tag: a structured tag
+ * link, or the key in the legacy flat `tags` list. Only the timestamp and the
+ * tag's presence are read; no note, no score.
+ */
+export async function fetchAlcoholSeries(
+  userId: string,
+  tz: string,
+  since: Date,
+): Promise<NamedSeries> {
+  const rows = await prisma.moodEntry.findMany({
+    where: { userId, deletedAt: null, moodLoggedAt: { gte: since } },
+    orderBy: { moodLoggedAt: "desc" },
+    take: MOOD_READ_CAP,
+    select: {
+      moodLoggedAt: true,
+      tags: true,
+      tagLinks: {
+        where: { moodTag: { key: ALCOHOL_TAG_KEY } },
+        select: { moodTagId: true },
+        take: 1,
+      },
+    },
+  });
+  return buildAlcoholDailySeries(
+    rows.map((row) => ({
+      at: row.moodLoggedAt,
+      tagged: row.tagLinks.length > 0 || flatTagsInclude(row.tags),
+    })),
+    tz,
+  );
+}
+
+/** Whether a legacy flat `tags` JSON array names the alcohol tag. */
+function flatTagsInclude(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(ALCOHOL_TAG_KEY);
+  } catch {
+    return false;
+  }
+}
+
+/** Upper bound on workout rows read for one scan. */
+const WORKOUT_READ_CAP = 3000;
+
+/**
+ * WORKOUT_MINUTES (sessions collapsed across sources by the workout list's
+ * picker) and TRAINING_LOAD (the strain engine's stored day TRIMP). The caller
+ * skips this read when the `workouts` module is off.
+ */
+export async function fetchTrainingSeries(
+  userId: string,
+  tz: string,
+  since: Date,
+): Promise<NamedSeries[]> {
+  const [account, trimp, workouts] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { sourcePriorityJson: true },
+    }),
+    prisma.strainTrimpCache.findMany({
+      // eslint-disable-next-line healthlog/no-utc-day-key -- UTC by design: the strain cache is keyed on the UTC score day (scoreDayKey)
+      where: { userId, day: { gte: since.toISOString().slice(0, 10) } },
+      orderBy: { day: "asc" },
+      take: 1000,
+      select: { day: true, dayTrimp: true },
+    }),
+    readWorkoutsAroundRange({ from: since, to: null }, (bounds) =>
+      prisma.workout.findMany({
+        where: { userId, startedAt: bounds },
+        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+        take: WORKOUT_READ_CAP,
+        select: WORKOUT_PICK_SELECT,
+      }),
+    ),
+  ]);
+  const sessions = canonicalWorkoutsInRange(
+    workouts,
+    account?.sourcePriorityJson ?? null,
+  );
+  return [
+    buildWorkoutMinutesSeries(sessions, tz),
+    buildTrainingLoadSeries(trimp),
+  ];
+}
+
+/**
+ * The room-climate channels, one per type, as overnight means keyed on the
+ * waking day. Postgres folds the readings to one row per local hour (a sensor
+ * reporting every minute is ~260k rows over the window; the hours are at most
+ * 180 × 24 per type), so the process never holds the raw readings. The caller
+ * skips this read when the `environment` module is off.
+ */
+export async function fetchIndoorClimateSeries(
+  userId: string,
+  tz: string,
+  since: Date,
+): Promise<NamedSeries[]> {
+  const zone = isValidTimezone(tz) ? tz : "UTC";
+  const rows = await prisma.$queryRaw<
+    Array<{ type: string; day: string; hour: number; mean: number }>
+  >`
+    WITH src AS (
+      SELECT
+        m."type"::text AS type,
+        (m."measured_at" AT TIME ZONE 'UTC') AT TIME ZONE ${zone} AS local_at,
+        m."value" AS value
+      FROM measurements m
+      WHERE m."user_id" = ${userId}
+        AND m."type" IN ('INDOOR_CO2'::measurement_type, 'INDOOR_TEMPERATURE'::measurement_type, 'INDOOR_HUMIDITY'::measurement_type)
+        AND m."deleted_at" IS NULL
+        AND m."measured_at" >= ${since}
+    )
+    SELECT
+      type,
+      to_char(local_at, 'YYYY-MM-DD') AS day,
+      EXTRACT(HOUR FROM local_at)::int AS hour,
+      AVG(value)::double precision AS mean
+    FROM src
+    GROUP BY type, day, hour
+  `;
+  return buildOvernightClimateSeries(
+    rows.map((r) => ({
+      type: r.type,
+      day: r.day,
+      hour: Number(r.hour),
+      mean: Number(r.mean),
+    })),
+    INDOOR_CLIMATE_TYPES,
+    INDOOR_CLIMATE_TARGETS,
+  );
 }

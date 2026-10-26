@@ -47,6 +47,8 @@ import { searchKeys } from "./search";
 import { sharingKeys } from "./sharing";
 import { vaccinationKeys } from "./vaccinations";
 import { workoutKeys } from "./workouts";
+import { activityKeys } from "./activity";
+import { provenanceKeys } from "./provenance";
 
 export const queryKeys = {
   ...authKeys,
@@ -60,6 +62,8 @@ export const queryKeys = {
   ...adminKeys,
   ...integrationKeys,
   ...workoutKeys,
+  ...activityKeys,
+  ...provenanceKeys,
   ...settingsKeys,
   ...cycleKeys,
   ...measurementReminderKeys,
@@ -115,7 +119,7 @@ export const grantDependentKeys = [
  * Keys that should be invalidated when a measurement is created, updated or
  * deleted. Kept here so dashboards, insights, and targets always stay in sync.
  *
- * v1.4.40 W-RSC — `["chart-data"]` prefix now lives in the bundle so a
+ * v1.4.40 — `["chart-data"]` prefix now lives in the bundle so a
  * fresh measurement evicts every per-chart daily-aggregate cache. The
  * prefix matches every key returned from `queryKeys.chartData(…)` via
  * TanStack's hierarchical-prefix semantics — adding a measurement now
@@ -150,7 +154,7 @@ export const measurementDependentKeys = [
   ["chart-data"] as const,
   // v1.8.5 — re-run the diversity-nudge clustering when readings change.
   ["measurement-diversity"] as const,
-  // v1.11.4 item J — refresh the Trends-row deterministic caption series
+  // v1.11.4 — refresh the Trends-row deterministic caption series
   // when a reading changes, in lockstep with the chart row above it.
   ["trend-series"] as const,
   // v1.11.5 — refresh the last-night hypnogram when sleep rows change.
@@ -167,7 +171,7 @@ export const measurementDependentKeys = [
  * Keys that should be invalidated when a mood entry is created, updated or
  * deleted.
  *
- * v1.28.42 (M2) — `dashboardSnapshot` joins the bundle, mirroring the
+ * v1.28.42 — `dashboardSnapshot` joins the bundle, mirroring the
  * measurement (v1.18.9) and medication (v1.16.11) fixes for the same #38
  * stale-read class. The dashboard snapshot embeds a mood block and feeds the
  * score ring, but `moodDependentKeys` omitted the key, so a mood logged from
@@ -200,7 +204,7 @@ export const moodDependentKeys = [
 /**
  * Keys invalidated when medications change (CRUD or intake).
  *
- * v1.4.40 W-RSC — the dashboard's aggregate compliance chart now
+ * v1.4.40 — the dashboard's aggregate compliance chart now
  * rides the factory under `dashboardMedicationCompliance`. The prefix
  * `["dashboard-medication-compliance"]` lands in the bundle so an
  * intake POST refreshes the chart immediately rather than waiting for

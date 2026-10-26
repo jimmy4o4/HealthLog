@@ -226,6 +226,38 @@ describe("i18n locale file integrity", () => {
     },
   );
 
+  // Questionnaire wording lives in code with its source
+  // (`src/lib/mental-health/wording/`), never in a bundle: a translator
+  // working through the bundles must not see an item, an answer, a stem or
+  // the PHQ-9 follow-up, let alone reword one. The app's own copy around the
+  // questionnaires (`mentalHealth.instrument.*`, `mentalHealth.wording.*`,
+  // the notes and buttons) stays here.
+  const QUESTIONNAIRE_SUBTREES = [
+    "mentalHealth.items",
+    "mentalHealth.options",
+    "mentalHealth.gad7Options",
+    "mentalHealth.who5Options",
+    "mentalHealth.sciOptions",
+    "mentalHealth.stems",
+    "mentalHealth.functional",
+    "mentalHealth.functionalTitle",
+  ];
+
+  it.each(ALL_LOCALES)(
+    "$locale carries no questionnaire wording",
+    ({ path }) => {
+      const keys: string[] = [];
+      flatten(JSON.parse(readFileSync(path, "utf8")), "", keys);
+      expect(keys.length).toBeGreaterThan(3000);
+      const carried = keys.filter((key) =>
+        QUESTIONNAIRE_SUBTREES.some(
+          (tree) => key === tree || key.startsWith(`${tree}.`),
+        ),
+      );
+      expect(carried).toEqual([]);
+    },
+  );
+
   // Flat helper used by the value-quality checks below.
   function flattenValues(
     obj: unknown,
@@ -245,7 +277,7 @@ describe("i18n locale file integrity", () => {
   // See `docs/audit/v1415-i18n-coverage.md` §Legitimate EN==DE==key cases.
   const PLACEHOLDER_ALLOWLIST = new Set<string>([
     "settings.ntfy",
-    // v1.4.19 phase A7 — "BMI" is the same acronym in EN and DE,
+    // v1.4.19 — "BMI" is the same acronym in EN and DE,
     // and the medical / fitness "Optimal", "Fitness", "Normal"
     // categories are technical terms that German clinics also use
     // verbatim. The actual translations live in `targets.status.*`
@@ -341,6 +373,62 @@ describe("i18n locale file integrity", () => {
         todos,
         `Found TODO/FIXME/XXX/TBD placeholders in translation values:\n` +
           todos.map((s) => `  ${s}`).join("\n"),
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * Placeholder parity. `t()` replaces `{name}` tokens literally, so a
+   * translation that renames one ("{when}" for "{date}") renders the raw
+   * token, and one that drops one ("Plano limitado" for "Your {provider}
+   * plan does not include {list}") loses the information the sentence was
+   * for. Neither breaks the key-parity check above, which is how 38 of them
+   * reached a bundle unnoticed.
+   *
+   * A singular plural form (`…One`) may name the count in words instead of
+   * `{count}`, or name it where English does not.
+   */
+  function placeholderSet(value: string, singular: boolean): string {
+    const names = new Set(
+      [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]),
+    );
+    if (singular) names.delete("count");
+    return [...names].sort().join(",");
+  }
+
+  it.each(NON_EN_LOCALES)(
+    "$locale uses exactly the English placeholders",
+    ({ locale, path }) => {
+      const enFlat: [string, string][] = [];
+      flattenValues(JSON.parse(readFileSync(EN_PATH, "utf8")), "", enFlat);
+      const other = new Map<string, string>();
+      const otherFlat: [string, string][] = [];
+      flattenValues(JSON.parse(readFileSync(path, "utf8")), "", otherFlat);
+      for (const [key, value] of otherFlat) other.set(key, value);
+
+      // A floor, so an empty or unreadable English bundle cannot pass.
+      requireFloor(
+        "English strings carrying a placeholder",
+        enFlat.filter(([, value]) => /\{\w+\}/.test(value)),
+        1000,
+      );
+      const drift = enFlat
+        .filter(([key, enValue]) => {
+          const value = other.get(key);
+          if (value === undefined) return false;
+          const singular = key.endsWith("One");
+          return (
+            placeholderSet(value, singular) !==
+            placeholderSet(enValue, singular)
+          );
+        })
+        .map(
+          ([key, enValue]) =>
+            `  ${key}: en {${placeholderSet(enValue, false)}} vs ${locale} {${placeholderSet(other.get(key) ?? "", false)}}`,
+        );
+      expect(
+        drift,
+        `Translations whose placeholders differ from English:\n${drift.join("\n")}`,
       ).toEqual([]);
     },
   );

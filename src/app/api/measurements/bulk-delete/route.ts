@@ -20,13 +20,8 @@ import { prisma } from "@/lib/db";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { withIdempotency } from "@/lib/idempotency";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { invalidateUserMeasurements } from "@/lib/cache/invalidate";
@@ -64,17 +59,11 @@ async function postBulkDelete(request: NextRequest): Promise<Response> {
     return apiError("Too many bulk deletions, try again later", 429);
   }
 
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, bulkDeleteSchema, {
     maxBytes: 256 * 1024,
+    errorCode: "measurement.bulk-delete.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = bulkDeleteSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "measurement.bulk-delete.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const { ids } = parsed.data;
   const now = new Date();
@@ -109,13 +98,13 @@ async function postBulkDelete(request: NextRequest): Promise<Response> {
   });
 
   if (count > 0) {
-    // v1.4.34 IW-G — bust per-user analytics + achievements + workouts
+    // v1.4.34 — bust per-user analytics + achievements + workouts
     // caches so subsequent reads reflect the deletions. Interactive
     // multi-select delete from the management list — hard-evict so the
     // SWR readers don't serve the pre-delete body.
     invalidateUserMeasurements(user.id, { evict: true });
 
-    // v1.37.19 (C2-F1) — shared post-mutation tail (identities were
+    // v1.37.19 — shared post-mutation tail (identities were
     // collected BEFORE the destructive statement, while readable).
     await afterMeasurementMutation(
       user.id,

@@ -35,6 +35,11 @@ vi.mock("@/lib/modules/gate", () => ({
 vi.mock("@/lib/logging/context", () => ({ annotate: vi.fn() }));
 vi.mock("@/lib/db", () => ({
   prisma: {
+    // v1.44 — the extended channel families (intake, training, room climate).
+    nutrientIntakeDay: { findMany: async () => [] },
+    workout: { findMany: async () => [] },
+    strainTrimpCache: { findMany: async () => [] },
+    $queryRaw: async () => [],
     measurement: {
       findMany: (a: unknown) => measurementFindMany(a),
       findFirst: (a: unknown) => measurementFindFirst(a),
@@ -113,10 +118,12 @@ function seedSymptomDrivesSleep() {
       functionalImpact: burden,
       symptomLinks: [],
     });
+    // A night of five to eight hours, waking at 07:00 UTC: a main sleep, not
+    // a midday nap, so the nap rule leaves it the night.
     measurements.push({
       type: "SLEEP_DURATION",
-      value: 8 - burden,
-      measuredAt: new Date(BASE + (i + 1) * 86_400_000),
+      value: (8 - burden) * 60,
+      measuredAt: new Date(BASE + (i + 1) * 86_400_000 - 5 * 3_600_000),
     });
   }
   measurementFindMany.mockResolvedValue(measurements);

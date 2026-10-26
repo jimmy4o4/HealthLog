@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { shouldRunWeb } from "@/lib/process-type";
+import { readSessionCookie } from "@/lib/auth/session-cookie";
 import {
   findRetiredRoute,
   retiredRouteEnvelope,
@@ -8,6 +9,7 @@ import {
 import { setBaselineSecurityHeaders } from "@/lib/http/proxy-bypass-routes";
 import { DEMO_REFUSAL_BODY } from "@/lib/demo-refusal";
 import { resolveRequestId } from "@/lib/http/request-id";
+import { redactSecrets } from "@/lib/logging/redact";
 
 /**
  * Paths that do NOT require a session cookie (public pages + external webhooks).
@@ -60,7 +62,7 @@ export const PUBLIC_PATHS = [
   // requires a publicly reachable Privacy-Policy URL during submission;
   // GDPR Art. 13 expects the same for any visitor before they sign up.
   "/privacy",
-  // v1.4.27 B3 — `/about` carries the GeoLite2 CC BY-SA 4.0 attribution
+  // v1.4.27 — `/about` carries the GeoLite2 CC BY-SA 4.0 attribution
   // alongside the project credits. The CC licence requires the
   // attribution to be reachable without a sign-in.
   "/about",
@@ -120,7 +122,7 @@ const WELL_KNOWN_PUBLIC_PATHS = new Set<string>([
 ]);
 
 /**
- * v1.4.22 W5 reconcile (Sec-MED-2) — `/onboarding` matches exact
+ * v1.4.22 — `/onboarding` matches exact
  * page + subroutes (`/onboarding`, `/onboarding/*`) only, NOT the
  * loose `pathname.startsWith("/onboarding")` family that would admit
  * `/onboarding-export`, `/onboarding.json`, etc. Every other entry
@@ -181,7 +183,7 @@ const DEMO_MUTATION_ALLOWLIST: ReadonlyArray<{ path: string; method: string }> =
     // Chart display-pref toggles above the charts (dashboard + insights):
     { path: "/api/dashboard/chart-overlay-prefs", method: "PUT" },
     { path: "/api/dashboard/widgets", method: "PUT" },
-    // v1.39 (C1) — the needs-based setup flow, which the demo has to be able
+    // v1.39 — the needs-based setup flow, which the demo has to be able
     // to complete with preset answers (design spec §Principles 5). All three
     // are user-scoped preference writes: closed enum answers, the step ledger,
     // and the module map derived from them. No health data is created by any
@@ -189,7 +191,7 @@ const DEMO_MUTATION_ALLOWLIST: ReadonlyArray<{ path: string; method: string }> =
     { path: "/api/onboarding/answers", method: "PATCH" },
     { path: "/api/onboarding/complete", method: "POST" },
     { path: "/api/onboarding/restart", method: "POST" },
-    // v1.39 (C2) — the two writes the flow's welcome and exit make: the
+    // v1.39 — the two writes the flow's welcome and exit make: the
     // one-time disclaimer acknowledgment gates both welcome buttons, and the
     // tour's progress checkpoint is what the done screen's offer leads to.
     // Without the first, a demo account on a fresh seed (or after a version
@@ -321,6 +323,9 @@ function applyBaselineSecurityHeaders(response: NextResponse): NextResponse {
  */
 const NOTIFICATION_ACTION_PREFIX = "/api/notifications/action/";
 
+/** The request header that marks a Next.js Server Action call. */
+const SERVER_ACTION_HEADER = "next-action";
+
 type NotificationActionRefusal =
   "method_not_allowed" | "worker_only" | "demo_mode";
 
@@ -367,6 +372,42 @@ export function proxy(request: NextRequest) {
             "This container runs the worker only — point HTTP at the web service.",
         },
         { status: 503, headers: { "X-HealthLog-Process-Type": "worker" } },
+      ),
+    );
+  }
+
+  // A Server Action call. HealthLog defines no Server Actions (no module
+  // carries `"use server"`, which `no-server-actions-guard.test.ts` holds), so
+  // no bundle of this app, old or new, ever sends `Next-Action`: the requests
+  // that do are scanners probing the Server Action surface, nightly and in
+  // bursts. Left to Next, each one printed "Failed to find Server Action" at
+  // error level, unstructured, an error with no user behind it. Refused here
+  // instead, with one countable `warn` line: a refusal by design.
+  if (request.headers.has(SERVER_ACTION_HEADER)) {
+    console.warn(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "warn",
+        kind: "http",
+        message: "Server Action call refused: this app defines none.",
+        action: { name: "proxy.server_action.refused" },
+        http: {
+          method: request.method,
+          // A probe may aim at a path that carries a secret segment.
+          path: redactSecrets(pathname),
+          status: 404,
+          user_agent: request.headers.get("user-agent") ?? undefined,
+        },
+      }),
+    );
+    return applyBaselineSecurityHeaders(
+      NextResponse.json(
+        {
+          data: null,
+          error: "Not found",
+          meta: { errorCode: "server_action.unsupported" },
+        },
+        { status: 404 },
       ),
     );
   }
@@ -520,14 +561,13 @@ export function proxy(request: NextRequest) {
   // can never be session-gated without also being uncacheable.
   const isSessionGatedPage = !isApiRoute && !isStaticFile && !isPublic;
   if (isSessionGatedPage) {
-    const hasSession = request.cookies.has("healthlog_session");
-    if (!hasSession) {
+    if (!readSessionCookie(request.cookies)) {
       return applyBaselineSecurityHeaders(
         NextResponse.redirect(new URL("/auth/login", request.url)),
       );
     }
 
-    // v1.4.22 C4 — server-side onboarding redirect. Previously the
+    // v1.4.22 — server-side onboarding redirect. Previously the
     // `<AuthShell>` ran this in a post-hydration `useEffect`, so a user
     // with `onboardingCompletedAt === null` briefly saw the dashboard
     // flash before the redirect fired. The auth flows (login, passkey,
@@ -538,7 +578,7 @@ export function proxy(request: NextRequest) {
     // for the surfaces that need to redirect away.
     const onboardingPending =
       request.cookies.get("hl_onboarding")?.value === "pending";
-    // v1.4.22 W5 reconcile (Sec-MED-2) — exact match the redirect
+    // v1.4.22 — exact match the redirect
     // short-circuit so a hypothetical `/onboarding-export` route can
     // never inherit the silent-pass-through.
     const isOnboardingSurface =
@@ -651,7 +691,7 @@ export function proxy(request: NextRequest) {
     "camera=(), microphone=(), geolocation=()",
   );
 
-  // v1.11.0 (Epic C, C6) — the public clinician share view at `/c/<token>`
+  // v1.11.0 — the public clinician share view at `/c/<token>`
   // is a scoped health record authenticated by an unguessable bearer token
   // in the path. Defend it at the edge regardless of what the RSC emits:
   //   - `Cache-Control: no-store` so no shared proxy / CDN ever retains a
@@ -817,14 +857,14 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Apply to all routes except static files, Next.js internals, SW, and
-    // manifest — and except the large-upload API routes listed in
+    // Apply to all routes except static files outside `/api/`, Next.js
+    // internals, SW, and manifest — and except the large-upload API routes in
     // `src/lib/http/proxy-bypass-routes.ts`. Next reads a request body into
     // memory for the proxy before the route runs, so a route whose body may
     // exceed `proxyClientMaxBodySize` (1 MB, next.config.ts) is left out of
     // the matcher and `apiHandler` performs the proxy's duties for it. The
     // alternation must stay equal to that list; `proxy-body-limit.test.ts`
     // compiles this exactly as Next does and checks.
-    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.json|robots\\.txt|sitemap\\.xml|api/(?:import(?:/csv|/apple-health-export|/health-connect-export)?|admin/import-apple-health-export|admin/backups/upload|documents/inbound|medications/intake/(?:dose-history-import|bulk)|labs/ocr/extract|medications/[^/]+/ingredients/extract|user/avatar|measurements/batch|workouts/batch|insights/ecg|mood-entries/bulk|cycle/day-logs/bulk)/?$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|txt|xml)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.json|robots\\.txt|sitemap\\.xml|api/(?:import(?:/csv|/labs-csv|/medications-csv|/apple-health-export|/health-connect-export)?|admin/import-apple-health-export|admin/backups/upload|documents/inbound|medications/intake/(?:dose-history-import|bulk)|labs/ocr/extract|medications/[^/]+/ingredients/extract|user/avatar|measurements/batch|workouts/batch|insights/ecg|mood-entries/bulk|cycle/day-logs/bulk)/?$|(?!api/).*\\.(?:svg|png|jpg|jpeg|gif|webp|txt|xml)$).*)",
   ],
 };

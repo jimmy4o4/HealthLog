@@ -23,6 +23,7 @@
  * by a single proxy rule) is the largest shift Withings supports
  * end-to-end.
  */
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { syncUserMeasurements } from "@/lib/withings/sync";
@@ -31,9 +32,13 @@ import { getClientIp, safeJson } from "@/lib/api-response";
 import { annotate, getEvent } from "@/lib/logging/context";
 import { getGlobalBoss } from "@/lib/jobs/boss-instance";
 import { enqueueWithingsEcgSync } from "@/lib/jobs/withings-ecg-queue";
+import {
+  WITHINGS_ACTIVITY_QUEUE,
+  WITHINGS_SLEEP_QUEUE,
+} from "@/lib/jobs/integration-poll-queues";
 
 /**
- * v1.4.25 W17b/c — appli categories that have their own sync routine
+ * v1.4.25 — appli categories that have their own sync routine
  * fan-out. The measure path (appli=1/2/4) keeps the legacy inline
  * call to `syncUserMeasurements`; activity (16) and sleep v2 (44) hand
  * off to pg-boss so the webhook response stays fast and a slow sync
@@ -41,8 +46,6 @@ import { enqueueWithingsEcgSync } from "@/lib/jobs/withings-ecg-queue";
  */
 const WITHINGS_ACTIVITY_APPLI = 16;
 const WITHINGS_SLEEP_APPLI = 44;
-const WITHINGS_ACTIVITY_QUEUE = "withings-activity-sync";
-const WITHINGS_SLEEP_QUEUE = "withings-sleep-sync";
 
 /**
  * Constant-time comparison helper. Returns false unless both inputs have
@@ -138,9 +141,23 @@ export async function processWithingsNotification(
     },
   });
 
-  const connection = await prisma.withingsConnection.findFirst({
-    where: { withingsUserId },
+  // A Withings account belongs to one record; callbacks refuse a second
+  // holder. A pair linked before that rule routes to the record that linked
+  // the account first, never to whichever row a lookup happens to find.
+  // A record pending deletion is frozen: its notifications sync nothing.
+  const holders = await prisma.withingsConnection.findMany({
+    where: { withingsUserId, ...OWNED_BY_ACTIVE_ACCOUNT },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { userId: true },
+    take: 2,
   });
+  const connection = holders[0] ?? null;
+  if (holders.length > 1) {
+    annotate({ meta: { withings_account_shared: true } });
+    getEvent()?.addWarning(
+      "Withings account held by more than one record; routed to the first",
+    );
+  }
 
   if (!connection) {
     getEvent()?.addWarning(
@@ -149,7 +166,7 @@ export async function processWithingsNotification(
     return NextResponse.json({ status: "unknown_user" }, { status: 200 });
   }
 
-  // v1.4.25 W17b/c — dispatch on appli category. Activity (16) and
+  // v1.4.25 — dispatch on appli category. Activity (16) and
   // sleep v2 (44) hand off to dedicated pg-boss queues so the webhook
   // response stays sub-100ms; the measure family (appli=1/2/4) keeps
   // the existing inline `syncUserMeasurements` call. An absent or
@@ -190,7 +207,7 @@ export async function processWithingsNotification(
 }
 
 /**
- * v1.4.25 W17b/c — enqueue a per-user activity / sleep sync job onto
+ * v1.4.25 — enqueue a per-user activity / sleep sync job onto
  * the pg-boss queue. When pg-boss isn't available (Next.js dev server
  * without the worker process attached) we fall back to firing the
  * sync inline so dev iteration isn't blocked on a separate worker

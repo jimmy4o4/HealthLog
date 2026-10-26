@@ -111,6 +111,21 @@ describe("admitAccountSettings", () => {
     expect(admitAccountSettings({}, ctx)).toEqual({ data: {}, refused: [] });
   });
 
+  it("accepts and ignores the retired preview-feature opt-ins of an older file", async () => {
+    // Written by v1.44 and v1.45, whose column v1.46 dropped. The file must
+    // still restore, so the field is neither refused nor written.
+    const { accountSettingsBackupSchema } =
+      await import("@/lib/export/account-settings-backup-schema");
+    const entry = accountSettingsBackupSchema.parse({
+      timezone: "Europe/Berlin",
+      previewFeaturesJson: { topics: true },
+    });
+    expect(admitAccountSettings(entry, ctx)).toEqual({
+      data: { timezone: "Europe/Berlin" },
+      refused: [],
+    });
+  });
+
   it("refuses a language, unit or time zone this release does not know", () => {
     const { data, refused } = admitAccountSettings(
       {
@@ -196,6 +211,41 @@ describe("admitAccountSettings", () => {
       "thresholdsJson.PULSE",
       "thresholdsJson.RETIRED_METRIC",
     ]);
+  });
+
+  it("keeps the valid activity goals and names the ones it drops", () => {
+    const { data, refused } = admitAccountSettings(
+      {
+        activityGoalsJson: {
+          workoutsPerWeek: 4,
+          activeMinutesPerWeek: 150,
+          stepsPerWeek: 70_000,
+          stepsPerMonth: 300_000,
+          stepsPerDay: 10_000,
+          workoutsPerWeekTypo: "four",
+        },
+      },
+      ctx,
+    );
+    expect(data.activityGoalsJson).toEqual({
+      workoutsPerWeek: 4,
+      activeMinutesPerWeek: 150,
+      stepsPerWeek: 70_000,
+      stepsPerMonth: 300_000,
+    });
+    expect(refused.sort()).toEqual([
+      "activityGoalsJson.stepsPerDay",
+      "activityGoalsJson.workoutsPerWeekTypo",
+    ]);
+  });
+
+  it("refuses an activity goal outside its bounds and keeps the rest", () => {
+    const { data, refused } = admitAccountSettings(
+      { activityGoalsJson: { workoutsPerWeek: 0, stepsPerWeek: 50_000 } },
+      ctx,
+    );
+    expect(data.activityGoalsJson).toEqual({ stepsPerWeek: 50_000 });
+    expect(refused).toEqual(["activityGoalsJson.workoutsPerWeek"]);
   });
 
   // #1126 — the reasoning setting lives on the provider chain entries, so

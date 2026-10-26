@@ -1,5 +1,6 @@
 /**
- * Withings API client for OAuth and data fetching.
+ * Withings API client: measurement reads and webhook subscriptions. The OAuth
+ * handshake is `./oauth.ts`.
  * Docs: https://developer.withings.com/api-reference
  */
 import { getEvent } from "@/lib/logging/context";
@@ -8,181 +9,11 @@ import {
   WithingsApiError,
   classifyWithingsResponse,
 } from "./response-classifier";
-import { envOr, envValue } from "@/lib/env";
+import { importValue } from "@/lib/integrations/import-value";
+import { walkPages } from "@/lib/integrations/page-walk";
 
-const WITHINGS_OAUTH_URL =
-  "https://account.withings.com/oauth2_user/authorize2";
-const WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2";
 const WITHINGS_MEASURE_URL = "https://wbsapi.withings.net/measure";
 const WITHINGS_NOTIFY_URL = "https://wbsapi.withings.net/notify";
-
-export interface WithingsCredentials {
-  clientId: string;
-  clientSecret: string;
-}
-
-export function getWithingsRedirectUri(): string {
-  // An empty or blank value counts as unset: the compose whitelist
-  // materialises an unset var as an empty string, which must fall through to
-  // the derived URI rather than go out as `redirect_uri=`.
-  return envOr(
-    "WITHINGS_REDIRECT_URI",
-    `${envValue("NEXT_PUBLIC_APP_URL")}/api/withings/callback`,
-  );
-}
-
-/**
- * v1.4.25 W5d — Withings OAuth scope set HealthLog requests.
- *
- *   - `user.metrics`  : every meastype the Measure / Heart-list /
- *                       Sleep endpoints expose (weight, BP, pulse,
- *                       SpO2, body comp, temperature, VO2 max, …)
- *   - `user.activity` : steps / active energy / distance / floors —
- *                       served by `POST /v2/measure?action=getactivity`.
- *                       The sync routine itself lands in v1.4.26; the
- *                       scope is requested now so existing users
- *                       reconnect once instead of twice.
- *
- * v1.4.24-and-earlier connections requested `user.metrics` only — the
- * Settings → Integrations card surfaces a reconnect banner for those
- * users (see `WithingsConnection.scope IS NULL` or scope without
- * `user.activity`).
- */
-export const WITHINGS_OAUTH_SCOPE = "user.metrics,user.activity" as const;
-
-/**
- * Parse the persisted scope string into a Set for membership checks.
- * Legacy NULL → empty set (treated as "no scopes yet") so the
- * reconnect-banner conditional reads as truthy.
- */
-export function parseWithingsScope(scope: string | null): Set<string> {
-  if (!scope) return new Set();
-  return new Set(
-    scope
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-}
-
-/**
- * Returns true when the connection holds `user.activity` — the
- * minimum scope required by the Activity / Sleep endpoints.
- */
-export function hasActivityScope(scope: string | null): boolean {
-  return parseWithingsScope(scope).has("user.activity");
-}
-
-/**
- * Generate Withings OAuth authorization URL.
- */
-export function getAuthorizationUrl(
-  state: string,
-  creds: WithingsCredentials,
-): string {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: creds.clientId,
-    redirect_uri: getWithingsRedirectUri(),
-    scope: WITHINGS_OAUTH_SCOPE,
-    state,
-  });
-  return `${WITHINGS_OAUTH_URL}?${params}`;
-}
-
-export interface WithingsTokenResponse {
-  userid: string;
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-}
-
-/**
- * Exchange authorization code for tokens.
- */
-export async function exchangeCode(
-  code: string,
-  creds: WithingsCredentials,
-): Promise<WithingsTokenResponse> {
-  const params = new URLSearchParams({
-    action: "requesttoken",
-    grant_type: "authorization_code",
-    client_id: creds.clientId,
-    client_secret: creds.clientSecret,
-    redirect_uri: getWithingsRedirectUri(),
-    code,
-  });
-
-  const start = performance.now();
-  const res = await safeFetch(WITHINGS_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-
-  const json = await res.json();
-  const verdict = classifyWithingsResponse(res.status, json);
-  getEvent()?.addExternalCall({
-    service: "withings",
-    method: "exchangeCode",
-    duration_ms: Math.round(performance.now() - start),
-    status: res.status,
-    error: verdict.classification === "success" ? undefined : verdict.reason,
-  });
-  if (verdict.classification !== "success") {
-    throw new WithingsApiError({
-      verb: "token",
-      classification: verdict.classification,
-      withingsStatus: verdict.withingsStatus,
-      reason: verdict.reason,
-      upstreamError: typeof json?.error === "string" ? json.error : undefined,
-    });
-  }
-  return json.body as WithingsTokenResponse;
-}
-
-/**
- * Refresh an expired access token.
- */
-export async function refreshAccessToken(
-  refreshToken: string,
-  creds: WithingsCredentials,
-): Promise<WithingsTokenResponse> {
-  const params = new URLSearchParams({
-    action: "requesttoken",
-    grant_type: "refresh_token",
-    client_id: creds.clientId,
-    client_secret: creds.clientSecret,
-    refresh_token: refreshToken,
-  });
-
-  const start = performance.now();
-  const res = await safeFetch(WITHINGS_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-
-  const json = await res.json();
-  const verdict = classifyWithingsResponse(res.status, json);
-  getEvent()?.addExternalCall({
-    service: "withings",
-    method: "refreshAccessToken",
-    duration_ms: Math.round(performance.now() - start),
-    status: res.status,
-    error: verdict.classification === "success" ? undefined : verdict.reason,
-  });
-  if (verdict.classification !== "success") {
-    throw new WithingsApiError({
-      verb: "refresh",
-      classification: verdict.classification,
-      withingsStatus: verdict.withingsStatus,
-      reason: verdict.reason,
-      upstreamError: typeof json?.error === "string" ? json.error : undefined,
-    });
-  }
-  return json.body as WithingsTokenResponse;
-}
 
 // Withings measure type mapping. The single source of truth is
 // `src/lib/withings/mapping.md` — keep both in sync when adding entries.
@@ -248,6 +79,24 @@ export interface WithingsMeasureGroup {
 export const WITHINGS_MEASTYPES: readonly number[] =
   Object.keys(MEASURE_TYPE_MAP).map(Number);
 
+/** Ceiling on the pages one Withings list walk reads (`walkPages`). */
+export const WITHINGS_MAX_PAGES = 1000;
+
+/**
+ * The offset of the next page of a Withings list body, or null when it has
+ * no more. A body that says `more` without an offset past the current one
+ * hands back the current offset, which `walkPages` reports as a repeat
+ * instead of stopping quietly.
+ */
+export function withingsNextOffset(
+  body: { more?: unknown; offset?: unknown },
+  offset: number,
+): number | null {
+  if (body.more !== true && body.more !== 1) return null;
+  const next = Number(body.offset);
+  return Number.isFinite(next) && next > offset ? next : offset;
+}
+
 /**
  * Fetch measurements from Withings API.
  *
@@ -272,77 +121,69 @@ export async function fetchMeasurements(
     baseParams.enddate = String(Math.floor(endDate.getTime() / 1000));
   }
 
-  const results: WithingsMeasure[] = [];
-  let offset = 0;
-  let pageCount = 0;
-
-  while (true) {
-    const params = new URLSearchParams({
-      ...baseParams,
-      offset: String(offset),
-    });
-
-    const pageStart = performance.now();
-    const res = await safeFetch(WITHINGS_MEASURE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: params.toString(),
-    });
-
-    const json = await res.json();
-    const verdict = classifyWithingsResponse(res.status, json);
-    getEvent()?.addExternalCall({
-      service: "withings",
-      method: `fetchMeasurements(page=${pageCount})`,
-      duration_ms: Math.round(performance.now() - pageStart),
-      status: res.status,
-      error: verdict.classification === "success" ? undefined : verdict.reason,
-    });
-    if (verdict.classification !== "success") {
-      throw new WithingsApiError({
-        verb: "measure",
-        classification: verdict.classification,
-        withingsStatus: verdict.withingsStatus,
-        reason: verdict.reason,
-        upstreamError: typeof json?.error === "string" ? json.error : undefined,
+  const walk = await walkPages<number, WithingsMeasure>(
+    "withings.measure",
+    WITHINGS_MAX_PAGES,
+    async (cursor, page) => {
+      const offset = cursor ?? 0;
+      const params = new URLSearchParams({
+        ...baseParams,
+        offset: String(offset),
       });
-    }
 
-    const body = json.body ?? {};
-    const groups: WithingsMeasureGroup[] = body.measuregrps ?? [];
+      const pageStart = performance.now();
+      const res = await safeFetch(WITHINGS_MEASURE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: params.toString(),
+      });
 
-    for (const group of groups) {
-      const measuredAt = new Date(group.date * 1000);
-
-      for (const m of group.measures) {
-        const mapping = MEASURE_TYPE_MAP[m.type];
-        if (!mapping) continue;
-
-        // Withings stores value * 10^unit (unit is usually negative)
-        const value = m.value * Math.pow(10, m.unit);
-
-        results.push({
-          type: mapping.type,
-          value: parseFloat(value.toFixed(2)),
-          measuredAt,
+      const json = await res.json();
+      const verdict = classifyWithingsResponse(res.status, json);
+      getEvent()?.addExternalCall({
+        service: "withings",
+        method: `fetchMeasurements(page=${page})`,
+        duration_ms: Math.round(performance.now() - pageStart),
+        status: res.status,
+        error:
+          verdict.classification === "success" ? undefined : verdict.reason,
+      });
+      if (verdict.classification !== "success") {
+        throw new WithingsApiError({
+          verb: "measure",
+          classification: verdict.classification,
+          withingsStatus: verdict.withingsStatus,
+          reason: verdict.reason,
+          upstreamError:
+            typeof json?.error === "string" ? json.error : undefined,
         });
       }
-    }
 
-    const hasMore = body.more === true || body.more === 1;
-    if (!hasMore) break;
-
-    const nextOffset = Number(body.offset);
-    if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-    offset = nextOffset;
-    pageCount += 1;
-    if (pageCount > 1000) break;
-  }
-
-  return results;
+      const body = json.body ?? {};
+      const groups: WithingsMeasureGroup[] = body.measuregrps ?? [];
+      const items: WithingsMeasure[] = [];
+      for (const group of groups) {
+        const measuredAt = new Date(group.date * 1000);
+        for (const m of group.measures) {
+          const mapping = MEASURE_TYPE_MAP[m.type];
+          if (!mapping) continue;
+          // Withings stores value * 10^unit (unit is usually negative)
+          const value = m.value * Math.pow(10, m.unit);
+          items.push({
+            type: mapping.type,
+            value: importValue(value),
+            measuredAt,
+          });
+        }
+      }
+      return { items, next: withingsNextOffset(body, offset) };
+    },
+    0,
+  );
+  return walk.items;
 }
 
 /**

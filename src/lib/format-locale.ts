@@ -14,7 +14,7 @@
  * UTC is always preserved in the database.
  */
 
-import type { Locale } from "./i18n/config";
+import { localeFromLanguageTag, type Locale } from "./i18n/config";
 import { getDateTimeFormat, getNumberFormat } from "./intl/formatter-cache";
 import { DEFAULT_TIMEZONE, isValidTimezone } from "./tz/format";
 
@@ -31,6 +31,8 @@ const INTL_LOCALE_MAP: Record<Locale, string> = {
   it: "it-IT",
   pl: "pl-PL",
   ko: "ko-KR",
+  nl: "nl-NL",
+  "pt-BR": "pt-BR",
 };
 
 export function resolveIntlLocale(locale: Locale): string {
@@ -124,9 +126,12 @@ function asDate(value: DateInput): Date {
  * lookup is cheap.
  */
 function isCurrentYearInTz(date: Date, tz: string, localeTag: string): boolean {
-  const yearOnly = { timeZone: tz, year: "numeric" as const };
-  const target = getDateTimeFormat(localeTag, yearOnly).format(date);
-  const now = getDateTimeFormat(localeTag, yearOnly).format(new Date());
+  const yearIn = (value: Date) =>
+    getDateTimeFormat(localeTag, { timeZone: tz, year: "numeric" }).format(
+      value,
+    );
+  const target = yearIn(date);
+  const now = yearIn(new Date());
   return target === now;
 }
 
@@ -176,6 +181,23 @@ export interface Formatters {
 }
 
 /**
+ * A decimal in the reader's notation for text built outside React (a server
+ * sentence, a deterministic fallback): at most `maxFractionDigits` digits,
+ * trailing zeros dropped, no grouping. `toFixed` prints a full stop in every
+ * language; this prints "0,8" in German and "0.8" in English.
+ */
+export function formatDecimal(
+  value: number,
+  locale: Locale,
+  maxFractionDigits: number,
+): string {
+  return getNumberFormat(resolveIntlLocale(locale), {
+    maximumFractionDigits: maxFractionDigits,
+    useGrouping: false,
+  }).format(value);
+}
+
+/**
  * Build the locale-aware formatter set.
  *
  * Every parameter is REQUIRED, deliberately. `timeFormat` and `dateFormat`
@@ -208,7 +230,7 @@ export function makeFormatters(
   // so axis month names follow the UI language, not the date-order pin.
   const dateLocale = dateOrderLocale(dateFormat, intlLocale);
 
-  // v1.28.42 (H2) — the returned closures used to construct a fresh
+  // v1.28.42 — the returned closures used to construct a fresh
   // `Intl.NumberFormat` / `Intl.DateTimeFormat` on every call. `makeFormatters`
   // is memoised per (locale, tz, timeFormat, dateFormat) on the client, but a
   // dense history list still calls these closures thousands of times per
@@ -340,12 +362,6 @@ export function makeFormatters(
  */
 export function parseLocaleFromAcceptLanguage(header: string | null): Locale {
   if (!header) return "en";
-  const primary = header.split(",")[0]?.trim().toLowerCase() ?? "";
-  if (primary.startsWith("de")) return "de";
-  if (primary.startsWith("fr")) return "fr";
-  if (primary.startsWith("es")) return "es";
-  if (primary.startsWith("it")) return "it";
-  if (primary.startsWith("pl")) return "pl";
-  if (primary.startsWith("ko")) return "ko";
-  return "en";
+  const first = header.split(",")[0]?.split(";")[0];
+  return localeFromLanguageTag(first) ?? "en";
 }

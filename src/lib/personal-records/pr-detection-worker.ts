@@ -1,5 +1,5 @@
 /**
- * v1.4.25 W16c — PersonalRecord detection worker.
+ * v1.4.25 — PersonalRecord detection worker.
  *
  * Scans a user's `Measurement` and `Workout` history and writes
  * `PersonalRecord` rows for every all-time best (per metric direction).
@@ -19,8 +19,8 @@
  *   - All-time scan rather than a rolling window. The
  *     `personal_records_user_metric_idx` index makes
  *     `ORDER BY value LIMIT 1` constant-time; reading the worst-case
- *     ~30k measurement rows per metric is ~50 ms with the typed
- *     `measurements_user_id_type_measured_at_idx` index.
+ *     ~30k measurement rows per metric is ~50 ms over the
+ *     `(user_id, type, measured_at, …)` unique index.
  *   - Tie handling: an equal-value reading writes a row but the caller
  *     suppresses the push notification (the user matched, not beat
  *     their best). The notification suppression lives on the job
@@ -542,10 +542,10 @@ async function findBestMeasurement(
 }
 
 /**
- * REG-9 (v1.4.46) / v1.29.6 — day-bucket SUM picker for cumulative HK
+ * (v1.4.46) / v1.29.6 — day-bucket SUM picker for cumulative HK
  * kinds.
  *
- * v1.29.6 fix: the original implementation summed EVERY row on a
+ * v1.29.6: the original implementation summed EVERY row on a
  * calendar day regardless of source. A day with both an Apple Health
  * AND a Withings write for the same cumulative metric (e.g. steps)
  * summed both sources into one inflated total — a false "record" day

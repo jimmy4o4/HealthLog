@@ -39,7 +39,8 @@
  * the never-causal framing survives verbatim in all six locales rather than
  * leaking English into a non-English UI.
  */
-import { defaultLocale } from "@/lib/i18n/config";
+import { formatDecimal } from "@/lib/format-locale";
+import { defaultLocale, type Locale } from "@/lib/i18n/config";
 import { getServerTranslator } from "@/lib/i18n/server-translator";
 import {
   dayKeyToIndex,
@@ -132,7 +133,7 @@ export type CorrelationResult = CorrelationOk | CorrelationInsufficient;
 /**
  * Hard floor for paired sample count.
  *
- * v1.4.23 H6 — raised from 14 to 20 so borderline-df Pearson cards
+ * v1.4.23 — raised from 14 to 20 so borderline-df Pearson cards
  * stop surfacing. The Fisher's-Z normal approximation overstates
  * significance at df < 18; raising the gate is the simpler patch here
  * (a rigorous incomplete-beta replacement is queued as a v1.4.24
@@ -229,7 +230,7 @@ export function pearson(input: {
   const clamped = Math.max(-1, Math.min(1, r));
 
   // Two-sided p-value via Student's t. t = r * sqrt(n-2) / sqrt(1-r^2).
-  // v1.4.26 P6-1 — replaced the normal-approx fallback with a rigorous
+  // v1.4.26 — replaced the normal-approx fallback with a rigorous
   // regularised-incomplete-beta evaluation so the surface decision is
   // exact at every df the corpus produces, not just for df >= 18. The
   // auto-discovery work planned for v1.5/v1.6 widens the metric pair
@@ -375,7 +376,7 @@ function roundTo(value: number, digits: number): number {
 /**
  * Two-sided p-value for a t-statistic with `df` degrees of freedom.
  *
- * v1.4.26 P6-1 — exact Student's-t survival via the regularised
+ * v1.4.26 — exact Student's-t survival via the regularised
  * incomplete beta. The two-sided p of |t| with df is
  *   p = I_{x}(df/2, 1/2)        where x = df / (df + t^2).
  * `regularizedIncompleteBeta` below evaluates `I_x(a, b)` with the
@@ -387,12 +388,31 @@ function roundTo(value: number, digits: number): number {
  * gate is no longer load-bearing for correctness — only for sample
  * adequacy.
  */
-function twoSidedPFromT(absT: number, df: number): number {
+export function twoSidedPFromT(absT: number, df: number): number {
   if (!Number.isFinite(absT)) return 0;
   if (df <= 0) return 1;
   if (absT === 0) return 1;
   const x = df / (df + absT * absT);
   return regularizedIncompleteBeta(x, df / 2, 0.5);
+}
+
+/**
+ * The two-sided critical t at `alpha` with `df` degrees of freedom: the t
+ * whose two-sided p equals `alpha` (12.706 at df 1, 4.303 at df 2, 1.960 as
+ * df grows, for alpha 0.05). Bisection over {@link twoSidedPFromT}, which is
+ * monotone in t; 200 halvings of [0, 1e6] reach double precision. Null for a
+ * df below 1, where no interval exists.
+ */
+export function criticalTTwoSided(df: number, alpha = 0.05): number | null {
+  if (!(df >= 1) || !(alpha > 0 && alpha < 1)) return null;
+  let lo = 0;
+  let hi = 1e6;
+  for (let i = 0; i < 200; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (twoSidedPFromT(mid, df) > alpha) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 // ── Welch two-sample t-test (unequal variances) ────────────────────
@@ -919,6 +939,7 @@ export interface WeightWeekdayInput {
 export function correlateWeightWeekday(
   input: WeightWeekdayInput,
   t: Translate = defaultTranslate(),
+  locale: Locale = defaultLocale,
 ): CorrelationResult {
   const points = input.daily.map((d) => ({ x: d.weekday, y: d.weight }));
   const anova = weekdayAnova(
@@ -951,7 +972,8 @@ export function correlateWeightWeekday(
   const direction = t(
     `insights.correlation.weekdayDirection.${outlierMean > grandMean ? "above" : "below"}`,
   );
-  const delta = Math.abs(outlierMean - grandMean).toFixed(1);
+  // In the reader's notation: the sentence is theirs ("0,8 kg" in German).
+  const delta = formatDecimal(Math.abs(outlierMean - grandMean), locale, 1);
   const interpretation = t("insights.correlation.hypothesis.weightWeekday", {
     weekday: dayLabel,
     delta,

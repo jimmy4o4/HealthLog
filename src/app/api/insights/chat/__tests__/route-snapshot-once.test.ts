@@ -65,7 +65,7 @@ vi.mock("@/lib/ai/provider-runner", () => ({
   runStreamingRawCompletionWithFallback,
 }));
 vi.mock("@/lib/ai/provider", () => ({
-  // v1.20.0 (F1) — pin a no-tools provider so this suite exercises the legacy
+  // v1.20.0 — pin a no-tools provider so this suite exercises the legacy
   // snapshot-stuffing fallback path (the behaviour it was written to pin). The
   // tool-retrieval path is covered by route-tool-mode.test.ts.
   resolveProviderChain: vi.fn(async () => [
@@ -77,7 +77,8 @@ vi.mock("@/lib/ai/consent-guard", () => ({
   assertConsentForChain: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/ai/prompts/insight-generator", () => ({ PROMPT_VERSION: "x" }));
-vi.mock("@/lib/ai/ai-budgets", () => ({
+vi.mock("@/lib/ai/ai-budgets", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/ai-budgets")>()),
   AI_BUDGETS: { coach: { maxTokens: 1500, temperature: 0.4 } },
 }));
 
@@ -219,6 +220,7 @@ describe("coach chat — stateless no-tools snapshot grounding", () => {
     runStreamingRawCompletionWithFallback.mockResolvedValue({
       result: { content: "Your BP looks stable.", tokensUsed: 42, model: "m" },
       workingProvider: { providerType: "admin-openai" },
+      tokensSpent: 0,
     });
   });
 
@@ -275,6 +277,7 @@ describe("coach chat — snapshot stays grounded across transcript elision", () 
     runStreamingRawCompletionWithFallback.mockResolvedValue({
       result: { content: "Your BP looks stable.", tokensUsed: 42, model: "m" },
       workingProvider: { providerType: "admin-openai" },
+      tokensSpent: 0,
     });
   });
 

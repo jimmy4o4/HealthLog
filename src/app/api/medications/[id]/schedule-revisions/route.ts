@@ -27,20 +27,14 @@ import { prisma } from "@/lib/db";
 import { apiHandler, requireRecordAuth } from "@/lib/api-handler";
 import { annotate } from "@/lib/logging/context";
 import { auditLog } from "@/lib/auth/audit";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess, getClientIp } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { assertMedicationOwnership } from "@/lib/medications/route-guards";
 import { scheduleRevisionCreateSchema } from "@/lib/validations/schedule-revision";
 import {
   toRevisionPayloadEntry,
   type ScheduleRevisionEntry,
 } from "@/lib/medications/scheduling/schedule-eras";
-import { enqueueUserMedicationComplianceBackfill } from "@/lib/rollups/medication-compliance-rollups";
 import { invalidateUserMedications } from "@/lib/cache/invalidate";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -92,7 +86,7 @@ export const GET = apiHandler(
       // Superseded rows are audit records behind a correction — the
       // timeline shows the corrected state, like every era consumer.
       where: { medicationId: id, supersededByRevisionId: null },
-      orderBy: { validFrom: "desc" },
+      orderBy: [{ validFrom: "desc" }, { id: "desc" }],
       select: {
         id: true,
         validFrom: true,
@@ -152,15 +146,11 @@ export const POST = apiHandler(
       return apiError("Medication not found", 404);
     }
 
-    const { data: body, error: jsonError } = await safeJson(request, {
+    const parsed = await parseJsonBody(request, scheduleRevisionCreateSchema, {
       maxBytes: 16 * 1024,
+      input: (body) => body ?? {},
     });
-    if (jsonError) return jsonError;
-
-    const parsed = scheduleRevisionCreateSchema.safeParse(body ?? {});
-    if (!parsed.success) {
-      return returnAllZodIssues(parsed.error, 422);
-    }
+    if (!parsed.ok) return parsed.error;
 
     const validFrom = new Date(parsed.data.validFrom);
     const validUntil = new Date(parsed.data.validUntil);
@@ -282,14 +272,10 @@ export const POST = apiHandler(
       },
     });
 
-    // The new era re-segments history the compliance rollups already
-    // pre-aggregated; refresh them asynchronously. Best-effort like
-    // every other rollup write-hook.
     // v1.16.9 — an era write re-segments the bands every cached payload
     // (list next-due, compliance cells, dashboard tally) was built on;
     // hard-evict so the next read reflects the new history immediately.
     invalidateUserMedications(user.id, { evict: true });
-    await enqueueUserMedicationComplianceBackfill(user.id);
 
     return apiSuccess(
       {

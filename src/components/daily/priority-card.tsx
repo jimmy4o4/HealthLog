@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * P1 — `PriorityCard`, the ONE card behind every "worth a look" rail item.
+ * `PriorityCard`, the ONE card behind every "worth a look" rail item.
  *
  * It renders a `PriorityItem` and never fetches. Every later consumer reuses
  * it verbatim: the Today rail (S2), a coach check-in (S3), a milestone
@@ -36,6 +36,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { TileHeader } from "@/components/insights/tile-header";
 import { ProseBlocks } from "@/components/insights/prose-blocks";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { VISITS_PATH } from "@/lib/encounters/visit-links";
 import { useTranslations } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import {
@@ -144,7 +145,7 @@ export function PriorityCard({
     .filter((action) => action.href || onAction)
     .slice(0, 3);
   const hue = KIND_HUE[item.kind];
-  // S12 — the quiet "reached" moment: the milestone card swaps the generic
+  // The quiet "reached" moment: the milestone card swaps the generic
   // fade-in for the `.milestone-reached` treatment (a soft `--success` halo
   // over the theme card + a one-shot spring reveal on `--ring-spring`;
   // reduced-motion fallback lives beside the keyframes in globals.css). The
@@ -163,9 +164,9 @@ export function PriorityCard({
     <Card
       data-slot="priority-card"
       data-kind={item.kind}
+      density="compact"
       className={cn(
         isMilestone ? "milestone-reached" : "animate-insight-in",
-        "gap-2 py-3 md:gap-2 md:py-4",
         item.status ? STATUS_WASH[item.status] : null,
         hue ? "metric-accent" : null,
         className,
@@ -205,7 +206,7 @@ export function PriorityCard({
                 <ActionLink
                   key={action.intent}
                   href={action.href}
-                  label={t(action.labelKey)}
+                  label={t(actionLabelKey(item, action))}
                 />
               ) : onAction ? (
                 <ActionButton
@@ -225,6 +226,24 @@ export function PriorityCard({
 }
 
 /** A navigation action. Always offered — reading is never delegated away. */
+/**
+ * The label key a web card shows for an action.
+ *
+ * The server's `labelKey`, except on an appointment: that item still carries
+ * the check-up item's label on the wire ("View check-ups"), because the
+ * shipped iOS app resolves the label and routes the intent it already knows.
+ * Its `href` already opens the visit, so the web names what it opens.
+ */
+export function actionLabelKey(
+  item: Pick<PriorityItem, "kind">,
+  action: Pick<PriorityItemAction, "labelKey" | "href">,
+): string {
+  if (item.kind !== "upcoming_visit" || !action.href) return action.labelKey;
+  return action.href === VISITS_PATH
+    ? "daily.action.viewAppointments"
+    : "daily.action.viewAppointment";
+}
+
 function ActionLink({ href, label }: { href: string; label: string }) {
   return (
     <Link

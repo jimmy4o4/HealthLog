@@ -93,6 +93,7 @@ export function BodySitesSection({
 
       {list.isError ? (
         <QueryErrorCard
+          error={list.error}
           title={t("bodySites.loadError")}
           onRetry={() => void list.refetch()}
         />
@@ -267,7 +268,7 @@ function VisitRow({ t, visit }: { t: Translate; visit: EncounterDTO }) {
   const site = bodySiteText(t, visit.bodySite, visit.laterality);
   return (
     <Card
-      className="gap-2 py-3 md:py-4"
+      density="compact"
       data-slot="body-site-visit"
       data-encounter-id={visit.id}
     >
@@ -325,7 +326,7 @@ function ConditionRow({
   const site = bodySiteText(t, condition.bodySite, condition.laterality);
   return (
     <Card
-      className="gap-2 py-3 md:py-4"
+      density="compact"
       data-slot="body-site-condition"
       data-episode-id={condition.id}
     >

@@ -17,22 +17,12 @@
  * least-privilege read scope and nothing more.
  */
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Key, Link2, Loader2, Plug, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { showErrorToast } from "@/lib/errors/error-toast";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -42,15 +32,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { SettingsCard } from "@/components/settings/settings-card";
 import { SettingsCardHeader } from "@/components/settings/_card-header";
+import { ModuleStateCard } from "@/components/settings/module-state-card";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { useTranslations } from "@/lib/i18n/context";
-import {
-  aiInputDependentKeys,
-  invalidateKeys,
-  queryKeys,
-} from "@/lib/query-keys";
-import { apiFetchRaw, apiGet, apiPatch } from "@/lib/api/api-fetch";
+import { queryKeys } from "@/lib/query-keys";
+import { apiFetchRaw, apiGet } from "@/lib/api/api-fetch";
 import {
   recentProofErrorMessage,
   throwIfReproofRequired,
@@ -93,6 +80,7 @@ function McpConnectionsCard() {
   const {
     data: connections,
     isError,
+    error,
     isLoading,
     refetch,
   } = useQuery({
@@ -134,7 +122,7 @@ function McpConnectionsCard() {
 
       <div className="space-y-4">
         {isError ? (
-          <QueryErrorCard onRetry={() => refetch()} />
+          <QueryErrorCard error={error} onRetry={() => refetch()} />
         ) : isLoading ? (
           <Skeleton className="h-24 w-full rounded-lg" />
         ) : list.length === 0 ? (
@@ -147,7 +135,7 @@ function McpConnectionsCard() {
                 className="bg-muted/30 border-border space-y-2 rounded-lg border p-3"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <p className="min-w-0 flex-1 text-sm font-medium break-all">
+                  <p className="min-w-0 flex-1 text-sm font-medium break-words">
                     {conn.clientName}
                   </p>
                   <Badge className="bg-success/15 text-success text-xs">
@@ -168,39 +156,17 @@ function McpConnectionsCard() {
                     ? formatDateTime(conn.lastUsedAt)
                     : t("settings.mcp.connectionNeverUsed")}
                 </p>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="min-h-11 w-full"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {t("settings.mcp.connectionRevoke")}
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        {t("settings.mcp.connectionRevoke")}
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t("settings.mcp.connectionRevokeDescription")}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>
-                        {t("common.cancel")}
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={() => handleRevoke(conn.id)}
-                      >
-                        {t("settings.mcp.connectionRevoke")}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <ConfirmButton
+                  label={t("settings.mcp.connectionRevoke")}
+                  className="min-h-11 w-full"
+                  title={t("settings.mcp.connectionRevoke")}
+                  body={t("settings.mcp.connectionRevokeDescription")}
+                  confirmLabel={t("settings.mcp.connectionRevoke")}
+                  onConfirm={() => void handleRevoke(conn.id)}
+                  slot="mcp-connection-revoke"
+                  icon={<Trash2 className="h-3.5 w-3.5" />}
+                  destructive
+                />
               </li>
             ))}
           </ul>
@@ -210,10 +176,16 @@ function McpConnectionsCard() {
   );
 }
 
+/**
+ * The connector's state, with a link to the one switch in Settings > Modules.
+ * Turning the module off pauses the endpoint: it refuses every call, while the
+ * tokens and connections below stay as they are and work again once it is on.
+ * Nothing here or in Modules revokes a token as a side effect (#1170); a token
+ * goes only through its own revoke.
+ */
 function McpEnableCard() {
   const { t } = useTranslations();
   const { user } = useAuth();
-  const queryClient = useQueryClient();
 
   // The opt-in module is OFF until explicitly enabled — `user.modules.mcp` is
   // the resolved state (true only when the user turned it on).
@@ -221,53 +193,29 @@ function McpEnableCard() {
   const endpoint =
     typeof window !== "undefined" ? `${window.location.origin}/mcp` : "/mcp";
 
-  const toggle = useMutation({
-    mutationKey: queryKeys.modulesPrefs(),
-    mutationFn: async (next: boolean) =>
-      apiPatch("/api/auth/me/modules", { mcp: next }),
-    onSuccess: () => {
-      void invalidateKeys(queryClient, aiInputDependentKeys);
-      toast.success(t("settings.sections.modules.saved"));
-    },
-    onError: (failure) =>
-      showErrorToast(t("settings.sections.modules.error"), { cause: failure }),
-  });
-
   return (
-    <SettingsCard>
-      <SettingsCardHeader
-        anchor="mcp-enable"
-        icon={Plug}
-        title={t("settings.mcp.enableTitle")}
-        description={t("settings.mcp.enableDescription")}
-      />
-
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-sm font-medium">
-            {t("settings.mcp.enableToggleLabel")}
-          </span>
-          <Switch
-            checked={enabled}
-            disabled={toggle.isPending}
-            onCheckedChange={(next) => toggle.mutate(next)}
-            aria-label={t("settings.mcp.enableToggleLabel")}
-          />
-        </div>
-
-        <div>
-          <p className="text-muted-foreground mb-1 text-xs tracking-wide uppercase">
-            {t("settings.mcp.endpointLabel")}
-          </p>
-          <code className="bg-muted block rounded p-2 font-mono text-xs break-all">
-            {endpoint}
-          </code>
-          <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
-            {t("settings.mcp.connectDescription")}
-          </p>
-        </div>
+    <ModuleStateCard
+      moduleKey="mcp"
+      enabled={enabled}
+      icon={Plug}
+      title={t("settings.mcp.enableTitle")}
+      description={t("settings.mcp.enableDescription")}
+      anchor="mcp-enable"
+      slot="settings-mcp-state-card"
+    >
+      <p className="text-sm">{t("settings.mcp.offKeepsTokens")}</p>
+      <div>
+        <p className="text-muted-foreground mb-1 text-xs tracking-wide uppercase">
+          {t("settings.mcp.endpointLabel")}
+        </p>
+        <code className="bg-muted block rounded p-2 font-mono text-xs break-all">
+          {endpoint}
+        </code>
+        <p className="text-muted-foreground mt-2 text-xs leading-relaxed">
+          {t("settings.mcp.connectDescription")}
+        </p>
       </div>
-    </SettingsCard>
+    </ModuleStateCard>
   );
 }
 
@@ -285,6 +233,7 @@ function McpTokensCard() {
   const {
     data: tokens,
     isError,
+    error,
     isLoading,
     refetch,
   } = useQuery({
@@ -457,7 +406,7 @@ function McpTokensCard() {
             {t("settings.activeTokensTitle")}
           </p>
           {isError ? (
-            <QueryErrorCard onRetry={() => refetch()} />
+            <QueryErrorCard error={error} onRetry={() => refetch()} />
           ) : isLoading ? (
             <Skeleton className="h-24 w-full rounded-lg" />
           ) : activeTokens.length === 0 ? (
@@ -473,7 +422,7 @@ function McpTokensCard() {
                     className="bg-muted/30 border-border space-y-2 rounded-lg border p-3"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <p className="min-w-0 flex-1 text-sm font-medium break-all">
+                      <p className="min-w-0 flex-1 text-sm font-medium break-words">
                         {tok.name}
                       </p>
                       {isExpired ? (
@@ -506,39 +455,17 @@ function McpTokensCard() {
                         ? formatDateTime(tok.lastUsedAt)
                         : t("settings.tokenNeverUsed")}
                     </p>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="min-h-11 w-full"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          {t("settings.tokenRevoke")}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            {t("settings.tokenRevoke")}
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {t("settings.tokenRevokeDescription")}
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>
-                            {t("common.cancel")}
-                          </AlertDialogCancel>
-                          <AlertDialogAction
-                            variant="destructive"
-                            onClick={() => handleRevoke(tok.id)}
-                          >
-                            {t("settings.tokenRevoked")}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <ConfirmButton
+                      label={t("settings.tokenRevokeAction")}
+                      className="min-h-11 w-full"
+                      title={t("settings.tokenRevoke")}
+                      body={t("settings.tokenRevokeDescription")}
+                      confirmLabel={t("settings.tokenRevokeAction")}
+                      onConfirm={() => void handleRevoke(tok.id)}
+                      slot="mcp-token-revoke"
+                      icon={<Trash2 className="h-3.5 w-3.5" />}
+                      destructive
+                    />
                   </li>
                 );
               })}

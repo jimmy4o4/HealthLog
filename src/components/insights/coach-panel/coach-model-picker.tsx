@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, Loader2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
+import { InlineAction } from "@/components/ui/inline-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -24,6 +26,7 @@ import {
   invalidateKeys,
   queryKeys,
 } from "@/lib/query-keys";
+import { QueryErrorRow } from "@/components/ui/query-error-row";
 
 /**
  * The quick model choice in the Coach's settings overlay: which provider
@@ -43,6 +46,10 @@ import {
  *    operator's shared provider and Codex show their state read-only.
  * Every write invalidates the AI input keys, so the capability on
  * `/api/auth/me` comes back from the server rather than being guessed here.
+ *
+ * v1.44 briefly replaced the selects with a read-only line; switching the
+ * model mid-conversation is how people use it, so the selects are back, with
+ * the link to Settings > AI kept below them for everything else.
  */
 
 /** The configured chain with `provider` first; everything else keeps order. */
@@ -195,21 +202,15 @@ export function CoachModelPicker() {
 
   if (chainQuery.isError || providerQuery.isError) {
     return (
-      <div className="flex flex-col items-start gap-2 text-sm">
-        <p role="alert" className="text-destructive">
-          {t("common.loadFailed")}
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void chainQuery.refetch();
-            void providerQuery.refetch();
-          }}
-        >
-          {t("common.retry")}
-        </Button>
-      </div>
+      <QueryErrorRow
+        inset
+        error={chainQuery.error ?? providerQuery.error}
+        slot="coach-model-picker-error"
+        onRetry={() => {
+          void chainQuery.refetch();
+          void providerQuery.refetch();
+        }}
+      />
     );
   }
 
@@ -334,6 +335,14 @@ export function CoachModelPicker() {
           {error}
         </p>
       ) : null}
+      <p>
+        <InlineAction asChild tone="muted">
+          <Link href="/settings/ai#ai-provider" data-slot="coach-quick-change">
+            {t("insights.coach.frame.changeModel")}
+            <ChevronRight className="size-3.5" aria-hidden="true" />
+          </Link>
+        </InlineAction>
+      </p>
     </div>
   );
 }

@@ -85,7 +85,7 @@ import { __resetAllCachesForTests } from "@/lib/cache/server-cache";
 import { serialiseDocument } from "@/lib/documents/store";
 import { resolveIntakeActionability } from "@/lib/medications/intake-actionable";
 import { moodDateKey } from "@/lib/mood/date-key";
-import { dayKeyForScheduledFor } from "@/lib/rollups/medication-compliance-rollups";
+import { dayKeyForScheduledFor } from "@/lib/medications/dose-day-refresh";
 import {
   dateOnlyAtNoonUtc,
   dayKeyAsUtcMidnight,
@@ -155,6 +155,7 @@ describe.each(EDGES)("day paths with the host in $zone", (edge) => {
           startsOn: null,
           // `endsOn` is a @db.Date column: the calendar date as UTC midnight.
           endsOn: dayKeyAsUtcMidnight(edge.localDay),
+          endedAt: null,
         },
         edge.now,
         edge.zone,

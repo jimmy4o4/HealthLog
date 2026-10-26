@@ -22,8 +22,8 @@ import {
   apiError,
   getClientIp,
   returnAllZodIssues,
-  safeJson,
 } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { requireIllnessEnabled } from "@/lib/illness/gate";
 import { withIdempotency } from "@/lib/idempotency";
 import { encryptToBytes } from "@/lib/ai/coach/bytes-codec";
@@ -32,6 +32,8 @@ import {
   illnessEpisodeListQuerySchema,
 } from "@/lib/validations/illness";
 import { toIllnessEpisodeDTO } from "@/lib/illness/dto";
+import { apiListSuccess } from "@/lib/api/list-cap";
+import { listPage } from "@/lib/http/list-query";
 
 export const GET = apiHandler(async (request: NextRequest) => {
   const { user } = await requireRecordAuth("read", "illness");
@@ -58,33 +60,37 @@ export const GET = apiHandler(async (request: NextRequest) => {
   const { from, to, q, offset, sortDir } = parsed.data;
   const limit = parsed.data.limit ?? 50;
   const order = sortDir ?? "desc";
-  const rows = await prisma.illnessEpisode.findMany({
-    where: {
-      userId: user.id,
-      deletedAt: null,
-      ...(parsed.data.includeResolved === "false" ? { resolvedAt: null } : {}),
-      ...(from || to
-        ? {
-            onsetAt: {
-              ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(to) } : {}),
-            },
-          }
-        : {}),
-      ...(q ? { label: { contains: q, mode: "insensitive" as const } } : {}),
-    },
-    // `id` breaks ties so offset paging never repeats or drops a row.
-    orderBy: [{ onsetAt: order }, { id: order }],
-    take: limit,
-    skip: offset ?? 0,
-  });
+  const { rows, cap } = await listPage(limit, (take) =>
+    prisma.illnessEpisode.findMany({
+      where: {
+        userId: user.id,
+        deletedAt: null,
+        ...(parsed.data.includeResolved === "false"
+          ? { resolvedAt: null }
+          : {}),
+        ...(from || to
+          ? {
+              onsetAt: {
+                ...(from ? { gte: new Date(from) } : {}),
+                ...(to ? { lte: new Date(to) } : {}),
+              },
+            }
+          : {}),
+        ...(q ? { label: { contains: q, mode: "insensitive" as const } } : {}),
+      },
+      // `id` breaks ties so offset paging never repeats or drops a row.
+      orderBy: [{ onsetAt: order }, { id: order }],
+      take,
+      skip: offset ?? 0,
+    }),
+  );
 
   annotate({
     action: { name: "illness.episode.list", entity_type: "illness_episode" },
     meta: { count: rows.length },
   });
 
-  return apiSuccess(rows.map(toIllnessEpisodeDTO));
+  return apiListSuccess(rows.map(toIllnessEpisodeDTO), cap);
 });
 
 // `withIdempotency` lets an iOS retry / double-tap re-send the same
@@ -102,21 +108,13 @@ async function postEpisode(request: NextRequest): Promise<Response> {
   const gate = await requireIllnessEnabled(user.id);
   if (!gate.enabled) return gate.response;
 
-  const { data: rawBody, error: jsonError } = await safeJson(request, {
+  const parsed = await parseJsonBody(request, illnessEpisodeCreateSchema, {
     maxBytes: 16 * 1024,
+    action: "illness.episode.validation-failed",
+    countIssues: true,
+    errorCode: "illness.episode.invalid",
   });
-  if (jsonError) return jsonError;
-
-  const parsed = illnessEpisodeCreateSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "illness.episode.validation-failed" },
-      meta: { issue_count: parsed.error.issues.length },
-    });
-    return returnAllZodIssues(parsed.error, 422, {
-      errorCode: "illness.episode.invalid",
-    });
-  }
+  if (!parsed.ok) return parsed.error;
 
   const entry = parsed.data;
 

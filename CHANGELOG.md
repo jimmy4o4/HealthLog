@@ -1,5 +1,1256 @@
 # Changelog
 
+## [1.46.1] — 2026-10-26
+
+### Fixed
+
+- **Charts on a phone are their old size again.** 1.46 moved the labels
+  for your usual level and for a target zone out of the chart and beside
+  it. On a phone that room took about a third of the chart's width, and
+  the legend took more of its height. On a narrow screen the labels sit
+  inside the chart again, as they did before; a tablet or a wide window
+  keeps them beside it.
+- **The date axis shows more than one date on a phone.** A 90-day chart
+  is labelled with the first of each month again, and the All range with
+  the years.
+- **The value axis writes whole numbers when its steps are whole**: 57,
+  58, 59 bpm rather than 57.0, 58.0, 59.0.
+- **The All range shows your whole history.** Long ranges are read from
+  summaries the server keeps for the last five years, and readings older
+  than that did not appear: a weight history going back to 2015 started
+  in late 2021. The older readings are now read directly and lead the
+  chart.
+
+## [1.46.0] — 2026-10-25
+
+### Added
+
+- **A database dump every night, and a restore that rebuilds a server.**
+  Until now every copy the app made was per account and could only roll an
+  account back on the same server; a lost server needed a dump you had to
+  make yourself. The app now takes a whole-database dump every night (01:30
+  Europe/Berlin) and before every update that brings migrations, keeps the
+  last seven on the new `backups` volume, and also puts it in your off-host
+  bucket when one is set up. Each dump has a manifest beside it: app
+  version, migration, Postgres version, key fingerprints and the row count
+  of every table. `docker compose run --rm db-restore latest` (or
+  `latest --from-bucket` after losing the host) restores it into an empty
+  database only, checks the keys and the checksum first and every table's
+  row count after, and refuses anything else. A drill in CI does exactly
+  that every night and on every change to the backup path: it builds a
+  server, fills it, destroys every
+  volume, rebuilds it from the bucket and the keys alone, and checks that
+  people can sign in and read their notes and documents.
+- **Recovery readiness, pushed to the admins.** One card on the admin
+  dashboard and the backups page says whether a server could be recovered
+  today: the nightly dump, the weekly account copies, the off-host copies,
+  the restore drill, whether off-host copies are set up, and the recovery
+  kit. When one of them goes wrong, every admin gets a notification, once,
+  and again daily while it stays broken, and once when it recovers. A
+  stopped backup used to show only if someone opened the page.
+- **A recovery kit instead of "save the active key".** The kit lists every
+  key a copy still needs, retired ones included, with their fingerprints:
+  the encryption keys, the backup key and its predecessors, and the token
+  key. It becomes due again whenever that set changes, for example after a
+  key rotation. An upgraded server asks once, because the kit now also
+  lists the token key.
+- **Fourteen days to change your mind.** Deleting an account or a managed
+  profile now locks it at once (every session, token, share link and
+  connection is revoked) and erases it after 14 days
+  (`ACCOUNT_DELETION_GRACE_DAYS`, 0 keeps the old immediate deletion). An
+  admin can undo it in the users list until then. "Delete all data" first
+  keeps a copy of the account for the same 14 days, and the copy restores
+  like any other. Nothing in the background touches an account while it
+  waits.
+- **Apple Health write-back for measurement tokens.** A measurement token,
+  the narrow kind a scale or Home Assistant uses to add readings, now has a
+  "Write readings to Apple Health" switch, when you create it and in the
+  token list. With it on, the HealthLog app on your iPhone adds that
+  token's readings to Apple Health. The readings still show that they came
+  from an external device, and the token still cannot read or change
+  anything. The server decides which readings go to Apple Health and tells
+  the app, so switching it on later also covers what the token already
+  sent. Readings from before this release are matched to a token only
+  where the account has exactly one measurement token; the card says so
+  when older readings could not be matched. (#1272)
+- **Recently deleted for documents.** While it holds anything, the
+  Documents page links to Recently deleted. It lists each deleted document
+  with its type, its date, where it came from (Paperless-ngx, for
+  example) and how many of its 30 days are left, and each one can be
+  restored or deleted for good right away. The import picker now lets you
+  tick a document you deleted: one still in Recently deleted comes back
+  with everything that belonged to it, one already removed is imported
+  again. Automatic imports, such as a Paperless workflow or the import
+  script, still never bring back a document you deleted. (discussion
+  #1275)
+- **Questionnaires in every app language.** PHQ-9, GAD-7, WHO-5 and the
+  sleep questionnaire no longer fall back to English where no validated
+  translation exists. New validated versions: PHQ-9 in French, Dutch,
+  Korean and Brazilian Portuguese, GAD-7 in Dutch, Korean and Brazilian
+  Portuguese, WHO-5 in Dutch and Korean, and the sleep questionnaire in
+  Polish. Elsewhere HealthLog shows its own faithful translation with a
+  note on every step that the result is for orientation, and one tap
+  switches to the English original. Each check-in remembers which wording
+  it was answered in, and the doctor report marks a total from an
+  unvalidated translation with an asterisk.
+- **Your own files import in full.** The JSON import reads every field
+  the full backup and the JSON export write: a night's sleep stages, range
+  readings, an ECG's verdict, the recording device, and a mood entry's
+  note, detailed ratings, time zone, tags, rated factors and day context.
+  A full backup also brings your own mood tags, factors and groups along.
+  Missing ones are created within the usual limits, a tag you already
+  have is never overwritten, and anything that cannot be matched is named
+  on the import card.
+- **GPT-6 models.** gpt-6-sol, gpt-6-luna and gpt-6.1-sol get reasoning
+  control with a real "off", the request shape reasoning models expect,
+  and image input, through an OpenAI key and the ChatGPT sign-in alike.
+  The OpenAI presets offer gpt-6.1-sol and gpt-6-luna.
+- **A queued restore says what it is waiting for.** A restore never runs
+  beside a backup or another large job. The admin console now says which
+  of the two it waits for and since when, instead of reading like a stuck
+  worker.
+
+### Changed
+
+- **Postgres 18.** The compose file now runs Postgres 18 instead of 16. An
+  install from 1.45 or earlier moves its database across by itself on the
+  first start: a short-lived `db-upgrade` step copies it into a new
+  `postgres-data` volume, compares the row count of every table, gathers
+  the planner statistics, and only then lets the app start. If anything
+  fails, the app does not start and the log says why; a move cut short is
+  run again from scratch on the next start. The old `pgdata` volume is
+  left as it was, so going back is the previous image and two lines of the
+  compose file. On a real 600 MB instance the move took 29 seconds.
+  HealthLog keeps running on Postgres 16 for installs that bring their own
+  database, and the tests run on both. (discussion #1282)
+- **A quicker, lighter start.** On an account with ten years of data the
+  app answers its first request about a tenth sooner after a start, holds
+  about 55 MB less memory right after it, and the background worker is ready
+  after loading about a quarter of the code it used to need, with the rest
+  loaded in the background. Within a minute it has tried every job once and
+  reports any that cannot load, so a broken image shows up at deploy time
+  instead of when a job fails hours later. Pages and charts answer as fast
+  as in 1.45, with the same number of database reads; a ten-year chart takes
+  a few milliseconds longer because it now checks that a trend has enough
+  days behind it.
+- **Chart axes that read cleanly.** Value ticks fall on round steps (60,
+  80, 100 rather than 57, 83, 109), date ticks fall on a calendar grid
+  (days, Mondays, months, quarters, years) and keep their place as data
+  arrives, and the "your average" and target zone labels sit beside the
+  plot instead of over the readings or clipped to one letter. The dots
+  under a chart mark only the days the chart itself shows.
+- **Tidier code underneath.** Large parts of the code were split up so
+  the next changes are smaller and safer to make: files over 800 lines
+  went from 123 to 84, functions over 200 lines from 411 to 346. Nothing
+  you use should look different. Signing in with a password or a passkey,
+  adding a weight, logging a mood, importing lab results, changing a
+  setting and restoring a full backup are now tested end to end against a
+  real server.
+- **TrueNAS guide.** It covers the app in the TrueNAS Community train and
+  its backups, and the encryption key backup step points at the app's
+  Encryption Key field.
+
+### Fixed
+
+- **Slow local models get the time you allow them.** The response timeout
+  reached each model call, but not the work around it: a daily briefing is
+  up to five calls in a row and had one fixed bound of the timeout plus 30
+  seconds, so a model needing several minutes per answer was cut off in
+  its second call. The briefing now gets your timeout for every call, the
+  Insights page keeps waiting as long as that allows, and the status cards
+  and the other AI background jobs follow the same setting instead of
+  fixed limits. (#1274)
+- **The Coach no longer shows a model's reasoning as its answer.** With a
+  model that always reasons, served through an OpenAI-compatible gateway
+  or a local server, the Coach could show the thought instead of the
+  reply, cut off, and sometimes skip the tools it meant to call. The token
+  limit now keeps room for reasoning whatever the model is asked,
+  reasoning is taken out of the answer in every shape servers send it,
+  tool calls run whenever the reply carries them, and a model that still
+  produces nothing but reasoning gets its own message suggesting another
+  model. A model that does not reason keeps its own answer even when it
+  is cut off. (#1276)
+- **A model that never answers can no longer run up requests.** One idle
+  hour against a model that reasoned into its token limit could cost well
+  over a thousand requests. One call now makes two requests at most. A
+  reply with reasoning and no answer is asked once more without
+  reasoning, and if that does not help either, that model is not asked
+  that way again for an hour. Background work leaves a provider that
+  keeps failing alone: after three failures in a row it waits five
+  minutes, from five on it pauses for half an hour, doubling while the
+  failures continue, up to a day. The Coach and "Re-run analysis" still
+  reach it and show its error, and saving your AI settings, the admin AI
+  settings or a fresh ChatGPT sign-in ends the pause. A status card whose
+  generation failed waits from five minutes up to two hours before the
+  next try, even when new data arrives. Tokens spent on replies without
+  an answer count toward the daily AI budget, "Index all documents" stops
+  after three failed calls in a row, and a gateway that refuses the
+  reasoning setting is noticed once instead of failing every call.
+  (#1279)
+- **"Extract lab values" reads long documents.** On a stored document it
+  still sent the whole report in one call, which a long report outgrew,
+  and the answer came back as "Couldn't read the document. Try a clearer
+  copy." It now reads the way the lab scan does: a PDF page by page and
+  text in parts, up to 400 readings, with the same timeout and budget. If
+  the provider stops early, the readings already found are kept and the
+  review warns that some values may be missing, every time it is opened;
+  a read that stopped before the first value says so instead of blaming
+  the copy. An extraction the iPhone app waits for reads in at most three
+  parts and marks the document incomplete when that was not enough.
+  (#1257)
+- **PDF previews, vision reads and search work together.** The server
+  loaded two versions of pdf.js, and whichever ran first broke the other:
+  after a local text read every preview failed and a vision read of a PDF
+  was refused, after a preview the local text read failed and the document
+  stayed out of search. The server now ships one pdf.js. Previews and
+  search entries the clash broke are repaired once on the first start
+  after the update. (#1277, PR #1278)
+- **"End" on a medication works, and ends it now.** The button had failed
+  with an error on every press since it was added. It now ends the
+  running course at that moment: a dose taken earlier today still counts,
+  and a later one is no longer due, reminded or counted as missed. End is
+  offered only while a course is running, someone who manages your record
+  can use it too, undoing the end brings the later doses back, and a new
+  course can start from the next day. (#1280, PR #1281)
+- **Memory stays flat under bursts of requests.** Every page the server
+  rendered stayed in memory for ten minutes after it was sent, about
+  250 KB each, so a run of automated requests could push the container
+  towards its memory limit. A render is now released with its request.
+- **Fast right after an import, not only once the database caught up.**
+  Postgres learns what a table holds in the background, some time after
+  rows arrive. Until it had, on a new install or right after a large
+  import, several reads chose a plan that grew with the square of the
+  data: the analytics page over a few thousand blood pressure readings
+  took seconds, and the long-range charts and all-time highs and lows of
+  a ten-year history could run past the database's time limit. Those
+  reads now take one pass over the readings whatever Postgres knows, with
+  the same results, and take a fraction of a second.
+- **Trends need readings on enough days.** Three blood pressure readings
+  taken in one sitting, the only ones that week, produced a 7-day trend of
+  thousands of mmHg. A trend is now shown only when the readings fall on
+  at least three days spread over at least half the window (4 days of 7,
+  15 of 30), wherever a trend appears.
+- **iPad and tablets.** The app fills the window after a rotation and
+  under Safari's floating toolbars, without a strip of page colour at the
+  bottom, a cut-off last card or a page that scrolls under the app. In
+  landscape every sidebar destination is reachable, with a cue when more
+  are below. A vertical swipe over a row of tabs scrolls the page, and the
+  area over the home indicator matches the page in Edge, Chrome and
+  Firefox.
+- **The app's own backup and export import again.** The JSON import
+  refused both, because they write an empty field as `null` or `""`. It
+  reads them as the app wrote them now, converts display units such as lb
+  or mmol/L, and skips deletion records. The portable backup also carries
+  a reading's glucose context, sleep stage, range, rhythm verdict and
+  device, which it used to drop.
+- **Deleted imports stay deleted after a restore.** A backup restored onto
+  a fresh server let a Paperless workflow or the import script store again
+  every document you had deleted. The backup now carries which imports
+  were deleted.
+- **ChatGPT sign-in works without a model override.** The ChatGPT backend
+  rejects every model from gpt-5.5 down, so an install without its own
+  model list ended in "all configured Codex slugs were rejected". The
+  default list now starts at gpt-5.6-terra.
+- **Workout splits and GPX times.** Splits were missing for every synced
+  route, and an exported GPX track had no times. Both read the
+  stored route points correctly now.
+- **A hung backup no longer blocks restores.** A backup that hung held the
+  slot for large jobs until the container restarted, so a restore waited
+  forever. A job that outlives its time limit now gives the slot up.
+- **API answers match the published contract.** Creating or editing a
+  medication answers with the same fields as reading it, a dose answers
+  the full entry, medications and doses come back in the same order on
+  every request, readings opened by day carry their note, and the
+  contract now declares several answers the server already gave.
+- Every page view saved your language to the account again and counted
+  against your write limit; it is saved once per tab now.
+- A page reloaded right after you entered a reading shows that reading
+  instead of the dashboard from before.
+- The daily briefing's chart notes and storyline were dropped from replies
+  that passed validation; they are kept now.
+- A stored AI key that can no longer be decrypted counts as no key instead
+  of failing the briefing with a server error.
+- After a Fitbit or Google Health history import, the dashboard and
+  analytics show the new data right away instead of after their cache ran
+  out.
+- Averages and streaks take one clock per request, so a reading at the
+  edge of a window no longer moves in and out, and today's reading counts
+  for the streak whatever time zone the database runs in.
+- A refused request by someone you share your record with shows in your
+  activity feed with its own wording.
+- A stat's value and unit stay on one line beside the docked day view;
+  the neutral score label is readable in the dark theme; axis labels are
+  sized correctly when reduced motion is on.
+
+- **Large backups upload without filling the memory.** Uploading a copy
+  with many documents or ECG recordings held them whole while it was
+  checked, and a big vault could crash the server. Every reader of a
+  backup now streams the large parts; a 271 MB file needs about 2 MB.
+- **Backup texts say what each copy can do.** The weekly copy is an
+  account rollback on this server, the personal export is for the person,
+  the JSON import reads measurements and mood within its stated limits, and
+  only the database dump rebuilds a server. Nothing claims more anymore.
+- **Long Coach answers keep all their steps.** After a reload an answer
+  with more than 48 steps lost the rest.
+- **The hint for reading scans on the device points to the right switch**,
+  Settings, Modules, Labs, in every language.
+- **Help links open the right page** instead of going through redirects.
+- **A directory setting below `/proc` no longer freezes the server.** Node's
+  way of creating a folder with its parents loops forever there on Linux,
+  so a `DB_BACKUP_DIR` or `GEOLITE2_DIR` pointing below it stopped the
+  process. Such a directory now reads as not writable.
+- **The last hour of a long DST day keeps its doses.** On the day the
+  clocks go back, the list of today's doses that the apps offer from ended
+  an hour early, so a late evening dose was missing from it; on the day
+  they go forward it reached an hour into tomorrow. It now spans the real
+  local day, as the dashboard already did.
+- **A dose logged for a two-day plan lands on its slot in the week the
+  clocks go back.** A plan with doses on two neighbouring weekdays, started
+  shortly before the change, could file a later dose as unscheduled, and
+  logging it again gave back the previous one. Whether a plan counts as
+  daily or weekly no longer depends on the stretch of days it is read
+  through.
+
+### Security
+
+- **A crafted PDF or image can no longer take the server down.** A small
+  PDF with one huge compressed image, or a JPEG with a padded header, made
+  the server reserve gigabytes and get killed, for every account on it.
+  Everything pdf.js does now runs in its own process with a memory and a
+  time limit, image sizes are read by the JPEG rules and an unreadable size
+  is refused, and a document over the limits is marked as such instead of
+  being tried again.
+- **Rate limits count the real caller.** Forwarding headers are believed
+  only from a connection that comes from the server's own network or a
+  proxy on it; a caller reaching the port directly no longer picks its own
+  address, and the sign-in throttle no longer exempts an address an account
+  used before.
+- **Writes from other sites are refused.** A request that changes something
+  and comes from another site, including a sibling subdomain, is refused
+  before it is read. The iPhone app and other token clients are not
+  affected.
+- **The MCP consent page names where the access goes**, and warns when a
+  self-registered application sends it to a remote host.
+- **Switching Labs off keeps lab values out of every AI feature.** The
+  Coach, the daily briefing, status notes and the MCP lab prompt read no
+  lab values while the module is off. Before, the Coach still sent them.
+- Smaller fixes: share links show no documents while the documents module
+  is off, a narrow medication token can no longer probe medication names,
+  MCP tools fence medication and lab text like every other user text,
+  reading documents takes turns between accounts, so one account's heavy
+  files cannot hold up everyone else's, the session cookie cannot be
+  planted from a sibling subdomain over HTTPS, file-like paths under `/api`
+  go through the request checks, the deploy
+  webhook can be signed, the error relay to GlitchTip needs a signed-in
+  session, and database error details are redacted before they leave.
+- Raised the minimum versions of body-parser and fast-uri, which the MCP
+  server runs on (CVE-2026-111181, high; CVE-2026-110180;
+  CVE-2026-110306), of ip-address, which took exponential time on a
+  crafted IPv6 zone identifier, and of a development-only copy of undici.
+
+### Upgrade notes
+
+- Migrations 0475 to 0485 (0475, 0476, 0477, 0478, 0479, 0480, 0482, 0483
+  and 0485; 0481 and 0484 are not used). Most add a column under a
+  bounded lock wait and retry on a lock timeout. These do more:
+  - 0476 links existing readings to the measurement token that sent them
+    where the account has exactly one such token. It sets only that link,
+    so the readings do not count as changed.
+  - 0477 builds an index on `measurements` concurrently; writes carry on
+    during the build.
+  - 0478 clears the recorded preview failures and 0479 re-queues the PDFs
+    whose search entry failed, so the first start renders those previews
+    once more and indexes those PDFs once more. The indexing uses your AI
+    provider where one is set up and you have allowed it, as an upload
+    would.
+  - 0485 drops the unused preview-features column from `users`.
+    On a copy of a real instance all of them together took under a second.
+- If a concurrent index build fails half-way, for example because the
+  container was stopped, mend the cause and mark the migration rolled
+  back; the next start drops the invalid index and builds it again. See
+  `docs/ops/deploy.md`.
+- After a deploy, the worker reports any job it cannot load within a
+  minute; `docs/ops/deploy.md` says what to look for and when to roll
+  back.
+- `/api/settings/preview-features` is retired and answers 410. It served
+  a switch for pages that never shipped, and no client reads it. A backup
+  from 1.44 or 1.45 that carries the field still restores.
+- The Apple Health switch takes effect with an iPhone app build that
+  reads it; until then the app keeps mirroring Withings, imported and
+  hand-entered readings as before.
+- If you set `CODEX_MODEL_FALLBACK_CHAIN` only to get past the rejected
+  ChatGPT models, you can remove it.
+- Migrations 0486 to 0489 add the dump ledger and its key column, the
+  readiness and kit tables and the deletion columns. 0487 also drops the four old key-backup
+  columns from `app_settings` and carries an existing confirmation over;
+  as with 0485, do not run the previous image beside the new schema.
+- **A new `backups` volume** holds the local dumps. The compose file
+  mounts it; a stack built without it keeps dumps off-host only and says
+  so. In the bucket, dumps go under `database/<your host>/`, so two
+  servers sharing a bucket never mix them up; add `database/` to the
+  bucket's lifecycle rule, and the backups page warns when no rule covers
+  it. Dumps keep a deleted account until they
+  age out, so state that period as your backup retention.
+- **New settings:** `DB_BACKUP_ENABLED`, `DB_BACKUP_DIR`,
+  `DB_BACKUP_SCHEDULE`, `DB_BACKUP_KEEP`, `DB_BACKUP_BEFORE_MIGRATE` and
+  `ACCOUNT_DELETION_GRACE_DAYS`, all on sensible defaults. If the dump
+  before a migration fails on a writable directory, the start stops and
+  names the switch to skip it.
+- **Behind a reverse proxy,** forwarding headers are believed only from a
+  private or loopback address. If your proxy reaches HealthLog from a
+  public address, set `TRUSTED_PROXY_CIDRS` to that address; otherwise
+  every user shares one sign-in rate limit. `TRUSTED_PROXY_CIDRS` also
+  narrows the default when you know your proxy's network
+  (`docs/self-hosting/reverse-proxy.md`). Behind a proxy that rewrites the
+  Host header, make sure `APP_URL` is right, or writes from the browser
+  are refused as cross-site.
+- The deploy webhook can now be signed (`X-Deploy-Webhook-Signature`);
+  `DEPLOY_WEBHOOK_REQUIRE_SIGNATURE=true` accepts signed requests only.
+  `DEPLOY_WEBHOOK_REQUIRE_TIMESTAMP` keeps its meaning, and the stock
+  Coolify setup needs no change.
+- Over HTTPS the session cookie is now `__Host-healthlog_session`. The old
+  name is still read and swapped on the next request, so nobody is signed
+  out.
+- The app image is about 6 MB larger: it now carries the Postgres 18
+  client for the dumps. The supported memory floor stays at 1536 MB for
+  the app container.
+- The first start with the new compose file moves the bundled database to
+  Postgres 18 (see Changed). Use `docker compose up -d` with the new
+  compose file; pulling only the new image keeps Postgres 16, which this
+  release still runs on. The move needs free disk space about the size of
+  the database. Rollback, the steps for a database you run yourself, and
+  how to remove the old volume later: `docs/ops/postgres-major-upgrade.md`.
+
+### Thanks
+
+Thanks to @haritowa for two reports that came with their fixes: the clash
+between two pdf.js versions that broke previews and search (#1277), fixed
+in PR #1278, and the "End" button that never worked (#1280), fixed in PR
+#1281. Both pull requests are part of this release as written.
+
+Thanks to @Tio61 for the precise wire captures behind the Coach showing a
+model's reasoning as its answer (#1276) and for the exact request counts
+that exposed the runaway requests against a model that never answers
+(#1279).
+
+Thanks to @gesus14 for noticing that the daily briefing gave up long
+before the response timeout allowed (#1274).
+
+Thanks to @asmala for coming back to report that "Extract lab values" on
+a stored document still failed on long reports (#1257).
+
+Thanks to @cnrd for the careful proposal that became the Apple Health
+switch for measurement tokens (#1272).
+
+Thanks to @frubino for asking how to get a deleted document back, which
+led to Recently deleted (discussion #1275).
+
+Thanks to @muhdusama for noticing that the MCP labs tool declared a
+narrower answer than it gives, and for the fix with its tests (PR #1284).
+
+Thanks to @sttrebo for asking about Postgres 18, which turned into the
+move itself, not just a guide for it (discussion #1282).
+
+## [1.45.0] — 2026-10-23
+
+### Added
+
+- **Brazilian Portuguese.** The whole app, the Coach and the reports are
+  available in pt-BR, with Brazil's crisis lines (CVV 188, SAMU 192) next
+  to the international ones. Portuguese readers outside Brazil see 112 and
+  Portugal's SNS 24 and SOS Voz Amiga as well.
+- **Translate in the browser.** Translators can edit any language on the
+  web with their GitHub account and send the change as a pull request; the
+  contributing guide links the editor and explains what reviewers check.
+- **Dengue and tuberculosis in the vaccine catalogue.** Dengue is listed
+  with the travel vaccines (two doses three months apart) and tuberculosis
+  with the childhood ones (one dose at birth); neither has a booster. Each
+  cites its WHO position paper, and searching "bcg" finds tuberculosis.
+- **The Coach knows your whole lab history.** Asked about a marker such as
+  LDL or PSA, it now sees your recent values and a yearly summary going
+  back ten years, instead of stopping at twelve months. Other readings keep
+  the one-year window. (#1263)
+
+### Changed
+
+- **Faster.** On an account with ten years of data the dashboard loads in
+  well under half the time, a ten-year chart about five times faster and a
+  one-year chart about three times faster. The values are the same: the
+  new reads are checked against the old ones across time zones, daylight
+  saving changes and multiple sources.
+- **Steadier start and less memory.** The app no longer freezes for most of
+  a second while it starts, holds only the language you use in memory, and
+  pauses heavy background work when the container gets close to its memory
+  limit instead of being restarted. Stopping the container lets running
+  jobs finish.
+- **The questionnaires follow the validated originals.** PHQ-9, GAD-7,
+  WHO-5 and the sleep questionnaire now share one flow: the question's time
+  frame is always shown, answers are a proper choice list you can use with
+  the keyboard, and a review step lets you check every answer before it is
+  saved. The result explains the score in plain words and whether it moved
+  meaningfully since last time. The German, Spanish, Italian, Polish and
+  French wording now matches the published validated versions word for
+  word; where no validated translation exists, the original English is
+  shown rather than an unvalidated one.
+- **Re-sent Apple Health data no longer counts as new.** When the iPhone
+  sends values the server already has, nothing is rewritten and the Apple
+  Health card no longer claims fresh data arrived; it says when data was
+  last re-sent without anything new. (#1259)
+- Fonts are now part of the app instead of being fetched from Google when
+  an image is built.
+
+### Fixed
+
+- A workout synced by two services counts once everywhere, including when
+  the two copies fall on either side of a five-minute mark, and opening
+  either copy shows the same session.
+- A backup restored for disaster recovery keeps the original creation
+  dates of medications, courses, ingredients, nutrient days and mood and
+  symptom links, and keeps sealed labels and notes sealed. Deleted family
+  history entries are part of that backup too.
+- The Coach refuses more ways of telling you to change a dose, such as
+  halving it or taking "the same as before" when that is not your plan, in
+  every language. Several of its safety checks never matched words with
+  accents; they do now.
+- A Strava connection whose refresh token expired now asks you to
+  reconnect instead of failing quietly.
+- Ending a session from the session list records correctly whether it was
+  your own.
+- Values that round to zero no longer show as "-0".
+- Clearing a filter on the documents, measurements or mood pages, closing
+  a document or zooming the timeline no longer brings the old address back
+  a moment later.
+- The nightly measurement maintenance no longer reports every run as
+  failed: it recorded the table's bloat as a decimal where only whole
+  numbers were accepted, although the maintenance itself had run. (#1271)
+- Mood dimensions logged between local and UTC midnight count for today
+  again instead of going missing until the next day.
+- Sheets on a phone open without a slide when your device asks for reduced
+  motion, and every control's accessible name now matches its visible
+  label.
+- A large import from Apple Health, Health Connect, Withings or Oura
+  refreshes the charts that depend on it straight away.
+
+### Upgrade notes
+
+- Migration 0471 adds one column for Apple Health bookkeeping.
+- Single-container installs need nothing else. If you run the web and
+  worker roles in separate containers, start the worker first: the job
+  queue updates its schema on start, and a web-only process waits for it.
+  See `docs/ops/deploy.md`.
+- The supported memory floor stays at 1536 MB for the app container.
+
+### Thanks
+
+Thanks to @dareoon for the Brazilian Portuguese translation (#1251), to
+@asmala for adding dengue and tuberculosis to the vaccine catalogue
+(#1266) and for asking the Coach to look further back in the lab history
+(#1263), and to @mills1975 for spotting the failing maintenance job
+(#1271).
+
+## [1.44.2] — 2026-10-22
+
+### Changed
+
+- **Sheets that come up from the bottom can be pulled.** On a phone every
+  sheet now follows your finger: pull it down to close it, flick it away,
+  or let go early and it springs back. Content that is scrolled scrolls
+  first, sideways gestures such as sliders keep working, and the X, Escape
+  and a tap outside still close it. The day view opens at half height as
+  before and pulls up to almost the full screen. The page behind no longer
+  reloads when you pull inside a sheet, and closing a sheet puts the focus
+  back where you were.
+
+### Fixed
+
+- **Your own targets shape the dashboard charts.** Blood pressure, resting
+  pulse and body fat drew the standard band on the dashboard even when you
+  had set your own targets; they now draw yours, and the tile colours follow
+  them. The oxygen saturation page uses your target too. Without your own
+  targets nothing changes. (#1261)
+- **Local thinking models finish the briefing, and regenerate waits for
+  them.** A thinking model such as Gemma 4 on Ollama could spend a long
+  briefing thinking and hand back no answer, which was logged as a
+  connection problem and shown as a timeout. A reply with nothing but
+  thinking is now asked once more without thinking, and that model is asked
+  that way for the next hour, through the Local provider and an
+  OpenAI-compatible gateway alike. The regenerate button waits as long as
+  your AI response timeout allows instead of giving up after 45 seconds, and
+  so does saving your notes about yourself; a local model allowed more than
+  five minutes is no longer cut off at five. A failed call is logged with
+  what actually went wrong, such as a refused or dropped connection, an
+  empty reply or a timeout, and the briefing only suggests a longer timeout
+  when time really ran out. The provider's reasoning setting now says that
+  the daily briefing thinks at its own depth. (#1267)
+
+### Thanks
+
+Thanks to @mills1975 for spotting that the targets never reached the chart
+(#1261).
+
+Thanks to @Tio61 for the precise report that traced the regenerate timeout
+to its line and ruled out the transport with their own requests from inside
+the container (#1267).
+
+## [1.44.1] — 2026-10-22
+
+### Security
+
+- **Next.js 16.4.2.** The framework fixed two critical advisories that
+  allow unauthenticated remote code execution, one in `use cache` functions
+  that return typed arrays (GHSA-673q-mjm6-r5xr) and one in the image
+  optimizer when it handles SVG (GHSA-2464-fhr4-w9xw), and a high-severity
+  denial of service through Server Actions (GHSA-p3m5-59mp-jv5r). HealthLog
+  uses neither `use cache` nor the image component, and it defines no Server
+  Actions and refuses requests that call one. Every instance runs the same
+  framework, though, so it updates anyway.
+- **The image optimizer is off.** Nothing in HealthLog renders through it,
+  so `/_next/image` now answers 404 instead of processing whatever image a
+  request names. Icons and logos load as before.
+- **nodemailer 10.1.7** fixes several advisories in how email addresses are
+  parsed (GHSA-8c8m-p3m8-cjg8 among them).
+
+### Fixed
+
+- **`[` and `]` move the open day on every press.** Pressed quickly in a
+  row, one press could be lost and the day ended one short. A step now
+  starts from the day in the address bar and waits until the previous one
+  is shown.
+- **Back closes a document opened from the vault.** Pressed right after
+  opening a document, Back could leave its sheet open. The sheet now follows
+  the address bar directly.
+
+### Upgrade notes
+
+- None. Pull the new image and restart.
+
+## [1.44.0] — 2026-10-22
+
+### Added
+
+- **Import lab results and medications from a spreadsheet.** Settings >
+  Export & Import has a card that reads the head of a CSV file, suggests a
+  column for each field from its header, and lets you correct the
+  separator, decimal mark, date order and time zone. A check run lists
+  every refused row with its line and reason before anything is written,
+  and importing the same file again only finds duplicates. Templates for
+  both kinds download from the card. (#1215)
+- **An activity calendar** on the workouts page: a week or month of steps,
+  active minutes, workouts by sport and training load, each day measured
+  against your own usual range and each period against the ones before.
+  Weekly and monthly goals are optional. Today counts as in progress until
+  it is over.
+- **Fitness, fatigue and form** above the workout list, from the training
+  impulse HealthLog already stores. A day with activity data but no
+  training counts as rest; a day without any data is left out instead of
+  counted, and the card says how current the figures are.
+- **Where a value comes from.** Each metric page links to a view that lists
+  every source with readings for a day, its place in your source priority
+  and which one the charts use, with a side-by-side comparison of two
+  sources over 30, 90 or 365 days.
+- **Lab trends.** A marker with at least three readings over a year shows
+  its slope, and when the straight line would leave the reference range
+  within three years. A series whose newest reading is more than a year
+  old is shown without a projection.
+- **The change at a medication start**, as a level and a trend change with
+  intervals, next to the existing before and after comparison. Days with
+  missed doses, pauses and other medications that changed in the window are
+  accounted for, and the view says when the data are too thin.
+- **More in the doctor report:** sleep duration, HRV as SDNN and RMSSD,
+  daily steps, a workout summary per sport and the medication effect, each
+  only when its module is on. The medication effect is included only when
+  the medication list is shared too. The report names the window it
+  analysed.
+- **More correlations:** water, caffeine, micronutrients, alcohol days,
+  workout minutes, training impulse, activity ring minutes, State of Mind
+  and room climate against that night's sleep. State of Mind, mindful
+  minutes and alcohol days stay on the correlations page and are never
+  handed to the Coach or the narrative cards.
+- **Level shifts in thirteen vitals over 180 days** instead of five over 90.
+  Slow drifts and plateaus no longer count as a shift.
+- **Mental health screeners** show whether a change reaches the threshold
+  that counts as meaningful.
+- **Apple Health:** exercise, stand and mindful minutes, stand hours, State
+  of Mind and AFib burden. Workout GPS tracks are kept only when you turn
+  that on (Settings > Data & privacy); tracks already stored stay, and
+  accounts that already kept tracks start with it on.
+- **Oura:** workouts, intraday heart rate and a full history backfill that
+  resumes after a restart.
+- **Indoor climate** (CO2, temperature, humidity) through the measurement
+  API, with a Home Assistant blueprint.
+- **A guardian can connect a managed profile's integrations** (Withings,
+  WHOOP, Oura, Polar, Strava, Google Health), and each card says whose
+  record it connects for.
+- **FHIR:** Observations as a time series by `date` and `code`, with RMSSD
+  and workouts coded.
+
+### Changed
+
+- **Settings are sorted into nine groups:** Account, Tracking,
+  Arrangement, Notifications, Health profile, AI, Connections, Data and
+  System. Every old address still works and forwards to the new place. On
+  a phone one button names the current section and opens the list. Each
+  card saves the same way and asks once before anything destructive, and
+  German wording uses one word per thing.
+- **All OAuth integrations refresh their tokens the same way**, so a
+  refresh that races another one no longer signs you out of Strava, Google
+  Health or Withings. One provider account can be linked to only one
+  record.
+- **Imports from Apple Health insert large batches faster**, and the health
+  check answers "starting" while the background jobs come up, so a slow
+  boot no longer marks the container unhealthy.
+- **The metric pages load about 90 KB less JavaScript** on first visit.
+
+### Fixed
+
+- Oura no longer imports the equivalent walking distance as distance.
+- A workout synced from two sources counts once in strain, the briefing
+  and the day view.
+- The Coach's provider and model switch is back, and notification channel
+  switches act on the first tap again.
+- Jobs queued during start-up wait for the queue instead of being dropped.
+
+### Upgrade notes
+
+- **1536 MB is the supported memory floor for the app container.** This is
+  the existing default of `APP_MEMORY_LIMIT`; if you lowered it, raise it
+  back. Below the floor the app still starts, but the boot log, the
+  support report and Admin > System status say so. Plan for 3 GB of RAM on
+  the host.
+- Migrations 0424, 0430 to 0434, 0440 to 0442 and 0470 run on start. They
+  add columns and settings, turn the GPS track setting on for accounts
+  that already have tracks, and drop a cached copy of the AI insights
+  text, which is rebuilt on the next run. Workouts with a track but no
+  elevation get their climb filled in by a background pass after the
+  first start.
+- If you use Fitbit, connect Google Health before 30 October 2026, when
+  Google turns the old Fitbit API off.
+
+### Thanks
+
+Thanks to @Cnote43 for the case for a spreadsheet import of twenty years of
+lab results (#1215), and to @alondin and @haritowa for staying with the
+Oura connection until it held (#1204).
+
+## [1.43.11] — 2026-10-21
+
+### Fixed
+
+- **Long lab reports scan completely.** A report is now read page by page
+  instead of in one request, so a hospital report with several panels comes
+  back whole, up to 20 pages and 400 readings. Where the AI provider stops
+  before the end of a page, the readings it already returned are kept and the
+  review screen names the pages to check. A scan that hits your daily AI
+  budget stops there and says so, and a reading whose name or unit is too
+  long is marked on its row instead of blocking the save. Models that think
+  before answering no longer use up the room meant for the readings. When a
+  PDF carries a text layer, it helps the model tell similar characters apart,
+  but the page image always wins. (#1257)
+- **An upcoming appointment opens itself.** Tapping it on the dashboard, in
+  Today or in its reminder now opens that visit instead of the check-ups
+  list. The visit preparation and the doctor report offered for an
+  appointment start at your last visit with the same practice, otherwise the
+  same specialty or kind of visit, and say which; with no match they cover
+  the last 90 days. (#1258)
+- **Withings sleep stages arrive the next morning**, not weeks later. One
+  failing night no longer loses the other nights of a sleep sync. Steps that
+  Health Mate copies in from another app are skipped only when that other
+  app already sends them to HealthLog for the same day.
+- **Deleting a WHOOP recovery no longer removes that night's sleep.**
+- **Polar** no longer asks you to reconnect when your device simply lacks a
+  data type, and **Strava** keeps calories and progress when its rate limit
+  hits.
+- **Fitbit and Google Health HRV is filed as RMSSD**, apart from the SDNN
+  that Apple Watch and Withings report, and takes part in correlations and
+  illness views. Readiness, HRV balance and stress keep using SDNN sources
+  only; the dashboard tile, the briefing and the doctor report show RMSSD,
+  labelled, when you have no SDNN. Restoring a backup from before this
+  release keeps that split.
+- **The notification settings show the mood reminder as it is delivered.**
+- **Settings behave the same everywhere:** delete, revoke and remove
+  confirmations are red again, ending a session's kept access asks first,
+  cards no longer stay stuck saving after a network failure, and quiet
+  actions (passkeys, security keys, disconnecting an integration, share
+  links, injection sites, local OCR, check-up reminders) tell you how they
+  went.
+- **Readings entered through Telegram, the assistant API or Health Connect**
+  now rank properly against device estimates in source priority.
+
+### Changed
+
+- **Fitbit stops on 30 October 2026**, when Google turns its old Fitbit API
+  off. From then HealthLog no longer polls Fitbit, keeps everything already
+  imported, and the Fitbit card explains how to move to the Google Health
+  integration, which reads Fitbit and Pixel data. A day recorded by both
+  counts once. Accounts that never used Fitbit no longer see the card after
+  that date.
+- **Saved AI keys can be removed**, the display name can be changed in your
+  profile, and emergency fields can go back to "Not recorded". Setting or
+  removing an AI key is recorded in the audit log.
+
+### Security
+
+- **Hardened the markers that keep document and user text apart from
+  instructions** sent to an AI model. Nested markers could re-form after
+  cleaning; cleaning now repeats until nothing changes. This covers lab
+  scans, the Coach and the MCP server.
+
+### Upgrade notes
+
+- Migrations 0420 and 0421 run on start. 0420 refiles Fitbit and Google
+  Health HRV as RMSSD and clears their rollups, which are rebuilt in the
+  background on the first start; expect a few minutes of extra work then.
+  0421 adds one column for Withings sleep bookkeeping.
+- If you use Fitbit, connect Google Health before 30 October. Tokens cannot
+  be carried over, so it is a fresh sign-in.
+
+### Thanks
+
+Thanks to @asmala for pinning down both limits the lab scan ran into (#1257),
+and to @mills1975 for the appointment link and the report window idea
+(#1258).
+
+## [1.43.10] — 2026-10-21
+
+### Changed
+
+- **Range and view switches look the way the chart tabs used to.** Since
+  1.43.8 every row of mutually exclusive choices shares one control, and it
+  drew them on a grey track with the chosen option raised. Above a chart that
+  read heavier than the chart itself. The shared control now draws what the
+  dashboard's range tabs always had: no track, the chosen option filled in
+  the highlight colour. The range rows above charts are back to their smaller
+  type. Keyboard navigation and the touch size the shared control brought
+  stay as they are.
+
+## [1.43.9] — 2026-10-21
+
+### Fixed
+
+- **Oura's resilience level syncs.** Resilience sits behind Oura's stress
+  permission, which HealthLog did not ask for, so it was refused even with
+  every other permission granted. HealthLog now asks for it. When Oura refuses
+  a single data type for a missing permission, the Oura card names exactly
+  that type, the refusal no longer triggers a token refresh and never counts
+  toward the reconnect warning. After updating, enable Stress for your app in
+  Oura's developer portal and connect Oura once more. (#1204)
+- **Connecting an integration survives a repeated return link.** Some
+  browsers open the provider's return link twice. The second visit spent the
+  same one-time code again, and Oura answered by revoking the connection the
+  first visit had just made. Every connect flow (Oura, Polar, Strava, WHOOP,
+  Withings, Fitbit, Google Health) now claims the return link once; a second
+  visit waits for the first and lands on the same page. (#1204)
+- **Two syncs no longer spend the same Oura sign-in.** Syncs that renewed the
+  Oura sign-in at the same moment each used the one-time renewal token, which
+  Oura can treat as reuse. Renewals now take turns.
+- **Apple Health rows show the newest reading.** A type HealthLog also writes
+  back to Apple Health, such as weight entered here, showed the age of the
+  last sample Apple Health sent while the status above it already counted the
+  newer entry. The row now shows whichever is newer. (#1247)
+- **An expired ChatGPT sign-in waits for you.** When the sign-in is refused as
+  expired, the connection is marked as needing a reconnect after the first
+  refusal and stays parked until you sign in again, instead of being retried
+  on every insight run. Signing in again puts it back in front at once. Two
+  renewals at the same moment take turns, so a working sign-in is never
+  parked by mistake.
+- The demo instance no longer shows the setup checklist, whose steps cannot be
+  done in a read-only account.
+
+### Changed
+
+- **Faster syncs.** Withings syncs, full syncs included, write a batch in one
+  pass and skip readings that did not change, so a sync that took half a
+  minute finishes in about a second. Every connected service refreshes its
+  daily charts in one pass after a sync instead of one day at a time.
+- **Faster dashboard and insights.** The all-time reading counts on the
+  dashboard and the all-time figures for weight, blood pressure and pulse are
+  read from the daily summaries instead of every reading, which makes them
+  many times faster for accounts with a lot of watch data. The all-time
+  figures fall back to the readings wherever the daily summaries do not match
+  them. The integrations settings card answers sooner on the first visit.
+- **Lighter server.** Each signed-in request loads only the small account
+  fields it needs, so the profile picture and stored credentials are no longer
+  read into memory on every call. The server loads each page's code when it
+  is first used rather than all of it at start, so it starts with less than
+  half the memory and without a pause in its first minute; a page's first
+  visit after a restart takes a few milliseconds longer.
+- The hourly sign-in location lookup no longer retries addresses it cannot
+  place on every run; it tries such an address again after a week.
+- Requests that probe for server actions, which this app does not use, are
+  turned away with a 404 and counted in one warning line instead of filling
+  the error log.
+- The periodic memory log line breaks the heap down by area, so a large heap
+  can be explained from the logs.
+
+### Security
+
+- The `hono` dependency floor is raised to 4.13.11 (GHSA-5r4p-p66f-jhc7).
+
+### Upgrade notes
+
+- Three additive migrations run at start (0417 to 0419). The first start after
+  the upgrade refills the daily summaries once in the background; until that
+  finishes, the all-time figures are read from the readings as before.
+- Oura: enable the Stress permission for your app in Oura's developer portal,
+  then connect Oura once more and leave every permission ticked.
+
+### Thanks
+
+@haritowa for tracing the Oura resilience refusal to the missing permission
+and for timing the repeated return link, @alondin for staying with #1204
+through every round, and @mills1975 for #1247.
+
+## [1.43.8] — 2026-10-20
+
+### Fixed
+
+- **Numbers and units read in your language.** Decimals follow your language
+  everywhere: fever, cycle and mood figures, custom metrics, nutrient totals,
+  chart tooltips and the sentences the server writes show 37,5 instead of 37.5
+  where your language uses a comma. Units such as breaths per minute, years
+  and minutes read in the app's language instead of the stored English token,
+  and the cycle and mood comparison boards use the same unit names as the rest
+  of the app (bpm, not S/min). File sizes read the same in the document vault
+  and the admin area.
+- **Titles wrap instead of being cut.** Tile and card titles wrap onto a second
+  line with hyphenation instead of ending in an ellipsis, with room between
+  the lines, and tiles in a grid keep their values on one line when a long
+  title wraps. Dashboard trend tiles keep their full label on up to two lines.
+  Long health-score area names, mood tags, document titles, lab names and
+  token names show in full, and a long field label keeps its colon on the
+  last word.
+- **One look for the same control.** Range, filter and choice toggles (time
+  ranges, card or table view, recent or all) look and behave the same
+  everywhere. Small text links and buttons such as "Open schedule", "Select
+  all" and "View all" are easy to tap on a phone and show a focus ring.
+  Confidence, score and range chips share one look, and medium confidence has
+  the same colour on every card. Empty lists and charts say "nothing here yet"
+  the same way across the app. Page titles on the insights pages, the
+  medication detail and the check-in screens match every other page title,
+  and compact cards keep their tight spacing on wide screens.
+- The blood-pressure target card labels its systolic bar as well as its
+  diastolic one, and the sleep-stage legend lists only the stages the visible
+  nights contain.
+- The Dawarich card shows one action row; set your home place from the card
+  menu.
+- **Every published GET response is checked against its OpenAPI schema.**
+  Thirteen operations that disagreed now publish what they send, the single
+  mood entry and custom metric reads carry the same fields as their lists, and
+  the document chat list declares its `fenced`, `attachments` and
+  `documentTitle` fields.
+- **Lists say when they were cut.** Practitioners, vaccinations and encounters
+  report a cut list and accept `offset`, and the web reads them to the end.
+  `hasMore` on symptom events is no longer true for a page that is exactly
+  full. MCP tools say when a list was cut and answer a failure with a stable
+  code instead of internal error text.
+- **A deleted practitioner stays named where it still matters.** Visits and
+  doses that still show a practitioner removed from the address book keep the
+  name, in the app, the MCP read and appointment reminders, and the portable
+  export carries such a practitioner along so the visit keeps its reference
+  after a restore.
+- Renouncing a Guardian role while that Guardian's account is being deleted no
+  longer answers "add another Guardian".
+
+### Changed
+
+- **Deleted records are removed for good after 75 days.** Deleted lab results,
+  visits, practitioners, allergies, vaccinations, conditions, life events,
+  cycles and the other soft-deleted records can be restored for 75 days and
+  are then purged by a nightly job. A deleted record that a live record still
+  points to is kept for as long as it does.
+- Expired sessions, tokens, trusted devices and sign-in challenges are cleaned
+  up nightly.
+- **Writes have one per-account limit** of 300 a minute, edits and deletes
+  included; bulk sync endpoints and the chat routes keep their own limits. A
+  temporary database problem with this limit lets the write through instead of
+  failing every save; the sign-in limits stay strict.
+- **Cheaper writes.** Deleting a medication or an account no longer scans whole
+  tables for related rows, redundant indexes are gone, and writes to
+  measurements are cheaper. An unused measurement index is dropped at upgrade
+  when that can happen at once and otherwise by the nightly maintenance, so
+  upgrading no longer waits on a long-running database read. The unused
+  per-day medication compliance rollup table is removed; nothing changes in
+  what you see.
+- **Migrations are steadier.** They run in a UTC session regardless of the
+  database's default time zone, so a migration that mixes `timestamp` and
+  `timestamptz` no longer writes shifted values on a non-UTC database. A
+  migration marked safe to re-run that loses a deadlock is retried like one
+  that timed out on a lock, and the container health check allows up to ten
+  minutes for a slow migration before reporting the container unhealthy.
+- `/api/feature-flags` announces its deprecation and its sunset on 2027-03-31.
+- The document vault and the Coach load less JavaScript.
+
+## [1.43.7] — 2026-10-20
+
+### Added
+
+- **Dutch.** HealthLog speaks Dutch now, the eighth language, translated and
+  contributed by @robdegraaf (#1246). Friends in the Netherlands are always
+  welcome here. Cheers with a Grolsch! 🍺
+- **Readings you enter here count for Apple Health freshness.** Weight, blood
+  pressure and glucose are no longer called quiet while you keep entering them
+  in HealthLog for the phone to pick up, and the card shows when you last did
+  (`lastEnteredHereAt`, Refs #1247).
+
+### Fixed
+
+- **Error states say what happened.** When a session has ended, a card offers
+  to sign in again instead of a retry that cannot work; when there were too
+  many requests just now, it says so without a pointless retry; a section you
+  are not allowed to see on a shared record stays quiet. Some thirty cards that
+  used to show a bare red line, a "still learning" note, an endless skeleton
+  or nothing at all when their data failed to load now say so and offer a
+  retry, and charts follow the same rule. Every read failure goes through the
+  same row, card and chart state, deciding by the error code first and the
+  status second.
+- **A short database outage no longer signs you out.** A session that could not
+  be checked because the database was unreachable, out of connections or
+  otherwise failing answers 503 (`auth.session.unavailable`) and the client
+  keeps its credential and tries again. A malformed session cookie is treated
+  as signed out (401) without a database lookup.
+- **A nap is not a night, but it is sleep.** A day whose only sleep is a short
+  daytime nap has no main night (`main: null` on `/api/sleep/night`). A day's
+  sleep in the list, the export and the correlations counts its naps, the same
+  total the chart and the sleep score show; the main night alone is
+  `mainAsleepMinutes`. The night view opened without a date shows the last
+  night with main sleep. The sleep list, the night view, the chart and the
+  sleep score name the same day for every night. A REM segment of zero minutes
+  no longer drops the night around it.
+- **Deleted entries stay deleted for the AI.** Deleted mood entries and
+  readings no longer shape the status texts written about you, and the general
+  overview looks at every metric again instead of the newest few thousand rows
+  of the densest one.
+- **Days logged for a chronic condition count** in the symptom correlations.
+- **Inviting someone whose name or e-mail matches no account** says so
+  (`sharing.invite.no_account`) and is never confused with a profile you no
+  longer look after.
+- **Old nights open, and "All" means all.** The night view answers any date,
+  however old, and the sleep series reaches back to the first night. The sleep
+  status read the last few weeks of stages; it now reads the last year of
+  nights.
+- **Days are your days.** The dashboard streak and the day a dose counts for
+  were placed on the wrong side of midnight for readings close to it; both
+  follow the profile timezone now. Skipping a dose from Telegram snoozes until
+  the end of your own day, not the server's.
+- **One number for one thing.** The spread of a series is the same in the app,
+  the API, MCP and AI tools. Correlations on the insights overview and in AI
+  data appear only when they are statistically sound (at least 20 pairs,
+  p < 0.05), as everywhere else; below that the value is `null`. A chronic
+  condition no longer fills the symptom series with zeros.
+- **Medication adherence on the cadence chips** counts pauses, courses and
+  missed doses like the detail page; a week's pause read 77 % instead of 100 %.
+- **A workout Apple Health sends twice is stored once,** and every workout
+  reader uses the same source order.
+- **Provider histories do not end early without saying so.** A WHOOP, Oura,
+  Withings, Fitbit or Strava history that stops at its page limit is no longer
+  marked as fully imported. A Strava history of more than about 4,000
+  activities imports in stages from where the last stage stopped, one stage per
+  rate window, instead of re-reading the newest activities after every
+  restart. WHOOP and Oura no longer read the first page twice when a list ends
+  with an empty page token. Imported values from every provider and from
+  Health Connect are rounded the same way, with halves rounded up (a weight of
+  72.345 kg now stores as 72.35, not 72.34).
+- **A long Google Health backfill keeps its place.** Only attempts that end at
+  the same edge count toward the final end, and a restart during the 24-hour
+  wait no longer starts a second chain.
+- **The recovery page** says in one sentence why it is still empty, decided on
+  the server (`recoveryEmpty`), and always links to the integrations.
+- **Lists that stop at a limit say so** (`meta.truncated`, `meta.limit`) instead
+  of passing the oldest loaded entry off as the beginning, and the web shows a
+  note under each such list. The activity feed keeps its `data.truncated` for
+  existing clients; it is deprecated in favour of `meta.truncated`.
+- Reconnecting Strava, even to a different account, reads that account's full
+  history again instead of continuing where the previous one stopped.
+- The day view's "highest since" notes pick up a new or corrected reading right
+  away.
+- **Old days and long histories are read whole.** The sleep summary covers the
+  whole history, the pulse assessment reads at least a month of pulse instead
+  of a few hours of a dense stream, and the mood fallback reads the same five
+  years as the rollup path.
+- The coach's daily limit on follow-up questions resets at your own midnight,
+  and the weather and air-quality refresh includes today east of UTC.
+- **Deleting a large account** no longer aborts after five seconds.
+- Workout dates follow your date format in the list, the detail and the
+  dashboard tile. "Not enough nights yet" names the number actually needed.
+  `groupBy=day` together with `valueMin`/`valueMax` answers 422 instead of
+  ignoring the filter.
+
+### Changed
+
+- **Faster reads.** The latest value per type is read through one bounded query
+  instead of a sort over every reading (about 60 ms down to 1 to 2 ms on a large
+  account), the dashboard summaries share one cache cell, and paging through the
+  day view computes the two-year comparison once.
+- **One heavy job at a time per process.** Imports, restores, backups, rollup
+  backfills, provider backfills and the nightly runs queue behind each other
+  instead of stacking up in one heap. A job that finds the lane busy goes back
+  to the queue and starts once it is free, so a backup waiting behind a large
+  import no longer runs out of time while it waits. A long Google Health
+  backfill makes room at its next slice boundary for a job waiting behind it,
+  and a job that waits more than two hours is reported as a warning
+  (`job.heavy_lane.waiting_long`). Building rollups for a large account no
+  longer runs a second time when it takes longer than fifteen minutes. The six per-metric status
+  crons are gone (the nightly batch already covers them), and a queue fed only
+  by its cron polls every 30 seconds.
+- **`measurements` stays small.** An update that changes nothing keeps its
+  timestamps, so it stays on its page and is not sent to the phone again; the
+  table leaves room on each page and autovacuum starts at 5 % dead rows. A
+  nightly check warns when dead rows or bloat grow past that (see
+  `docs/ops/measurement-maintenance.md`).
+- **Migrations that wait for a lock no longer hold writers back or stop the
+  boot.** `prisma migrate deploy` runs a migration file statement by
+  statement, not in one transaction, so the lock-sensitive part of migration
+  0412 runs as one block that gives up after ten seconds when another process
+  holds `measurements`. The container then retries a migration marked safe to
+  re-run, with a growing pause, instead of stopping at boot; any other
+  migration failure still stops the boot. See "A migration that timed out on a
+  lock" in `docs/ops/deploy.md`.
+- The day view's "highest since" notes cache fixed 90-day blocks and use less
+  memory when paging back through older days.
+- An insights card whose refresh keeps failing stops polling after its usual
+  number of attempts.
+- Failed provider syncs and refused uploads are logged as signals instead of
+  audit entries; a provider's error text no longer lands in the audit log in
+  plain text.
+- **The cached AI health report is encrypted at rest,** existing rows included.
+- Every API error carries a stable `meta.errorCode`; a route without its own
+  code gets an `http.*` code from the status.
+- Logs group requests by route template (`/api/medications/[id]`) instead of by
+  concrete path.
+- Failed inputs no longer fill the audit log; only attempts by someone with a
+  grant appear there.
+- The browser bundle no longer pulls in server modules, and a test keeps it
+  that way.
+- The Coach stops polling a document that will never be indexed.
+- On an out-of-memory crash the process writes a diagnostic report to stderr
+  (`--report-on-fatalerror`, without environment or network details), and the
+  heap monitor adds a 95 % tier.
+
+## [1.43.6] — 2026-10-19
+
+### Fixed
+
+- **A long measurement history no longer loads in one response.** The list for
+  cumulative types (steps, active energy and similar) loaded every day since
+  the first reading in one request and drew one table row per day; past 5000
+  raw rows the oldest days were cut off without a word. The server now pages
+  over days with a correct total, folds the days in SQL instead of reading raw
+  rows into the process, and the list shows 25 days per page. The sleep list
+  pages over nights the same way and no longer stops at one year; a night older
+  than a year opens its detail. For `groupBy=day`, `limit` counts days. The
+  `partial` flag and the `windowFrom` field are gone because nothing is cut off
+  any more (Refs #1245).
+- **A Google Health backfill that keeps moving no longer stops at a page
+  ceiling.** The ceiling counted pages across every attempt and was never
+  reset, so a dense type such as heart rate reached it after roughly two and a
+  half years and every later slice stopped at the same wall. A walk now stops
+  only when it has not moved back in time for 20 pages in a row, or when it
+  reaches the horizon (`GOOGLE_HEALTH_BACKFILL_HORIZON_YEARS`, 20 by default). A
+  type that ends says where its history ends and why, on the integration card,
+  instead of showing "loading" forever. A first end without progress is only
+  provisional: the type keeps its place and gets a second attempt a day later
+  before the end is final (Refs #1220).
+- **Consistency in the sleep score no longer reads 0 after a day without a
+  night.** A day on which the ring recorded only a nap was placed on the clock
+  by that nap, hours away from the other nights, and one such day in thirty
+  pushed the spread past the scale. A day whose only sleep is a short daytime
+  nap now leaves the rhythm (the nap still counts toward that day's sleep); a
+  short night stays on the clock. Every reader of the sleep midpoint follows the
+  same rule. When there are not enough nights to judge a rhythm, or the latest
+  day had only a nap, the row says so instead of showing a number. The sleep
+  score value, including `rhythmNights` and `gap`, is now published in the
+  OpenAPI schema (Refs #1204).
+- **An empty recovery page no longer guesses.** It asks for a reconnect only
+  when a missing permission is recorded, and otherwise says that no level has
+  arrived yet and points to the Oura card (Refs #1204).
+- **The MCP endpoint answers GET and DELETE with 405 and `Allow: POST`.** A
+  client that probed for a server-sent event stream was retried in a loop, which
+  produced hundreds of thousands of requests per week.
+- **No empty frame under the next appointment.** The "since the last visit" card
+  drew its border before knowing whether it had anything to show. Optional
+  tiles on the insights pages no longer flash a skeleton that collapses to
+  nothing, and a failed read on them now says so with a retry instead of
+  vanishing (Refs #1241).
+- Workout dates in the list, the header and the dashboard tile follow the
+  profile timezone instead of the browser's.
+
+### Added
+
+- **Heap diagnostics.** The process logs `runtime.heap.sampled` every five
+  minutes (every minute above 70 % of the heap limit) and, once, a
+  `runtime.heap.pressure` report above 85 % that lists the oldest requests and
+  jobs in flight and the busiest routes. With `HEALTHLOG_HEAP_SNAPSHOT=1` it also
+  writes one heap snapshot into `HEALTHLOG_DIAG_DIR`; a snapshot holds plain
+  health data, see `docs/ops/heap-diagnostics.md`.
+- A nightly run of the full multi-year Google Health backfill test; the run on
+  every pull request uses a tenth of the pages.
+
+### Changed
+
+- Dependabot keeps `next`, `eslint-config-next` and `@next/bundle-analyzer` out of
+  the weekly groups, so a red Next bump no longer holds the other updates red.
+- The timezone guard also matches `getDateTimeFormat(locale, options)` calls
+  that leave the zone out, and comments and test fixtures no longer carry
+  personal names.
+
+## [1.43.5] — 2026-10-18
+
+### Fixed
+
+- **Backups of accounts with many documents no longer run out of memory.**
+  The weekly in-database backup, the manual backup and the restore held the
+  document vault and ECG traces in memory several times over (bytes, base64,
+  the serialised section and the preview check), and sealed one oversized
+  chunk; an account with a large document vault crashed a 524 MB heap. Document
+  bytes are now read and written in 1.5 MB slices, ECG traces page by page,
+  every section is written element by element and no chunk exceeds the chunk
+  size. The restore reads documents without their bytes first and writes each
+  one on its own. The file format is unchanged (Refs #1239).
+- A failed tombstone purge names its phase and condition (e.g.
+  `statement_timeout`) instead of a bare error.
+
+### Added
+
+- The admin support report and System status flag a heap limit below 700 MB
+  and point to `APP_MEMORY_LIMIT`; `/api/admin/status` carries
+  `memory: { heapLimitMb, low }`.
+
+## [1.43.4] — 2026-10-17
+
+### Fixed
+
+- **An illness shows only the symptoms filed under it.** The illness detail
+  view merged the symptom events linked to the illness with every event inside
+  its date range, so overlapping illnesses showed each other's symptoms. It now
+  shows linked events only, and every symptom row on the illness page names its
+  illness. The symptom edit sheet has the illness field, with the current link
+  preselected; an event can be filed under an ongoing illness or an ended one
+  whose dates contain it, and POST and PATCH accept the same set. The day view
+  no longer links a symptom to a deleted illness (Refs #1237).
+
+## [1.43.3] — 2026-10-17
+
+### Fixed
+
+- **Every action behind a second-factor check opens the confirmation
+  dialog.** Handing over a managed profile, creating, editing or deleting
+  one, adding or removing a guardian, turning off TOTP, regenerating recovery
+  codes, removing a security key or passkey, changing the password, deleting
+  data or the account and the admin key rotation only showed a sentence when
+  the second factor needed confirming. They now open the confirmation dialog
+  and retry once confirmed, also after a single sign-on login (Refs #959).
+  The refusal names the methods the account has in `meta.methods`.
+- **A passkey counts as a second factor for managed profiles.** An account
+  whose only strong sign-in is a passkey was told to set up a second factor
+  before it could create, edit, hand over or delete a managed profile or
+  manage its guardians. A passkey sign-in, or confirming the passkey in the
+  dialog, is now enough; the admin key rotation follows the same rule.
+  Password sign-in, the native app and the actions that ask for a fresh
+  factor only from accounts with TOTP or a security key are unchanged.
+- An account that signs in only through single sign-on is no longer offered
+  a password field it cannot fill when it sets up a second factor; it is
+  asked to sign in again.
+
 ## [1.43.2] — 2026-10-16
 
 ### Fixed

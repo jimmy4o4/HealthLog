@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { DOCUMENT_AI_RUN_KINDS } from "@/lib/documents/ai-runs/types";
 import type { runStatusCompletion } from "@/lib/insights/status-provider";
 
-import { walkSourceFiles } from "./helpers/source-files";
+import { stripComments, walkSourceFiles } from "./helpers/source-files";
 
 const SRC = join(process.cwd(), "src");
 
@@ -37,13 +37,6 @@ const EGRESS_CALL =
  */
 const CAPABILITY_CHECK =
   /\b(?:aiCapabilityForJob|aiCapabilityForRecord|requireAiCapability|getAiCapability|aiEgressRefusal|assertAiEgress)\s*\(/;
-
-/** Comments name the helpers too; only code counts. */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
-}
 
 function sourceFiles(): string[] {
   return walkSourceFiles(SRC, { floor: 3000 })
@@ -110,20 +103,15 @@ const EGRESS_SITES: Record<string, EgressSite> = {
     reason:
       "Document summary and transcription; reached from the summary and index routes, the summary job, and the background run worker (`lib/jobs/document-ai-run.ts`), which resolve `documentAi` first.",
   },
-  "lib/documents/extract.ts": {
-    recheck: false,
-    reason:
-      "Document extraction/indexing; reached from the document routes and the index jobs, which resolve `documentAi` first.",
-  },
   "lib/medications/ingredients/label-extract.ts": {
     recheck: false,
     reason:
       "Supplement label read (v1.43); reached from the background run worker (`lib/jobs/document-ai-run.ts`), which re-checks `supplementLabel` for the picked provider, for a label the ingredients extract route queued under that capability.",
   },
-  "lib/labs/ocr-extract.ts": {
-    recheck: false,
+  "lib/documents/ocr-read.ts": {
+    recheck: true,
     reason:
-      "Lab report scan; reached from the background run worker (`lib/jobs/document-ai-run.ts`) for a scan the labs OCR route queued under `labsOcr`.",
+      "Report transcription, the one read core of the lab scan (`labsOcr`) and the document extraction (`documentAi`, the manual extract and the lab auto-staging); reached from the background run worker, the extract route and the index job, which check the capability for the picked provider before the first read. A long report's reads run for many minutes after that, so every read re-checks the wire (`aiEgressRefusal`, for the surface's own capability) and stops when AI was turned off meanwhile.",
   },
   "app/api/medications/extract/route.ts": {
     recheck: false,
@@ -286,5 +274,89 @@ describe("the status chokepoint's capability argument", () => {
       capability: "statusText",
     };
     expect(withCapability.capability).toBe("statusText");
+  });
+});
+
+/**
+ * Workout GPS tracks never reach a model.
+ *
+ * A route shows where a person lives, works and trains, and it is stored only
+ * after an opt-in. So the set of files that can open or write a track is
+ * frozen here, with the reason each needs it, and none of them may be a
+ * provider call site or sit in an AI module. The workout insight used to open
+ * the track to derive metres climbed; that figure is now filled into
+ * `Workout.elevationM` at write time (`route-climb.ts`), and the insight reads
+ * the column. A new reader fails the first check until someone decides, here,
+ * that it is not an AI path.
+ *
+ * Limit: the matcher looks for the cipher helpers, the sealed column and a
+ * `geometry: true` select. A read under some other spelling (a raw SQL
+ * `SELECT geometry_encrypted`, a backup dumping the model generically) would
+ * slip it. The generic backup dump and restore do carry the sealed column;
+ * they are not AI paths and hand it to no model.
+ */
+describe("workout route geometry never reaches an AI path", () => {
+  const ROUTE_READER =
+    /\breadRouteGeometry\s*\(|\bencryptRouteGeometry\s*\(|\bgeometryEncrypted\b|\bgeometry\s*:\s*true\b/;
+
+  const ROUTE_READERS: Record<string, string> = {
+    "lib/workouts/detail.ts":
+      "The workout detail read: serves the track to the person's own map.",
+    "lib/workouts/batch-ingest/write.ts":
+      "The workout batch ingest's write: stores a kept track (opt-in), sealed.",
+    "lib/apple-health/route-import.ts":
+      "Writes a kept track from the Apple Health export (opt-in).",
+    "lib/crypto/encrypted-columns.ts":
+      "The encrypted-column registry the key rotation walks.",
+    "lib/jobs/free-text-encryption-backfill.ts":
+      "Seals legacy readable tracks in place.",
+    "lib/workouts/route-geometry-cipher.ts": "The cipher itself.",
+    "lib/workouts/climb-backfill.ts":
+      "One-time backfill: derives metres climbed into Workout.elevationM.",
+  };
+
+  /** Directories whose code feeds a model. */
+  const AI_AREAS = [
+    "lib/ai/",
+    "lib/insights/",
+    "lib/mcp/",
+    "app/mcp/",
+    "app/api/insights/",
+    "app/api/coach/",
+  ];
+
+  const found = sourceFiles().filter((rel) => ROUTE_READER.test(code(rel)));
+
+  it("finds route readers at all (an empty matcher is a failure, not a pass)", () => {
+    expect(found.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("every file that opens or writes a track is named, with a reason", () => {
+    expect(found.filter((rel) => !(rel in ROUTE_READERS))).toEqual([]);
+  });
+
+  it("the list carries no file that no longer touches a track", () => {
+    expect(
+      Object.keys(ROUTE_READERS).filter((rel) => !found.includes(rel)),
+    ).toEqual([]);
+  });
+
+  it("no route reader calls a provider or lives in an AI module", () => {
+    for (const rel of Object.keys(ROUTE_READERS)) {
+      expect(rel in EGRESS_SITES, `${rel} is an egress site`).toBe(false);
+      expect(EGRESS_CALL.test(code(rel)), `${rel} calls a provider`).toBe(
+        false,
+      );
+      expect(
+        AI_AREAS.some((area) => rel.startsWith(area)),
+        `${rel} sits in an AI module`,
+      ).toBe(false);
+    }
+  });
+
+  it("the workout insight job does not read the track", () => {
+    const job = code("lib/jobs/workout-insight-generate.ts");
+    expect(job).not.toMatch(/\broute\s*:/);
+    expect(job).not.toMatch(ROUTE_READER);
   });
 });

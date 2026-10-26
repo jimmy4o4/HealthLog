@@ -34,6 +34,7 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { locales } from "@/lib/i18n/config";
 import { I18nProvider } from "@/lib/i18n/context";
 import { ApiError } from "@/lib/api/api-fetch";
 import type { AccountAccessEntry } from "@/lib/sharing/account-access-view";
@@ -150,6 +151,13 @@ vi.mock("@/lib/queries/use-handover-decision", () => ({
 
 vi.mock("@/hooks/use-account-switch", () => ({
   useAccountSwitch: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+// The deletion grace window the delete dialog states. 0 here, the immediate
+// erasure these tests were written against; the grace wording is pinned on
+// `deleteProfileBody` below.
+vi.mock("@/lib/queries/use-privacy-summary", () => ({
+  useAccountDeletionGrace: () => ({ days: 0, pending: false }),
 }));
 
 interface FakeMutation {
@@ -285,12 +293,12 @@ describe("the managed-profile card, in the shared-access section", () => {
     }
     // The timezone control is the shared picker, which labels itself.
     expect(html).toContain('id="managed-profile-timezone"');
-    // Six languages offered, which is the route's enum exactly.
+    // Every shipped language offered, which is the route's enum exactly.
     const options =
       /<select[^>]*data-slot="managed-profile-locale"[\s\S]*?<\/select>/
         .exec(html)?.[0]
         .match(/<option/g) ?? [];
-    expect(options).toHaveLength(7);
+    expect(options).toHaveLength(locales.length);
     // Four sex options, and the first is the empty one: null is a real answer
     // ("not recorded") rather than an absent field, and a form offering only
     // the three enum members would make it unsayable.
@@ -404,7 +412,7 @@ describe("how a field says what is wrong with it", () => {
     // Announced, because it MOUNTS with the role rather than a class being
     // swapped onto a node that was already there.
     expect(alert).toContain('role="alert"');
-    // Content, not meta. UI-STANDARDS §3, and the same reasoning
+    // Content, not meta. ui-standards.md §3, and the same reasoning
     // `grant-action-error.tsx` spells out: a refusal rendered as muted is a
     // refusal nobody reads.
     expect(alert).toContain("text-destructive");
@@ -521,7 +529,7 @@ describe("ending a managed profile", () => {
     authRef.value = { accounts: [entry()], active: null };
     const html = renderGatedSection();
     expect(html).toContain('data-slot="managed-profile-delete"');
-    // The mobile tap floor UI-STANDARDS §11 asks of an inline action.
+    // The mobile tap floor ui-standards.md §11 asks of an inline action.
     expect(html).toMatch(
       /data-slot="managed-profile-delete"[^>]*class="[^"]*min-h-11/,
     );
@@ -600,7 +608,7 @@ describe("ending a managed profile", () => {
       "p1",
     );
     const html = renderGatedSection();
-    expect(html).toContain("Confirm your second factor");
+    expect(html).toContain("Confirm your second factor or passkey");
     expect(html).not.toContain("The profile could not be deleted");
   });
 
@@ -616,7 +624,7 @@ describe("ending a managed profile", () => {
       "p1",
     );
     const html = renderGatedSection();
-    expect(html).toContain("does not have one yet");
+    expect(html).toContain("has neither yet");
     expect(html).toContain("Security");
   });
 
@@ -629,7 +637,7 @@ describe("ending a managed profile", () => {
     const html = renderGatedSection();
     expect(html).toContain('data-slot="query-error-card"');
     expect(html).toContain("Could not load who looks after this record");
-    // And the way back is reachable, which is what UI-STANDARDS §6 asks of an
+    // And the way back is reachable, which is what ui-standards.md §6 asks of an
     // error state.
     expect(html).toContain('data-slot="query-error-retry"');
   });
@@ -659,6 +667,20 @@ describe("what the confirmation says before it deletes", () => {
     // way out of the floor. The copy says so rather than duplicating a refusal
     // this route never sends.
     expect(body).toContain("recordSharing.managed.deleteFloorNote");
+  });
+
+  it("says the profile is locked, erased after the window, and undoable", () => {
+    const body = deleteProfileBody({
+      t,
+      tCount,
+      name: "Managed record",
+      activeGuardians: 1,
+      graceDays: 14,
+    });
+    expect(body).toContain(
+      'recordSharing.managed.deleteBodyGrace({"name":"Managed record","days":14})',
+    );
+    expect(body).not.toContain("recordSharing.managed.deleteBody(");
   });
 
   it("counts the guardians who actually hold the record", () => {
@@ -837,14 +859,16 @@ describe("what a refused guardian invitation says", () => {
       why: "a 404 WITH a code — not the same as an unknown identifier",
     },
     {
-      err: new ApiError("refused", 404),
+      err: new ApiError("refused", 404, {
+        errorCode: "sharing.invite.no_account",
+      }),
       key: "recordSharing.managed.guardianErrorNoAccount",
-      why: "the codeless 404: no account carries that name or e-mail",
+      why: "the other 404: no account carries that name or e-mail",
     },
     {
-      err: new ApiError("refused", 429),
+      err: new ApiError("refused", 429, { errorCode: "http.rate_limited" }),
       key: "recordSharing.managed.guardianErrorRateLimit",
-      why: "the other codeless arm, where waiting is the whole recovery",
+      why: "a 429 has one meaning, where waiting is the whole recovery",
     },
     {
       err: new ApiError("refused", 401, {
@@ -872,16 +896,28 @@ describe("what a refused guardian invitation says", () => {
   }
 
   it("tells the two 404s apart, which is the whole reason for the order", () => {
-    // The route publishes a code on one 404 and not on the other. Branching on
-    // status first would tell somebody to check a spelling when the real
-    // answer is that they are no longer a Guardian of that profile.
+    // Each 404 names itself. Branching on the status would tell somebody to
+    // check a spelling when the real answer is that they are no longer a
+    // Guardian of that profile, and a 404 that names neither is not an
+    // unknown name either.
     expect(
       guardianInviteErrorKey(
         new ApiError("refused", 404, {
           errorCode: "managed_profile.not_found",
         }),
       ),
-    ).not.toBe(guardianInviteErrorKey(new ApiError("refused", 404)));
+    ).not.toBe(
+      guardianInviteErrorKey(
+        new ApiError("refused", 404, {
+          errorCode: "sharing.invite.no_account",
+        }),
+      ),
+    );
+    expect(
+      guardianInviteErrorKey(
+        new ApiError("refused", 404, { errorCode: "http.not_found" }),
+      ),
+    ).toBe("recordSharing.managed.guardianErrorFailed");
     // And all nine cases above resolve to distinct sentences rather than one:
     // the failure this table is written against is one message for everything.
     expect(

@@ -18,6 +18,7 @@
  * to the derived contract cannot leave this document behind.
  */
 import { z } from "zod/v4";
+import { recoveryEmptySchema } from "./recovery-empty";
 import type { ZodOpenApiObject } from "zod-openapi";
 
 import { SCORE_PILLAR_IDS } from "@/lib/analytics/score/types";
@@ -46,7 +47,7 @@ const trendSlope = z
   .meta({
     id: "TrendSlope",
     description:
-      "A linear trend over a trailing window. The window is anchored on NOW, not on the newest reading, so a series that stopped weeks ago reports `null` for the slope instead of describing a trend that has not been observed since.",
+      "A linear trend over a trailing window. The window is anchored on NOW, not on the newest reading, so a series that stopped weeks ago reports `null` for the slope instead of describing a trend that has not been observed since. It is also `null` when the window's readings fall on fewer than 3 calendar days (UTC) or when their first and last day lie less than half the window apart (4 days for the 7-day window, 15 for the 30-day one): readings minutes apart cannot carry a slope per day.",
   });
 
 const dataSummary = z
@@ -140,11 +141,12 @@ const analyticsSummariesSlice = z
       ),
     lastSeenByType,
     sleepSourceDiscrepancy,
+    recoveryEmpty: recoveryEmptySchema,
   })
   .meta({
     id: "AnalyticsSummariesSlice",
     description:
-      "What `?slice=summaries` answers: the per-type summaries and their freshness, and nothing thick. Four keys, and the caller gets them from two SQL passes rather than the default slice's chain.",
+      "What `?slice=summaries` answers: the per-type summaries and their freshness, the recovery page's empty reason, and nothing thick. Five keys, and the caller gets them from two SQL passes rather than the default slice's chain.",
   });
 
 // ── Correlations ─────────────────────────────────────────────────────

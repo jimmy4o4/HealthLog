@@ -54,6 +54,7 @@ import { useTranslations } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 
 import { formatPeriod, type PeriodQuery } from "./period-query";
+import { InlineAction } from "@/components/ui/inline-action";
 
 export interface EntityLinkOption {
   id: string;
@@ -243,7 +244,7 @@ export function EntityLinkPicker({
   onChange,
   searchPlaceholder,
   emptyLabel,
-  error = false,
+  error = null,
   errorLabel,
   onRetry,
   extraAction,
@@ -263,9 +264,11 @@ export function EntityLinkPicker({
   /**
    * The option read failed. Renders an error row with Retry instead of the
    * empty label: a failed read must never pass for "nothing to link", which
-   * is exactly how a refused page size once hid a whole vault.
+   * is exactly how a refused page size once hid a whole vault. Pass the
+   * failed read's error (or any truthy value for a failure without one); the
+   * row reads its status.
    */
-  error?: boolean;
+  error?: unknown;
   errorLabel?: string;
   onRetry?: () => void;
   /**
@@ -369,6 +372,7 @@ export function EntityLinkPicker({
         <Skeleton className="h-9 w-full rounded-md" />
       ) : error ? (
         <QueryErrorRow
+          error={error}
           message={errorLabel}
           onRetry={onRetry}
           slot={`${slot}-error`}
@@ -543,16 +547,15 @@ export function EntityLinkPicker({
                         >
                           {group.label}
                         </span>
-                        <button
-                          type="button"
+                        <InlineAction
+                          tone="muted"
                           data-slot={`${slot}-group-select`}
                           onClick={() =>
                             change(toggleAll(selected, groupIds), group.options)
                           }
-                          className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
                         >
                           {t("links.picker.selectAll")}
-                        </button>
+                        </InlineAction>
                       </div>
                     ) : null}
                     <ul className="space-y-1">

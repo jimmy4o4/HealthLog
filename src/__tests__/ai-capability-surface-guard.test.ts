@@ -26,14 +26,17 @@
  * another module would slip it; `AI_ROUTE_PATTERNS` lists the literal shapes
  * the tree uses today.
  */
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import type { AiCapabilityKey } from "@/lib/ai/capabilities/types";
 
-import { stripComments, walkSourceFiles } from "./helpers/source-files";
+import {
+  readSourceText,
+  stripComments,
+  walkSourceFiles,
+} from "./helpers/source-files";
 
 const SRC = path.resolve(__dirname, "..");
 
@@ -56,11 +59,15 @@ const CLIENT_FILES = NON_TEST_FILES.filter((rel) => !rel.startsWith("lib/"));
 
 const FEATURE_FLAG_SWEEP = NON_TEST_FILES.filter(
   (rel) =>
-    !rel.startsWith("lib/feature-flags/") && !rel.startsWith("lib/openapi/"),
+    !rel.startsWith("lib/feature-flags/") &&
+    !rel.startsWith("lib/openapi/") &&
+    // The deprecation registry names the route to date its retirement; it
+    // reads nothing from it.
+    rel !== "lib/http/deprecation.ts",
 );
 
 const read = (rel: string) =>
-  stripComments(readFileSync(path.join(SRC, rel), "utf8"));
+  stripComments(readSourceText(path.join(SRC, rel)));
 
 /** Request literals of routes that call a model or serve model text. */
 const AI_ROUTE_PATTERNS: readonly RegExp[] = [
@@ -132,7 +139,7 @@ const AI_REQUEST_SITES: Record<string, RequestSite> = {
   },
   "components/documents/use-document-assist.ts": {
     capability: "documentAi",
-    gate: "components/documents/document-detail-sheet.tsx",
+    gate: "components/documents/detail/use-document-detail-ai.ts",
   },
 };
 

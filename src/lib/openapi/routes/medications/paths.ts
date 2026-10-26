@@ -43,6 +43,7 @@ import {
   recordRefusal,
   recordWriteRateLimitResponse,
   stdResponses,
+  listEnvelope,
 } from "../shared";
 import { isoDateTime } from "@/lib/validations/datetime";
 
@@ -200,7 +201,7 @@ const bulkIntakePayload = z
       .enum(["foreground", "background", "push", "manual", "backfill"])
       .optional()
       .describe(
-        'Diagnostic-only, the same field `POST /api/measurements/batch` takes (since v1.42.4): what woke the client for this sync. `backfill` (v1.43, only when `features.syncTriggerBackfill` is `true`) marks a history catch-up, which moves only the `MEDICATION_DOSE` entry\'s `lastBackfillAt` and leaves its live stamps and the sync checkpoint alone. When the batch carries entries with `source: "APPLE_HEALTH"` that land (`inserted`, `updated` or `duplicate`), it is recorded on the `MEDICATION_DOSE` entry of `metricFreshness` in `GET /api/integrations/healthkit` as `lastTrigger`, and a `background` value also dates its `lastBackgroundAt`. It changes no dose row. Optional; omitted records a null trigger.',
+        "Diagnostic-only, the same field `POST /api/measurements/batch` takes (since v1.42.4): what woke the client for this sync. `backfill` (v1.43, only when `features.syncTriggerBackfill` is `true`) marks a history catch-up, which moves only the `MEDICATION_DOSE` entry's `lastBackfillAt` and leaves its live stamps and the sync checkpoint alone. When the batch brings at least one new or changed entry with `source: \"APPLE_HEALTH\"` (`inserted` or `updated`), it is recorded on the `MEDICATION_DOSE` entry of `metricFreshness` in `GET /api/integrations/healthkit` as `lastTrigger`, and a `background` value also dates its `lastBackgroundAt`. Since v1.45 a batch whose Apple Health entries are all `duplicate` moves only that entry's `lastSeenDuplicateAt`. It changes no dose row. Optional; omitted records a null trigger.",
       ),
   })
   .meta({
@@ -252,6 +253,13 @@ const bulkIntakeResponse = z
 const medicationIntakeImportJobStatusEnvelope = dataEnvelope(
   medicationIntakeImportJobStatusResponse,
   "MedicationIntakeImportJobStatusEnvelope",
+);
+
+// Shared by the create's 201 and its mirror-replay 200: the envelope id is
+// registered once.
+const createMedicationResponse = dataEnvelope(
+  medicationDetailEntry,
+  "CreateMedicationResponse",
 );
 
 export const medicationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
@@ -596,7 +604,7 @@ export const medicationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
             "The entries, plus a `meta.total` that counts THIS PAGE rather than the whole log — it is the returned array's length, so it can never exceed `limit`.",
           content: {
             "application/json": {
-              schema: dataEnvelope(
+              schema: listEnvelope(
                 z.object({
                   items: z.array(medicationSideEffect),
                   meta: z.object({ total: z.number().int().nonnegative() }),
@@ -968,12 +976,14 @@ export const medicationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
         "201": {
           description: "Created medication with its schedules.",
           content: {
-            "application/json": {
-              schema: dataEnvelope(
-                medicationDetailEntry,
-                "CreateMedicationResponse",
-              ),
-            },
+            "application/json": { schema: createMedicationResponse },
+          },
+        },
+        "200": {
+          description:
+            "A mirror create re-posting an `(externalSource, externalId)` pair the caller already holds: the existing medication, nothing written.",
+          content: {
+            "application/json": { schema: createMedicationResponse },
           },
         },
         ...stdResponses,
@@ -1164,6 +1174,46 @@ export const medicationPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           description: "Medication not found (or another user's).",
           content: { "application/json": { schema: errorEnvelope } },
         },
+        ...stdResponses,
+      },
+    },
+  },
+  "/api/medications/{id}/courses/end": {
+    post: {
+      parameters: [idempotencyKeyParameter],
+      tags: ["Medications"],
+      summary: "End the running course now",
+      description:
+        "#1280 — \"End course\". No body. The running course's last day becomes today on the person's clock and the moment is stored as its `endedAt`: a dose slot later today is not due, not reminded and not expected by compliance, a dose taken earlier today still counts, and `courseStatus` reads ENDED at once. Pending placeholders for slots at or after the moment are removed (tombstoned for sync). A medication with no dates gets the course its window describes, from creation to today. An end date set through `PUT /api/medications/{id}` or the course editor keeps meaning the whole day; only this action ends a course at an instant. Refused with 409 `medications.course.notRunning` while no course is running — the rule the reads publish as `canEndCourse`. The record's owner, or a delegate whose grant manages the record's medications (the level of the medication's PUT); any other delegate is refused with 403.",
+      requestParams: { path: z.object({ id: z.string() }) },
+      responses: {
+        ...idempotentWrite(),
+        "200": {
+          description: "The medication's window after ending.",
+          content: {
+            "application/json": {
+              schema: dataEnvelope(
+                z.object({
+                  startsOn: z.iso.date().nullable(),
+                  endsOn: z.iso.date().nullable(),
+                  endedAt: isoDateTime().nullable(),
+                }),
+                "EndMedicationCourseResponse",
+              ),
+            },
+          },
+        },
+        "404": {
+          description:
+            "Medication not found (`medications.course.notFound`), or another user's.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
+        "409": {
+          description:
+            "No course is running now (`medications.course.notRunning`): it has ended already or has not started.",
+          content: { "application/json": { schema: errorEnvelope } },
+        },
+        ...recordRefusal(),
         ...stdResponses,
       },
     },

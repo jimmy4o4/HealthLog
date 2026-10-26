@@ -60,7 +60,7 @@ export function usePullToRefresh({
     let busy = false;
     let lastDistance = 0;
 
-    // v1.30.1 M12 — the authenticated shell's actual scroll container is
+    // v1.30.1 — the authenticated shell's actual scroll container is
     // `<main id="main-content">` (`AuthShell` sets it `overflow-y-auto`
     // inside a height-locked `h-dvh` layout); `document.scrollingElement`
     // never moves there; it stays permanently at 0. Checking the document
@@ -84,15 +84,21 @@ export function usePullToRefresh({
       setPullDistance(0);
     };
 
+    // A sheet or dialog is open: Radix's scroll lock marks the body while it
+    // holds the page. A drag inside the sheet (down to close it, or along
+    // its content) is the sheet's, never a pull on the page behind it; the
+    // listeners sit on `window`, so without this they saw every one.
+    const modalOpen = () => document.body.hasAttribute("data-scroll-locked");
+
     const onTouchStart = (e: TouchEvent) => {
-      if (busy || e.touches.length !== 1 || !atTop()) return;
+      if (busy || e.touches.length !== 1 || !atTop() || modalOpen()) return;
       startY = e.touches[0].clientY;
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (busy || startY === null) return;
       const dy = e.touches[0].clientY - startY;
-      if (dy <= 0 || !atTop()) {
+      if (dy <= 0 || !atTop() || modalOpen()) {
         // Upward drag or the page started scrolling — stand down quietly.
         if (pulling) reset();
         return;

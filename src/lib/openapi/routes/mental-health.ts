@@ -18,6 +18,7 @@ import {
   createAssessmentSchema,
   listAssessmentsSchema,
 } from "@/lib/validations/mental-health";
+import { ASSESSMENT_WORDINGS } from "@/lib/mental-health/wording/types";
 
 import {
   dataEnvelope,
@@ -25,6 +26,7 @@ import {
   idempotentWrite,
   recordRefusal,
   stdResponses,
+  listEnvelope,
 } from "./shared";
 
 // Zod 4's `.meta()` returns a NEW instance carrying the id rather than
@@ -33,7 +35,7 @@ import {
 const createMentalHealthAssessmentRequest = createAssessmentSchema.meta({
   id: "CreateMentalHealthAssessmentRequest",
   description:
-    "Record one completed screener administration: PHQ-9 (9 items, 0–3), GAD-7 (7 items, 0–3), WHO-5 (5 items, 0–5) or SCI (8 items, 0–4). The array length and per-item ceiling must match the instrument. The item answers are encrypted at rest and never returned. The server computes the total (WHO-5 reports raw-sum × 4 as 0–100) + severity band + item-9 safety flag. Opt-in, beside mood tracking — this is a screening surface, not a diagnosis.",
+    "Record one completed screener administration: PHQ-9 (9 items, 0–3), GAD-7 (7 items, 0–3), WHO-5 (5 items, 0–5) or SCI (8 items, 0–4). The array length and per-item ceiling must match the instrument. The item answers are encrypted at rest and never returned. The server computes the total (WHO-5 reports raw-sum × 4 as 0–100) + severity band + item-9 safety flag. `locale` is the reader's app language; set `englishOriginal` when the reader answered in the English original instead of their language's text, and the server records the resulting `wording`. Opt-in, beside mood tracking — this is a screening surface, not a diagnosis.",
 });
 
 const listMentalHealthAssessmentsQuery = listAssessmentsSchema.meta({
@@ -47,6 +49,12 @@ const assessmentRow = z
     id: z.string(),
     instrument: z.enum(["PHQ9", "GAD7", "WHO5", "SCI"]),
     locale: z.string(),
+    wording: z
+      .enum(ASSESSMENT_WORDINGS)
+      .nullable()
+      .describe(
+        "Which text the answers were given in. `validated`: the published validated version for `locale` (the original for English). `unvalidated_translation`: a translation written for HealthLog where no validated version exists; clients show that the result is orientation only. `original_en`: the English original, chosen by a reader of another language (`englishOriginal` on create). Null on administrations recorded before v1.46.",
+      ),
     version: z.string(),
     totalScore: z.number(),
     severityBand: z.string(),
@@ -99,8 +107,48 @@ const createResponse = z
   })
   .meta({ id: "CreateMentalHealthAssessmentResponse" });
 
+const scorePoint = z.object({
+  score: z.number(),
+  takenAt: z.string(),
+});
+const changeVerdict = z
+  .enum(["improved", "worsened", "within_threshold"])
+  .nullable();
+
+const assessmentTrend = z
+  .object({
+    instrument: z.enum(["PHQ9", "GAD7", "WHO5"]),
+    n: z.number().int(),
+    threshold: z
+      .number()
+      .describe(
+        "Meaningful-change threshold in reported points: PHQ-9 5, GAD-7 4, WHO-5 10 (0–100 scale).",
+      ),
+    higherIsBetter: z.boolean(),
+    first: scorePoint,
+    previous: scorePoint.nullable(),
+    latest: scorePoint,
+    changeFromPrevious: z.number().nullable(),
+    changeFromFirst: z.number().nullable(),
+    sincePrevious: changeVerdict,
+    sinceFirst: changeVerdict,
+  })
+  .meta({
+    id: "MentalHealthAssessmentTrend",
+    description:
+      "v1.44 — the latest total against the previous and the first administration, classified against the instrument's meaningful-change threshold in its own direction. A change below the threshold is `within_threshold`. Server-computed over the whole history, not the page.",
+  });
+
 const listResponse = z
-  .object({ assessments: z.array(assessmentRow) })
+  .object({
+    assessments: z.array(assessmentRow),
+    trends: z
+      .array(assessmentTrend)
+      .optional()
+      .describe(
+        "v1.44 — one per PHQ-9 / GAD-7 / WHO-5 with at least one administration. Absent on older servers.",
+      ),
+  })
   .meta({ id: "ListMentalHealthAssessmentsResponse" });
 
 const detailResponse = z
@@ -121,7 +169,7 @@ export const mentalHealthPaths: NonNullable<ZodOpenApiObject["paths"]> = {
           description: "Screener history.",
           content: {
             "application/json": {
-              schema: dataEnvelope(
+              schema: listEnvelope(
                 listResponse,
                 "ListMentalHealthAssessmentsEnvelope",
               ),

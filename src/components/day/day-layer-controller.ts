@@ -2,13 +2,14 @@
 
 import { useSyncExternalStore } from "react";
 
-import type { DateKey } from "@/lib/day/contract";
+import { DAY_QUERY_PARAM, type DateKey } from "@/lib/day/contract";
+import { currentUrlSearch, writeUrlState } from "@/lib/url-state";
 
 import {
   dayHistoryState,
   historyEntryOwnedByLayer,
+  parseDayParam,
   shiftDateKey,
-  withDayHref,
 } from "./day-url";
 
 /**
@@ -100,6 +101,13 @@ export function publishOpenDay(date: DateKey | null): void {
   if (memory.open === date) return;
   memory.open = date;
   emit();
+  // The layer has caught up with the URL: the steps that waited for it go
+  // now, in one write, from the day it shows.
+  const waiting = pendingStep;
+  pendingStep = null;
+  if (waiting !== null && date !== null) {
+    stepDay(waiting.delta, waiting.today);
+  }
 }
 
 /**
@@ -126,10 +134,6 @@ export interface OpenDayOptions {
   trigger?: HTMLElement | null;
 }
 
-function currentLocation() {
-  return { pathname: window.location.pathname, search: window.location.search };
-}
-
 /** Open `date` over the current page. */
 export function openDay(date: DateKey, options: OpenDayOptions = {}): void {
   if (typeof window === "undefined") return;
@@ -146,18 +150,57 @@ export function openDay(date: DateKey, options: OpenDayOptions = {}): void {
     ? memory.trigger.getBoundingClientRect().top
     : null;
   emit();
-  const { pathname, search } = currentLocation();
-  const href = withDayHref(pathname, search, date);
-  if (historyEntryOwnedByLayer(window.history.state)) {
-    window.history.replaceState(dayHistoryState(date), "", href);
-  } else {
-    window.history.pushState(dayHistoryState(date), "", href);
-  }
+  writeUrlState((params) => params.set(DAY_QUERY_PARAM, date), {
+    mode: historyEntryOwnedByLayer(window.history.state) ? "replace" : "push",
+    state: dayHistoryState(date),
+  });
 }
 
-/** Move the open day by `delta` calendar days, without a new history entry. */
-export function stepDay(from: DateKey, delta: number): DateKey {
-  const next = shiftDateKey(from, delta);
+/**
+ * Steps asked for while the layer had not yet shown the previous one. Kept
+ * as one sum, with the `today` of the latest request.
+ */
+let pendingStep: { delta: number; today: DateKey } | null = null;
+
+/**
+ * Move the open day by `delta` calendar days, without a new history entry,
+ * and never past `today`. Null when nothing is written now: no day is open,
+ * the step would pass today, or it waits for the previous one.
+ *
+ * Two things keep quick steps (a key held down, `]` pressed twice) from
+ * losing one.
+ *
+ * The step starts from the day in the URL, not from the day a caller last
+ * rendered, which reaches it through `useSearchParams`, a render and an
+ * effect and can be a step behind.
+ *
+ * And a step does not write while the layer still shows a different day
+ * than the URL. The write goes past Next's router, which adopts it a render
+ * later, and since Next 16.4 that render can land after a second write and
+ * put the first one's URL back: `[` then `]` pressed quickly ended a day
+ * short. So a step that finds the layer behind waits, and `publishOpenDay`
+ * makes it as soon as the layer shows the day the URL names.
+ */
+export function stepDay(delta: number, today: DateKey): DateKey | null {
+  if (typeof window === "undefined") return null;
+  const from = parseDayParam(
+    // The live address, a queued write included (`@/lib/url-state`).
+    new URLSearchParams(currentUrlSearch()).get(DAY_QUERY_PARAM),
+    today,
+  );
+  if (from === null) {
+    pendingStep = null;
+    return null;
+  }
+  const total = (pendingStep?.delta ?? 0) + delta;
+  if (memory.open !== null && memory.open !== from) {
+    pendingStep = { delta: total, today };
+    return null;
+  }
+  pendingStep = null;
+  const target = shiftDateKey(from, total);
+  const next = target > today ? today : target;
+  if (next === from) return null;
   jumpDay(next);
   return next;
 }
@@ -169,15 +212,12 @@ export function stepDay(from: DateKey, delta: number): DateKey {
 export function jumpDay(next: DateKey): void {
   memory.focus = null;
   emit();
-  const { pathname, search } = currentLocation();
   const owned = historyEntryOwnedByLayer(window.history.state);
-  window.history.replaceState(
+  writeUrlState((params) => params.set(DAY_QUERY_PARAM, next), {
     // A deep link stays a deep link: marking it as pushed would make a later
     // close go Back off the page the person arrived on.
-    owned ? dayHistoryState(next) : null,
-    "",
-    withDayHref(pathname, search, next),
-  );
+    state: owned ? dayHistoryState(next) : null,
+  });
 }
 
 /**
@@ -234,6 +274,5 @@ export function closeDay(): void {
     window.history.back();
     return;
   }
-  const { pathname, search } = currentLocation();
-  window.history.replaceState(null, "", withDayHref(pathname, search, null));
+  writeUrlState((params) => params.delete(DAY_QUERY_PARAM));
 }

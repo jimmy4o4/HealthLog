@@ -38,6 +38,7 @@ import {
   userDayKey,
   weekdayOfDateKey,
 } from "@/lib/tz/format";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 /**
  * Recommended generic name for the canonical GLP-1 drug brand. The Coach
@@ -246,18 +247,18 @@ export async function buildGlp1SnapshotBlock(
       active: true,
     },
     include: {
-      schedules: true,
-      doseChanges: { orderBy: { effectiveFrom: "asc" } },
+      schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
+      doseChanges: { orderBy: [{ effectiveFrom: "asc" }, { id: "asc" }] },
       // v1.16.10 — pen inventory reads the per-item entities (the rows
       // the intake consumption hook moves). The legacy event ledger
       // stays as a READ fallback for ledger-only accounts: when a
       // medication has zero items, the running-sum numbers surface so
       // the Coach still knows the pen count.
-      inventoryItems: { orderBy: { createdAt: "asc" } },
-      inventoryEvents: { orderBy: { occurredAt: "asc" } },
+      inventoryItems: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+      inventoryEvents: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }] },
       intakeEvents: {
         where: { takenAt: floor ? { not: null, gte: floor } : { not: null } },
-        orderBy: { takenAt: "desc" },
+        orderBy: [{ takenAt: "desc" }, { id: "desc" }],
         take: 1,
         select: {
           takenAt: true,
@@ -295,7 +296,7 @@ export async function buildGlp1SnapshotBlock(
 
   const medications: Glp1MedicationBlock[] = meds.map((med) => {
     const { display, generic } = deriveDrugNames(med.name);
-    // v1.4.25 W10 reconcile (security H-1): the snapshot JSON ships
+    // v1.4.25 (security H-1): the snapshot JSON ships
     // verbatim inside the Coach user prompt. `Medication.name`,
     // `MedicationDoseChange.doseUnit`, and `MedicationDoseChange.note`
     // are free-text columns the user edits — without sanitisation a

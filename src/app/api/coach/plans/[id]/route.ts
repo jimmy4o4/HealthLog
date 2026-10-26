@@ -2,7 +2,7 @@
  * PATCH  /api/coach/plans/[id] — confirm / update a Coach plan's lifecycle.
  * DELETE /api/coach/plans/[id] — soft-delete one Coach plan.
  *
- * v1.21.3 (B1) — the user-confirm + management surface for the durable Coach
+ * v1.21.3 — the user-confirm + management surface for the durable Coach
  * plans. Coach-proposes-then-user-confirms: the extractor writes a plan as
  * `status: "proposed"`; this PATCH is the ONLY path that activates it
  * (proposed → active), or marks it met / abandoned, or sets a review date.
@@ -25,12 +25,8 @@
 import type { NextRequest } from "next/server";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  returnAllZodIssues,
-  safeJson,
-} from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { annotate } from "@/lib/logging/context";
 import { prisma } from "@/lib/db";
 import { requireModuleEnabled } from "@/lib/modules/gate";
@@ -77,15 +73,10 @@ export const PATCH = apiHandler(async (req: NextRequest, ctx: RouteCtx) => {
 
   const { id } = await ctx.params;
 
-  const { data: body, error: jsonError } = await safeJson(req, {
+  const parsed = await parseJsonBody(req, coachPlanPatchSchema, {
     maxBytes: 4 * 1024,
   });
-  if (jsonError) return jsonError;
-
-  const parsed = coachPlanPatchSchema.safeParse(body);
-  if (!parsed.success) {
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   // Field-by-field data assembly (no mass assignment): only the lifecycle
   // fields the body carried are written; the metric + encrypted text are never

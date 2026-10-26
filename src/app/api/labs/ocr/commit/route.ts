@@ -19,19 +19,12 @@ import { NextRequest } from "next/server";
 import { fireAndForget } from "@/lib/logging/fire-and-forget";
 
 import { apiHandler, requireAuth } from "@/lib/api-handler";
-import {
-  apiError,
-  apiSuccess,
-  getClientIp,
-  returnAllZodIssues,
-  safeJson,
-  sanitiseZodIssues,
-} from "@/lib/api-response";
+import { apiSuccess, getClientIp, sanitiseZodIssues } from "@/lib/api-response";
+import { parseJsonBody } from "@/lib/api/body";
 import { auditLog } from "@/lib/auth/audit";
 import { prisma } from "@/lib/db";
 import { invalidateUserHealthScore } from "@/lib/cache/invalidate";
 import { withIdempotency } from "@/lib/idempotency";
-import { checkRecordWriteRateLimit } from "@/lib/rate-limit";
 import { enqueueReminderSatisfy } from "@/lib/jobs/reminder-satisfy";
 import { emitDataArrival } from "@/lib/arrivals/emit-shared";
 import { rememberImportAlias } from "@/lib/labs/biomarker-aliases";
@@ -159,47 +152,28 @@ function inBatchKey(
 async function commitOcrRows(request: NextRequest) {
   const { user } = await requireAuth();
 
-  // Shared per-account write ceiling, the same bucket every other lab write
-  // charges (`POST /api/labs`, `POST /api/biomarkers`). A commit can write a
-  // whole report's rows and mint markers on the way, so it was the one lab
-  // write a looping client could repeat without any ceiling.
-  const writeRl = await checkRecordWriteRateLimit(user.id);
-  if (!writeRl.allowed) {
-    return apiError("Too many writes, try again later", 429, {
-      errorCode: "record_write.rate_limited",
-    });
-  }
-
-  const { data: body, error: jsonError } = await safeJson(request, {
-    maxBytes: 256 * 1024,
+  // OCR_MAX_ROWS rows at every field's longest bound run past 256 KB; 512
+  // keeps a full report in one body with room to spare.
+  const parsed = await parseJsonBody(request, ocrCommitSchema, {
+    maxBytes: 512 * 1024,
+    action: "labs.ocr.commit.validation-failed",
+    countIssues: true,
+    onInvalid: (error) => {
+      // Free-text analyte / unit could land in a Zod issue message — strip values.
+      const auditIssues = sanitiseZodIssues(error.issues, {
+        stripValuesFromMessage: true,
+      });
+      auditLog("labs.ocr.commit.validation-failed", {
+        userId: user.id,
+        details: { issues: auditIssues },
+      }).catch(() => {});
+    },
   });
-  if (jsonError) return jsonError;
-
-  const parsed = ocrCommitSchema.safeParse(body);
-  if (!parsed.success) {
-    annotate({
-      action: { name: "labs.ocr.commit.validation-failed" },
-      meta: { issue_count: parsed.error.issues.length },
-    });
-    // Free-text analyte / unit could land in a Zod issue message — strip values.
-    const auditIssues = sanitiseZodIssues(parsed.error.issues, {
-      stripValuesFromMessage: true,
-    });
-    prisma.auditLog
-      .create({
-        data: {
-          userId: user.id,
-          action: "labs.ocr.commit.validation-failed",
-          details: JSON.stringify({ issues: auditIssues }),
-        },
-      })
-      .catch(() => {});
-    return returnAllZodIssues(parsed.error, 422);
-  }
+  if (!parsed.ok) return parsed.error;
 
   const inserted: ReturnType<typeof serialiseLabResult>[] = [];
   const skipped: OcrSkippedRowDto[] = [];
-  // S9 — the rows actually written, kept for the vault cross-link so a re-commit
+  // The rows actually written, kept for the vault cross-link so a re-commit
   // (every row a duplicate → nothing inserted) links nothing new.
   const linkable: InsertedLabForLink[] = [];
   // Tracks the keys already written in THIS request so an in-document duplicate
@@ -209,7 +183,7 @@ async function commitOcrRows(request: NextRequest) {
   const writtenInBatch = new Set<string>();
 
   const tz = await resolveUserTimezone(user.id);
-  // v1.43 (D1223) — the account's markers and aliases, loaded once: every row
+  // v1.43 — the account's markers and aliases, loaded once: every row
   // resolves its name against them (name, alias, catalog abbreviation) the
   // way the review did, and a marker minted for one row is found by the next.
   const markerIndex = await loadMarkerIndex(prisma, user.id);
@@ -361,7 +335,7 @@ async function commitOcrRows(request: NextRequest) {
   }
   if (inserted.length > 0) invalidateUserHealthScore(user.id);
 
-  // S9 — cross-link the freshly inserted labs to the vault document the client
+  // Cross-link the freshly inserted labs to the vault document the client
   // filed the scanned bytes into. Best-effort: the labs are the authoritative
   // write, so a link failure (module off, foreign / missing document) never
   // fails the commit. Owner + module checks live inside the linker.
@@ -423,7 +397,7 @@ async function commitOcrRows(request: NextRequest) {
   // A lab panel just landed — resolve any "annual blood panel" reminders now
   // rather than waiting on the cron. Fire-and-forget.
   if (inserted.length > 0) {
-    fireAndForget(enqueueReminderSatisfy(user.id), {
+    fireAndForget(() => enqueueReminderSatisfy(user.id), {
       action: "reminder.satisfy.enqueue",
     });
 

@@ -222,28 +222,40 @@ export async function buildVisitsBackupSection(
     conditionLinkRows,
   ] = await Promise.all([
     prisma.practitioner.findMany({
-      where: disasterRecovery ? { userId } : { userId, deletedAt: null },
-      orderBy: { name: "asc" },
+      // A portable file leaves the address book's tombstones out, except one
+      // a live visit or dose still names: the record shows it, so the file
+      // carries it (with its `deletedAt`) instead of dropping the reference.
+      where: disasterRecovery
+        ? { userId }
+        : {
+            userId,
+            OR: [
+              { deletedAt: null },
+              { encounters: { some: { deletedAt: null } } },
+              { vaccinations: { some: { deletedAt: null } } },
+            ],
+          },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
       select: PRACTITIONER_BACKUP_SELECT,
     }),
     prisma.encounter.findMany({
       where: disasterRecovery ? { userId } : { userId, deletedAt: null },
-      orderBy: { occurredAt: "desc" },
+      orderBy: [{ occurredAt: "desc" }, { id: "asc" }],
       select: ENCOUNTER_BACKUP_SELECT,
     }),
     prisma.encounterDocumentLink.findMany({
       where: { userId },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: ENCOUNTER_DOCUMENT_LINK_BACKUP_SELECT,
     }),
     prisma.encounterLabLink.findMany({
       where: { userId },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: ENCOUNTER_LAB_LINK_BACKUP_SELECT,
     }),
     prisma.encounterConditionLink.findMany({
       where: { userId },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: ENCOUNTER_CONDITION_LINK_BACKUP_SELECT,
     }),
   ]);
@@ -290,7 +302,9 @@ export async function buildVisitsBackupSection(
           }),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
-      ...(disasterRecovery
+      // A portable file names a tombstone only when a live visit holds it,
+      // and says so, so the restore keeps it out of the address book.
+      ...(disasterRecovery || row.deletedAt
         ? { deletedAt: row.deletedAt?.toISOString() ?? null }
         : {}),
     })),

@@ -4,12 +4,11 @@
  * Extracted from reminder-worker.ts, which owns the queue names, cron
  * schedules, and boss.work registrations.
  */
+import { OWNED_BY_ACTIVE_ACCOUNT } from "@/lib/account-deletion/active-account";
 import { type Job } from "pg-boss";
 import type { Locale } from "@/lib/i18n/config";
 import { resolveJobLocale } from "@/lib/i18n/job-locale";
 import { recordError, recordReminderCheck } from "@/lib/jobs/worker-status";
-import { recomputeMedicationComplianceForEvent } from "@/lib/rollups/medication-compliance-rollups";
-import { decrypt } from "@/lib/crypto";
 import { jobDone, type JobOutcome } from "@/lib/jobs/job-outcome";
 import { withBackgroundEvent } from "@/lib/logging/background";
 import { dispatchNotification } from "@/lib/notifications/dispatcher";
@@ -24,7 +23,6 @@ import {
   resolveSlotPhaseWindow,
   shouldMintMissedDoseRow,
 } from "@/lib/medications/scheduling/worker-helpers";
-import { deleteMessage } from "@/lib/telegram";
 import {
   DEFAULT_PHASE_CONFIG,
   resolvePhaseThresholds,
@@ -40,6 +38,7 @@ import {
 } from "@/lib/notifications/reminder-dedup";
 import { getUserTodayBounds as getUserTodayBoundsUtil } from "@/lib/tz/local-day";
 import { getWorkerPrisma, parseTimeToMinutes } from "./shared";
+import { cleanupScheduledTelegramDeletions } from "./telegram-deletion-cleanup";
 import { TRACKED_INTAKE_WHERE } from "@/lib/medications/intake-tracking";
 import { sendsMedicationReminders } from "@/lib/medications/auto-mark-taken";
 import {
@@ -47,6 +46,7 @@ import {
   liveEraStart as liveEraStartOf,
 } from "@/lib/medications/scheduling/live-era";
 import { DEFAULT_TIMEZONE } from "@/lib/tz/format";
+import { MEDICATION_SCHEDULE_ORDER } from "@/lib/medications/read-order";
 
 export interface ReminderCheckPayload {
   triggeredAt: string;
@@ -55,93 +55,40 @@ export interface ReminderCheckPayload {
 const getUserTodayBounds = getUserTodayBoundsUtil;
 
 /**
- * Process expired TelegramScheduledDeletion records.
- * Deletes messages from Telegram and removes the DB records.
- * Called at the start of every reminder check (every 15 minutes).
+ * Every medication the tick may remind about, with its schedules, phase
+ * config, live-era revisions and the owner's timezone and locale.
+ *
+ * Active only. As-needed (PRN) medications never remind: they carry zero
+ * schedules anyway (the per-schedule loop would be a no-op), but the explicit
+ * predicate keeps them out of the tick's per-medication intake reads
+ * entirely. A medication with intake tracking off keeps its schedule rows as
+ * a record, so it is excluded explicitly: no reminder on any channel and no
+ * missed-dose placeholder (#1033). And none whose account is pending
+ * deletion: that record is frozen until it is erased or given back.
  */
-export async function cleanupScheduledTelegramDeletions(): Promise<void> {
-  const prisma = getWorkerPrisma();
-  try {
-    let totalDeleted = 0;
-
-    // Process in batches until all expired records are handled
-    while (true) {
-      const expired = await prisma.telegramScheduledDeletion.findMany({
-        where: { deleteAfter: { lte: new Date() } },
-        take: 100,
-      });
-
-      if (expired.length === 0) break;
-
-      // Group by userId to fetch bot token once per user
-      const byUser = new Map<
-        string,
-        { chatId: string; messageId: number; id: string }[]
-      >();
-      for (const record of expired) {
-        const list = byUser.get(record.userId) ?? [];
-        list.push({
-          chatId: record.chatId,
-          messageId: record.messageId,
-          id: record.id,
-        });
-        byUser.set(record.userId, list);
-      }
-
-      const deletedIds: string[] = [];
-      for (const [userId, messages] of byUser) {
-        const user = await prisma.user.findFirst({
-          where: { id: userId, telegramBotToken: { not: null } },
-          select: { telegramBotToken: true },
-        });
-        if (!user?.telegramBotToken) {
-          // No bot token — just clean up the records
-          deletedIds.push(...messages.map((m) => m.id));
-          continue;
-        }
-        const botToken = decrypt(user.telegramBotToken);
-        for (const msg of messages) {
-          try {
-            await deleteMessage(botToken, msg.chatId, msg.messageId);
-          } catch {
-            // Best-effort: message may already be deleted
-          }
-          deletedIds.push(msg.id);
-        }
-      }
-
-      if (deletedIds.length > 0) {
-        await prisma.telegramScheduledDeletion.deleteMany({
-          where: { id: { in: deletedIds } },
-        });
-        totalDeleted += deletedIds.length;
-      }
-    }
-
-    if (totalDeleted > 0) {
-      const { getEvent } = await import("@/lib/logging/context");
-      getEvent()?.addMeta("telegram_scheduled_cleanup", totalDeleted);
-    }
-
-    // v1.19.0 — prune expired force-reply correlation rows in the same
-    // tick (no new sweep). An unanswered mood-note prompt leaves a
-    // TelegramPromptContext row; once past `expiresAt` it can never bind a
-    // reply, so drop it. The prompt MESSAGE itself self-cleans through the
-    // scheduled-deletion rows above.
-    const prunedContexts = await prisma.telegramPromptContext.deleteMany({
-      where: { expiresAt: { lte: new Date() } },
-    });
-    if (prunedContexts.count > 0) {
-      const { getEvent } = await import("@/lib/logging/context");
-      getEvent()?.addMeta(
-        "telegram_prompt_context_cleanup",
-        prunedContexts.count,
-      );
-    }
-  } catch (err) {
-    const { getEvent } = await import("@/lib/logging/context");
-    getEvent()?.addWarning(`telegram-scheduled-cleanup failed: ${err}`);
-  }
+function loadRemindableMedications(prisma: ReturnType<typeof getWorkerPrisma>) {
+  return prisma.medication.findMany({
+    where: {
+      active: true,
+      asNeeded: false,
+      ...TRACKED_INTAKE_WHERE,
+      ...OWNED_BY_ACTIVE_ACCOUNT,
+    },
+    include: {
+      schedules: { orderBy: MEDICATION_SCHEDULE_ORDER },
+      phaseConfig: true,
+      scheduleRevisions: LIVE_ERA_REVISION_ARGS,
+      user: {
+        select: {
+          id: true,
+          timezone: true,
+          // Used to localise the reminder title / message / keyboard
+          // labels per user. Null falls back to the app default.
+          locale: true,
+        },
+      },
+    },
+  });
 }
 
 /**
@@ -213,35 +160,11 @@ export async function handleReminderCheck(
 
       // Clean up expired snoozes
       await prisma.medication.updateMany({
-        where: { snoozedUntil: { lt: now } },
+        where: { snoozedUntil: { lt: now }, ...OWNED_BY_ACTIVE_ACCOUNT },
         data: { snoozedUntil: null },
       });
 
-      // Get all active medications with schedules and phase config.
-      // v1.16.11 — as-needed (PRN) medications never remind: they carry
-      // zero schedules anyway (the per-schedule loop below would be a
-      // no-op), but the explicit predicate keeps them out of the tick's
-      // per-medication intake reads entirely.
-      // v1.39.1 (#1033) — a medication with intake tracking off keeps its
-      // schedule rows as a record, so it must be excluded explicitly: no
-      // reminder on any channel and no missed-dose placeholder.
-      const medications = await prisma.medication.findMany({
-        where: { active: true, asNeeded: false, ...TRACKED_INTAKE_WHERE },
-        include: {
-          schedules: true,
-          phaseConfig: true,
-          scheduleRevisions: LIVE_ERA_REVISION_ARGS,
-          user: {
-            select: {
-              id: true,
-              timezone: true,
-              // Used to localise the reminder title / message / keyboard
-              // labels per user. Null falls back to the app default.
-              locale: true,
-            },
-          },
-        },
-      });
+      const medications = await loadRemindableMedications(prisma);
 
       // The per-slot facts the tick already emits as wide-event meta, counted
       // so the run's outcome carries them as scalars.
@@ -341,13 +264,10 @@ export async function handleReminderCheck(
           a.windowStart.localeCompare(b.windowStart),
         );
 
-        // v1.5.0 — fetch the latest `takenAt` for this medication
-        // once per tick when any schedule on it is rolling. The
-        // canonical recurrence engine needs `lastIntakeAt` to compute
-        // the next-due instant for rolling cadences; calendar
-        // cadences ignore the field, so the fetch is conditional to
-        // avoid an extra round-trip on the common path. Failures bias
-        // toward "treat as never logged" so a flaky DB doesn't
+        // The latest `takenAt` for this medication, once per tick and only
+        // when a schedule on it is rolling: the recurrence engine needs
+        // `lastIntakeAt` for a rolling cadence, a calendar one ignores it.
+        // Failures read as "never logged", so a flaky DB does not
         // suppress reminders.
         const hasRollingSchedule = med.schedules.some(
           (s) => s.rollingIntervalDays !== null,
@@ -363,7 +283,7 @@ export async function handleReminderCheck(
               deletedAt: null,
               takenAt: { not: null },
             },
-            orderBy: { takenAt: "desc" },
+            orderBy: [{ takenAt: "desc" }, { id: "desc" }],
             select: { takenAt: true },
           });
           lastIntakeAt = lastIntake?.takenAt ?? null;
@@ -485,7 +405,7 @@ export async function handleReminderCheck(
             occurrencesByScheduleId.get(canonicalSchedule.id) ?? [];
           if (scheduleOccurrences.length === 0) continue;
 
-          // v1.7.0 SB-SCHED-4 — multi-time-of-day dispatch. A schedule
+          // v1.7.0 — multi-time-of-day dispatch. A schedule
           // with `timesOfDay = ["08:00","20:00"]` is two distinct dose
           // slots per day; the pre-v1.7 worker keyed phase + dedup on the
           // single `windowStart`, so the evening dose never reminded.
@@ -708,15 +628,6 @@ export async function handleReminderCheck(
 
                 missedDosesMinted++;
                 evt.addMeta("missed_dose", `${med.name}:${slotTime}`);
-
-                // v1.4.39 W-MED — refresh the compliance rollup so the
-                // per-day `scheduled` count increments before any read.
-                await recomputeMedicationComplianceForEvent({
-                  userId: med.user.id,
-                  medicationId: med.id,
-                  scheduledFor: slotScheduledFor,
-                  tz: med.user.timezone,
-                });
               }
             }
 
@@ -782,7 +693,7 @@ export async function handleReminderCheck(
                     date: slotScheduledFor.toLocaleDateString("sv-SE", {
                       timeZone: userTz,
                     }),
-                    // v1.7.0 SB-SCHED-4 — carry the dedup time-of-day so
+                    // v1.7.0 — carry the dedup time-of-day so
                     // the Telegram-message ledger keys per slot.
                     timeOfDay: dedupTimeOfDay,
                     scheduledAt: scheduledAtIso,

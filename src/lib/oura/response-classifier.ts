@@ -1,5 +1,5 @@
 /**
- * v1.17.0 (F4) — off-response classifier for Oura Cloud API v2 replies.
+ * v1.17.0 — off-response classifier for Oura Cloud API v2 replies.
  * HTTP-status-driven; the shared core lives in
  * `src/lib/integrations/http-status-classifier.ts` and is re-exported here
  * under the Oura-specific names callers already use.
@@ -8,6 +8,10 @@
  *   - `transient`       → 429 (rate-limited), 5xx, 3xx, unknown.
  *   - `reauth_required` → 401 / 403 — token rejected / grant revoked.
  *   - `persistent`      → any other 4xx — malformed request / contract drift.
+ *
+ * A collection read refines this from the body (`collectionRefusal` in
+ * `./client`): a 401 that names a scope is a missing permission, a 403 a lapsed
+ * membership.
  */
 
 import {
@@ -26,15 +30,39 @@ export function classifyOuraResponse(
 }
 
 export class OuraApiError extends IntegrationApiError {
+  /**
+   * The scope Oura named when it refused a collection read for a missing
+   * permission (`401 {"detail":"Token is not authorized access stress
+   * scope."}`). Undefined for every other failure, a dead token included.
+   */
+  readonly missingScope: string | undefined;
+  /**
+   * How long Oura asked to be left alone, from the `Retry-After` of a 429 (or
+   * 503). Undefined when the refusal carried none or was not a rate limit.
+   * A backfill waits at least this long before its next slice.
+   */
+  readonly retryAfterMs: number | undefined;
+
   constructor(opts: {
     verb: string;
     classification: IntegrationClassification;
     httpStatus: number | undefined;
     reason: string;
     upstreamError?: string;
+    missingScope?: string;
+    retryAfterMs?: number;
   }) {
-    super({ vendor: "Oura", ...opts });
+    const { missingScope, retryAfterMs, ...rest } = opts;
+    super({
+      vendor: "Oura",
+      ...rest,
+      upstreamError:
+        rest.upstreamError ??
+        (missingScope ? `scope_missing:${missingScope}` : undefined),
+    });
     this.name = "OuraApiError";
+    this.missingScope = missingScope;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 

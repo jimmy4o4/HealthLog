@@ -39,6 +39,7 @@ import {
   usePractitioners,
   type Practitioner,
 } from "@/hooks/use-practitioners";
+import { VISITS_PATH } from "@/lib/encounters/visit-links";
 import { useTranslations } from "@/lib/i18n/context";
 import { PractitionerSheet } from "./practitioner-sheet";
 
@@ -107,7 +108,7 @@ export function PractitionerList({ enabled = true }: { enabled?: boolean }) {
       <PageHeader
         title={t("practitioners.title")}
         description={t("practitioners.description")}
-        backLink={{ href: "/checkups", label: t("encounters.sectionTitle") }}
+        backLink={{ href: VISITS_PATH, label: t("encounters.sectionTitle") }}
         actions={addButton}
       />
 
@@ -129,6 +130,7 @@ export function PractitionerList({ enabled = true }: { enabled?: boolean }) {
 
       {list.isError ? (
         <QueryErrorCard
+          error={list.error}
           title={t("practitioners.loadError")}
           onRetry={() => void list.refetch()}
         />
@@ -169,7 +171,7 @@ export function PractitionerList({ enabled = true }: { enabled?: boolean }) {
               <ul className="space-y-2">
                 {groupRows.map((row) => (
                   <li key={row.id}>
-                    <Card className="gap-2 py-3 md:py-4">
+                    <Card density="compact">
                       <CardContent className="flex items-center gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="text-foreground truncate text-sm font-medium">

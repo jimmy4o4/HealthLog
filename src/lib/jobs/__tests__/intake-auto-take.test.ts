@@ -20,8 +20,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/medications/inventory/consumption", () => ({
   consumeForIntake: vi.fn(async () => undefined),
 }));
-vi.mock("@/lib/rollups/medication-compliance-rollups", () => ({
-  recomputeMedicationComplianceForEvent: vi.fn(async () => undefined),
+vi.mock("@/lib/medications/dose-day-refresh", () => ({
+  refreshDoseSlot: vi.fn(async () => undefined),
   dayKeyForScheduledFor: (at: Date, tz: string) =>
     at.toLocaleDateString("sv-SE", { timeZone: tz }),
 }));
@@ -36,18 +36,20 @@ vi.mock("@/lib/medications/lifecycle", () => ({
 }));
 
 import { consumeForIntake } from "@/lib/medications/inventory/consumption";
-import { recomputeMedicationComplianceForEvent } from "@/lib/rollups/medication-compliance-rollups";
+import { refreshDoseSlot } from "@/lib/medications/dose-day-refresh";
 import { queueMedicationIntakeSync } from "@/lib/notifications/medication-intake-sync";
 import {
-  INTAKE_AUTO_TAKE_CRON,
   INTAKE_AUTO_TAKE_LOOKBACK_MS,
-  INTAKE_AUTO_TAKE_QUEUE,
   autoTakeFloor,
   decideSlot,
   dueAutoTakeSlots,
   isInPauseEra,
   runIntakeAutoTakePass,
 } from "../intake-auto-take";
+import {
+  INTAKE_AUTO_TAKE_CRON,
+  INTAKE_AUTO_TAKE_QUEUE,
+} from "../intake-auto-take-queue";
 import { autoTakeOwnedFrom } from "../intake-auto-skip";
 import { autoTakeRollingAnchor } from "@/lib/medications/auto-take";
 import { computeDisplayDue } from "@/lib/medications/scheduling/next-due";
@@ -106,6 +108,7 @@ function medication(
     userId: overrides.userId ?? "u1",
     startsOn: overrides.startsOn ?? null,
     endsOn: overrides.endsOn ?? null,
+    endedAt: null,
     oneShot: overrides.oneShot ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-01-01T00:00:00Z"),
     autoMarkTakenSince:
@@ -590,7 +593,7 @@ function row(partial: Partial<FakeRow> & { id: string; scheduledFor: Date }) {
 describe("runIntakeAutoTakePass — over a fake client", () => {
   beforeEach(() => {
     vi.mocked(consumeForIntake).mockClear();
-    vi.mocked(recomputeMedicationComplianceForEvent).mockClear();
+    vi.mocked(refreshDoseSlot).mockClear();
     vi.mocked(queueMedicationIntakeSync).mockClear();
   });
 
